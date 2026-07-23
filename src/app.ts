@@ -24,6 +24,13 @@ export function buildApp(): Express {
   app.use(pinoHttp({ logger }));
   app.use(requestContext);
   app.use(authStub);
+app.get('/', (_req, res) => {
+  res.json({
+    message: 'Qirtas API 🚀',
+    docs: '/docs',
+    health: '/health',
+  });
+});
 
   app.get('/health', (_req, res) => {
     res.status(200).json({ status: true, message: 'OK', data: { uptime: process.uptime() } });

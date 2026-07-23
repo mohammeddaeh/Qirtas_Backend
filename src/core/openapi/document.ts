@@ -16,7 +16,7 @@ export function buildOpenApiDocument() {
   return generator.generateDocument({
     openapi: '3.0.0',
     info: {
-      title: 'Awqaf Backend API',
+      title: 'Qirtas_App',
       version: '1.0.0',
       description:
         'Auto-generated from the same zod schemas used by the runtime validate() middleware — always in sync with the actual request/response contract. See CLAUDE.md and docs/rest_api.md for the full architectural context.',

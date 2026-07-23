@@ -16,10 +16,13 @@
     "db:migrate": "tsx node_modules/drizzle-kit/bin.cjs migrate",
     "db:push": "tsx node_modules/drizzle-kit/bin.cjs push",
     "db:studio": "tsx node_modules/drizzle-kit/bin.cjs studio",
-    "db:seed": "tsx src/core/db/seed.ts"
+    "db:seed": "tsx src/core/db/seed.ts",
+        "create:admin": "tsx src/core/db/create-admin.ts"
+
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.0",
+    "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.4",
@@ -31,6 +34,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/bcrypt": "^6.0.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.9.0",
