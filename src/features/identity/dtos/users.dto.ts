@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { UserRow } from '../schemas/users.schema.js';
+import { syrianPhoneSchema, optionalSyrianPhoneSchema } from '../../../core/validation/common-schemas.js';
 
 /**
  * Mirrors WireUser below for OpenAPI doc generation only (zod-to-openapi
@@ -15,8 +16,8 @@ export const userResponseSchema = z.object({
   phone: z.string(),
   image: z.string().nullable(),
   address: z.string().nullable(),
-  is_active: z.boolean(),
   is_admin: z.boolean(),
+  is_root_protected: z.boolean(),
   mfa_enabled: z.boolean(),
   status: z.enum(['pending_approval', 'active', 'suspended', 'rejected', 'disabled']),
   rejection_reason: z.string().nullable(),
@@ -38,8 +39,8 @@ export interface WireUser {
   phone: string;
   image: string | null;
   address: string | null;
-  is_active: boolean;
   is_admin: boolean;
+  is_root_protected: boolean;
   mfa_enabled: boolean;
   status: 'pending_approval' | 'active' | 'suspended' | 'rejected' | 'disabled';
   rejection_reason: string | null;
@@ -63,8 +64,8 @@ export function toWireUser(row: UserRow): WireUser {
     phone: row.phone,
     image: row.image,
     address: row.address,
-    is_active: row.is_active,
     is_admin: row.is_admin,
+    is_root_protected: row.is_root_protected,
     mfa_enabled: row.mfa_enabled,
     status: row.status,
     rejection_reason: row.rejection_reason,
@@ -85,7 +86,22 @@ export const userIdParamsSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
 
-const passwordSchema = z.string().min(8, 'Password must be at least 8 characters').max(255);
+/**
+ * Mirrors the app's own rule (`CustomRegex.passwordRegex`, qirtas_app
+ * core/foundation/utils/validators.dart): at least 8 characters, containing at
+ * least one letter and one digit.
+ *
+ * The client-side check is a courtesy, not a boundary — until this matched it,
+ * `"aaaaaaaa"` was accepted from curl, Postman, or any future client, and the
+ * only rule that actually holds is the server's (production_readiness.md §A4).
+ * If the app's regex changes, change this one in the same commit.
+ */
+const passwordSchema = z
+  .string()
+  .min(8, 'Password must be at least 8 characters')
+  .max(255)
+  .regex(/[A-Za-z]/, 'Password must contain at least one letter')
+  .regex(/\d/, 'Password must contain at least one digit');
 
 /**
  * Self-registration — the single entry point for every internal account.
@@ -96,13 +112,33 @@ export const registerStaffBodySchema = z.object({
   first_name: z.string().trim().min(1).max(100),
   last_name: z.string().trim().min(1).max(100),
   email: z.string().trim().toLowerCase().email().max(255),
-  phone: z.string().trim().min(1).max(32),
+  phone: syrianPhoneSchema,
   password: passwordSchema,
   requested_role_id: z.coerce.number().int().positive(),
   requested_branch_id: z.coerce.number().int().positive().nullable().optional(),
   requested_ownership_percentage: z.coerce.number().min(0.01).max(100).optional(),
 });
 export type RegisterStaffBody = z.infer<typeof registerStaffBodySchema>;
+
+/**
+ * Admin-direct creation — distinct from registerStaffBodySchema above.
+ * `/register` is self-service + later admin review (decide-registration);
+ * this is an admin creating a fully-active account for someone else in one
+ * step, with the role already assigned (required, not just "requested") —
+ * the admin issuing this call IS the approval, by definition. Never conflate
+ * the two flows or their endpoints.
+ */
+export const createUserByAdminBodySchema = z.object({
+  first_name: z.string().trim().min(1).max(100),
+  last_name: z.string().trim().min(1).max(100),
+  email: z.string().trim().toLowerCase().email().max(255),
+  phone: syrianPhoneSchema,
+  password: passwordSchema,
+  role_id: z.coerce.number().int().positive(),
+  branch_id: z.coerce.number().int().positive().nullable().optional(),
+  ownership_percentage: z.coerce.number().min(0.01).max(100).optional(),
+});
+export type CreateUserByAdminBody = z.infer<typeof createUserByAdminBodySchema>;
 
 /** Admin decision on a pending_approval account — accept as-is, accept with edits, or reject. */
 export const decideRegistrationBodySchema = z.discriminatedUnion('decision', [
@@ -119,6 +155,19 @@ export const decideRegistrationBodySchema = z.discriminatedUnion('decision', [
 ]);
 export type DecideRegistrationBody = z.infer<typeof decideRegistrationBodySchema>;
 
+/**
+ * Resubmission after a rejection — same request shape as registerStaffBodySchema
+ * minus identity/password fields (those don't change on resubmit, only the
+ * requested role/branch/ownership%). Caller is identified by their session
+ * (req.user), not by body/params.
+ */
+export const resubmitRegistrationBodySchema = z.object({
+  requested_role_id: z.coerce.number().int().positive(),
+  requested_branch_id: z.coerce.number().int().positive().nullable().optional(),
+  requested_ownership_percentage: z.coerce.number().min(0.01).max(100).optional(),
+});
+export type ResubmitRegistrationBody = z.infer<typeof resubmitRegistrationBodySchema>;
+
 export const loginBodySchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1),
@@ -131,7 +180,7 @@ export const bootstrapSuperAdminBodySchema = z.object({
   first_name: z.string().trim().min(1).max(100),
   last_name: z.string().trim().min(1).max(100),
   email: z.string().trim().toLowerCase().email().max(255),
-  phone: z.string().trim().min(1).max(32),
+  phone: syrianPhoneSchema,
   password: passwordSchema,
 });
 export type BootstrapSuperAdminBody = z.infer<typeof bootstrapSuperAdminBodySchema>;
@@ -141,8 +190,50 @@ export const suspendUserBodySchema = z.object({
 });
 export type SuspendUserBody = z.infer<typeof suspendUserBodySchema>;
 
+/**
+ * Edits identity/profile fields only — status/is_admin/password each have
+ * their own dedicated endpoint (suspend/disable/reactivate/decide-registration
+ * for status; password change is a separate, out-of-scope flow) and are
+ * never touched here.
+ */
+export const updateUserBodySchema = z.object({
+  first_name: z.string().trim().min(1).max(100).optional(),
+  last_name: z.string().trim().min(1).max(100).optional(),
+  email: z.string().trim().toLowerCase().email().max(255).optional(),
+  phone: optionalSyrianPhoneSchema,
+});
+export type UpdateUserBody = z.infer<typeof updateUserBodySchema>;
+
 /** Mirrors LoginResult (services/users.service.ts) for OpenAPI doc generation only. */
 export const loginResponseSchema = z.object({
   user: userResponseSchema,
+  token: z.string(),
   session_id: z.number().int(),
+  permission_keys: z.array(z.string()),
 });
+
+/** Mirrors CurrentUserResult (services/users.service.ts) for OpenAPI doc generation only — same as loginResponseSchema minus token/session_id. */
+export const currentUserResponseSchema = z.object({
+  user: userResponseSchema,
+  permission_keys: z.array(z.string()),
+});
+
+/** See docs/rest_api.md §6.1 Filtering & Sorting — merged with paginationQuerySchema at the route. */
+export const usersFilterQuerySchema = z
+  .object({
+    status: z.enum(['pending_approval', 'active', 'suspended', 'rejected', 'disabled']).optional(),
+    is_admin: z.coerce.boolean().optional(),
+    requested_role_id: z.coerce.number().int().positive().optional(),
+    /**
+     * `true` → only users holding NO active assignment; `false` → only users
+     * who hold at least one. These are the people who exist in the system but
+     * belong to no branch and carry no role, so they are exactly the candidates
+     * for staffing an empty branch — and the subject of the dashboard's
+     * `user_unassigned` signal, which had no way to be listed before this.
+     */
+    unassigned: z.coerce.boolean().optional(),
+    sort_by: z.enum(['created_at', 'first_name']).default('created_at'),
+    sort_dir: z.enum(['asc', 'desc']).default('desc'),
+  })
+  .strict();
+export type UsersFilterQuery = z.infer<typeof usersFilterQuerySchema>;

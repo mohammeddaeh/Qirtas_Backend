@@ -7,9 +7,11 @@ import '../../features/identity/users.openapi.js';
 import '../../features/identity/roles.openapi.js';
 import '../../features/identity/permissions.openapi.js';
 import '../../features/identity/branches.openapi.js';
+import '../../features/dashboard/dashboard.openapi.js';
 import '../../features/identity/ownerships.openapi.js';
 import '../../features/identity/user-role-assignments.openapi.js';
 import '../../features/identity/audit-log.openapi.js';
+import '../../features/localization/languages.openapi.js';
 
 export function buildOpenApiDocument() {
   const generator = new OpenApiGeneratorV3(registry.definitions);

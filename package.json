@@ -17,8 +17,7 @@
     "db:push": "tsx node_modules/drizzle-kit/bin.cjs push",
     "db:studio": "tsx node_modules/drizzle-kit/bin.cjs studio",
     "db:seed": "tsx src/core/db/seed.ts",
-        "create:admin": "tsx src/core/db/create-admin.ts"
-
+    "db:setup": "npm run db:migrate && tsx src/core/db/seed.ts --admin --demo --reset"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.0",
@@ -27,6 +26,7 @@
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.4",
     "express": "^4.21.1",
+    "helmet": "^8.3.0",
     "pg": "^8.13.1",
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",

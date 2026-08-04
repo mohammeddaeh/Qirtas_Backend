@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, text, timestamp, index } from 'drizzle-orm/pg-core';
+import { pgTable, serial, integer, varchar, text, timestamp, index } from 'drizzle-orm/pg-core';
 import { usersTable } from './users.schema.js';
 
 /** Multiple concurrent sessions per user are allowed, no cap (users_roles.md). */
@@ -9,6 +9,8 @@ export const sessionsTable = pgTable(
     user_id: integer('user_id')
       .notNull()
       .references(() => usersTable.id, { onDelete: 'cascade' }),
+    /** Opaque bearer token (core/security/token.ts) — the actual credential sent as `Authorization: Bearer <token>`. */
+    token: varchar('token', { length: 64 }).notNull().unique(),
     device_info: text('device_info'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     last_active_at: timestamp('last_active_at', { withTimezone: true }).notNull().defaultNow(),

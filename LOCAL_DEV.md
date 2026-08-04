@@ -7,18 +7,46 @@
 ## الترتيب الكامل من الصفر (أول مرة)
 
 ```powershell
-cd "d:\awqaf_app\test full project with temp and back\qirtas_backend"
+cd "d:\awqaf_app\Qirtas\qirtas_backend"
 
 docker compose up -d       # شغّل قاعدة البيانات
 docker compose ps          # تأكد إن الحالة "healthy"
 
-npm run db:migrate         # أنشئ الجداول (مرة واحدة، أو بعد أي تعديل بالـ schema)
-npm run db:seed            # ازرع الأدوار والصلاحيات الأساسية (آمن التكرار)
+npm run db:setup           # الجداول + الأدوار والصلاحيات + حساب Super Admin + بيانات تجريبية
 
 npm run dev                # شغّل السيرفر — سيبها شغّالة في هذي الطرفية
 ```
 
+`db:setup` أمر واحد بيعمل كل حاجة: `db:migrate` ثم `db:seed -- --admin --demo --reset`. مش محتاج تشغّل السيرفر في النص ولا تنادي `curl` عشان تعمل أول حساب.
+
+**بيانات الدخول الافتراضية** بعد `db:setup`:
+
+| الحقل | القيمة |
+| ----- | ------ |
+| البريد | `super_admin@admin.com` |
+| كلمة المرور | `P@ssw0rd@123` |
+
+> غيّرها بمتغيّرات البيئة `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` (وكمان `SEED_ADMIN_FIRST_NAME` / `SEED_ADMIN_LAST_NAME` / `SEED_ADMIN_PHONE`) قبل تشغيل الأمر لو حبيت. القيم الافتراضية للتطوير المحلي فقط.
+
 بعد كده افتح **طرفية جديدة** لأي أمر تجربة (curl، psql...) — طرفية `npm run dev` لازم تفضل شغّالة لوحدها.
+
+---
+
+## أمر السيد الواحد (`db:seed`)
+
+كل الزرع بيمر من مدخل واحد: `npm run db:seed`. الجزء **الأساسي** (الصلاحيات + الأدوار + أسماء الصلاحيات المعروضة بالعربي/الإنجليزي) بيشتغل دايماً وآمن التكرار، والباقي flags اختيارية:
+
+| الأمر | يعمل إيه |
+| ----- | -------- |
+| `npm run db:seed` | الأساسي فقط — صلاحيات + أدوار + أسماء الصلاحيات (ar/en) |
+| `npm run db:seed -- --admin` | + إنشاء أول Super Admin (بيتخطّى لو في مستخدمين أصلاً) |
+| `npm run db:seed -- --demo --reset` | + بيانات عربية تجريبية (15 فرع، 67 مستخدم) بعد مسح التجريبي القديم |
+| `npm run db:seed -- --fr` | + اللغة الفرنسية الديناميكية |
+| `npm run db:seed -- --ui-overrides-demo` | + demo تغيير نص UI من الخادم (**بيغيّر نص ظاهر عمداً**) |
+| `npm run db:seed -- --all` | = `--admin --demo --fr` (بدون `--ui-overrides-demo` وبدون `--reset`) |
+| `npm run db:seed -- --help` | يعرض القائمة دي كاملة |
+
+⚠️ `--reset` بيعمل **حذف فعلي** لكل مستخدم بريده منتهي بـ`@qirtas.test` وكل الفروع التجريبية بالاسم — محصور ببيانات السكربت نفسه، مابيلمس بيانات حقيقية. مابيشتغل إلا مع `--demo`.
 
 ---
 
@@ -31,10 +59,11 @@ docker compose up -d       # لو القاعدة واقفة
 npm run dev                # شغّل السيرفر
 ```
 
-`db:migrate` و`db:seed` مش لازم تتكرر إلا لو:
+`db:setup` مش لازم يتكرر إلا لو:
 
-- عدّلت شكل جدول (schema) → `db:migrate` تاني
-- عايز تتأكد إن الأدوار الأساسية موجودة → `db:seed` (آمن، مش هيكرر البيانات)
+- عدّلت شكل جدول (schema) → `npm run db:migrate`
+- عايز تتأكد إن الأدوار الأساسية موجودة → `npm run db:seed` (آمن، مش هيكرر البيانات)
+- عايز ترجع لبيانات تجربة نظيفة → `npm run db:seed -- --demo --reset`
 
 ---
 
@@ -81,14 +110,15 @@ http://localhost:3000/openapi.json
 # فحص إن السيرفر شغّال
 curl.exe http://localhost:3000/health
 
-# إنشاء أول حساب Super Admin (مرة واحدة بس، أول ما القاعدة تكون فاضية من اليوزرات)
-curl.exe -X POST http://localhost:3000/api/v1/users/bootstrap-super-admin -H "Content-Type: application/json" -d '{\"first_name\":\"Admin\",\"last_name\":\"Test\",\"email\":\"admin@awqaf.test\",\"phone\":\"0500000000\",\"password\":\"testpass123\"}'
+# إنشاء أول حساب Super Admin عبر HTTP — البديل اليدوي لـ`db:seed -- --admin`
+# (مرة واحدة بس، أول ما القاعدة تكون فاضية من اليوزرات — نفس الـ service بالضبط)
+curl.exe -X POST http://localhost:3000/api/v1/users/bootstrap-super-admin -H "Content-Type: application/json" -d '{\"first_name\":\"Admin\",\"last_name\":\"Qirtas\",\"email\":\"super_admin@admin.com\",\"phone\":\"0900000000\",\"password\":\"P@ssw0rd@123\"}'
 
-# تسجيل دخول
-curl.exe -X POST http://localhost:3000/api/v1/users/login -H "Content-Type: application/json" -d '{\"email\":\"admin@awqaf.test\",\"password\":\"testpass123\"}'
+# تسجيل دخول (بيانات db:setup الافتراضية)
+curl.exe -X POST http://localhost:3000/api/v1/users/login -H "Content-Type: application/json" -d '{\"email\":\"super_admin@admin.com\",\"password\":\"P@ssw0rd@123\"}'
 
 # تسجيل موظف جديد (تسجيل ذاتي — بيحتاج موافقة أدمن، الحالة تطلع pending_approval)
-curl.exe -X POST http://localhost:3000/api/v1/users/register -H "Content-Type: application/json" -d '{\"first_name\":\"Sara\",\"last_name\":\"Emp\",\"email\":\"sara@awqaf.test\",\"phone\":\"0500000002\",\"password\":\"testpass123\",\"requested_role_id\":5}'
+curl.exe -X POST http://localhost:3000/api/v1/users/register -H "Content-Type: application/json" -d '{\"first_name\":\"Sara\",\"last_name\":\"Emp\",\"email\":\"sara@test.com\",\"phone\":\"0900000002\",\"password\":\"P@ssw0rd@123\",\"requested_role_id\":5}'
 
 # عرض كل اليوزرات
 curl.exe http://localhost:3000/api/v1/users

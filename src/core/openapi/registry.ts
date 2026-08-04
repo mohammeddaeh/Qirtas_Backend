@@ -49,7 +49,7 @@ export const commonErrorResponses = {
 
 export const unauthorizedResponse = {
   401: {
-    description: 'Authentication required (actor not resolved — see auth.stub.ts)',
+    description: 'Authentication required (missing/invalid Bearer token — see core/middleware/auth.ts)',
     content: { 'application/json': { schema: errorEnvelope } },
   },
 } as const;

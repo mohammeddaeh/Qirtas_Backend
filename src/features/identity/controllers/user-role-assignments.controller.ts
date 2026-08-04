@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 import { ok, created } from '../../../core/http/response.js';
-import { requireActorId } from '../../../core/http/require-actor.js';
+import { requireActorId, buildActorContext } from '../../../core/http/require-actor.js';
 import * as assignmentsService from '../services/user-role-assignments.service.js';
 import type {
   CreateAssignmentBody,
@@ -14,23 +14,24 @@ export async function listForUser(req: Request, res: Response): Promise<void> {
 }
 
 export async function createAssignment(req: Request, res: Response): Promise<void> {
-  const actorUserId = requireActorId(req);
+  const actor = buildActorContext(req, requireActorId(req));
   const { userId } = req.params as unknown as { userId: number };
   const body = req.body as CreateAssignmentBody;
-  const assignment = await assignmentsService.createAssignment(actorUserId, userId, body);
+  const assignment = await assignmentsService.createAssignment(actor, userId, body);
   created(res, assignment);
 }
 
 export async function transferAssignment(req: Request, res: Response): Promise<void> {
-  const actorUserId = requireActorId(req);
+  const actor = buildActorContext(req, requireActorId(req));
   const { assignmentId } = req.params as unknown as { assignmentId: number };
   const body = req.body as TransferAssignmentBody;
-  const assignment = await assignmentsService.transferAssignment(actorUserId, assignmentId, body);
+  const assignment = await assignmentsService.transferAssignment(actor, assignmentId, body);
   ok(res, assignment);
 }
 
 export async function endAssignment(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
   const { assignmentId } = req.params as unknown as { assignmentId: number };
-  const assignment = await assignmentsService.endAssignment(assignmentId);
+  const assignment = await assignmentsService.endAssignment(actor, assignmentId);
   ok(res, assignment);
 }

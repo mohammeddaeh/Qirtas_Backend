@@ -6,7 +6,11 @@ export const userRoleAssignmentResponseSchema = z.object({
   id: z.number().int(),
   user_id: z.number().int(),
   role_id: z.number().int(),
+  /** Present on list responses; absent on the create/transfer echo. */
+  role_name: z.string().optional(),
   branch_id: z.number().int().nullable(),
+  /** `null` = unrestricted (every branch), not "unknown". */
+  branch_name: z.string().nullable().optional(),
   valid_from: z.string(),
   valid_to: z.string().nullable(),
   created_at: z.string(),
@@ -16,10 +20,37 @@ export interface WireUserRoleAssignment {
   id: number;
   user_id: number;
   role_id: number;
+  role_name?: string;
   branch_id: number | null;
+  branch_name?: string | null;
   valid_from: string;
   valid_to: string | null;
   created_at: string;
+}
+
+/** List variant — carries the joined display names alongside the ids. */
+export function toWireUserRoleAssignmentWithNames(row: {
+  id: number;
+  user_id: number;
+  role_id: number;
+  role_name: string;
+  branch_id: number | null;
+  branch_name: string | null;
+  valid_from: Date;
+  valid_to: Date | null;
+  created_at: Date;
+}): WireUserRoleAssignment {
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    role_id: row.role_id,
+    role_name: row.role_name,
+    branch_id: row.branch_id,
+    branch_name: row.branch_name,
+    valid_from: row.valid_from.toISOString(),
+    valid_to: row.valid_to ? row.valid_to.toISOString() : null,
+    created_at: row.created_at.toISOString(),
+  };
 }
 
 export function toWireUserRoleAssignment(row: UserRoleAssignmentRow): WireUserRoleAssignment {

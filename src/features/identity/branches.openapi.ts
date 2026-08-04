@@ -11,6 +11,7 @@ import {
   createBranchBodySchema,
   updateBranchBodySchema,
   branchResponseSchema,
+  branchesFilterQuerySchema,
 } from './dtos/branches.dto.js';
 
 const tags = ['Branches'];
@@ -22,8 +23,10 @@ registry.registerPath({
   method: 'get',
   path: '/api/v1/branches',
   tags,
-  summary: 'List branches (paginated)',
-  request: { query: paginationQuerySchema },
+  summary: 'List branches (paginated, filterable, sortable)',
+  description:
+    'All query params below are optional — omitting them returns every branch, unfiltered, newest first (see docs/rest_api.md §6.1).',
+  request: { query: paginationQuerySchema.merge(branchesFilterQuerySchema) },
   responses: {
     200: {
       description: 'Paginated list of branches',

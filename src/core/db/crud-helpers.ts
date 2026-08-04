@@ -12,31 +12,39 @@ import type { PaginationParams } from '../pagination/pagination.js';
  *
  * Usage in a repository file:
  *   export function findMany(params: PaginationParams) {
- *     return findManyPaginated(branchesTable, params);
+ *     return findManyPaginated(branchesTable, params, {
+ *       orderBy: desc(branchesTable.created_at),
+ *     });
  *   }
  *   export function findById(id: number) {
  *     return findOneById(branchesTable, branchesTable.id, id);
  *   }
  *
- * `where`/`orderBy` are optional escape hatches for modules that need extra
- * filtering or ordering on top of the identical list/count shape (e.g.
- * audit-log-entries) — the paging + count-total mechanics stay shared.
+ * `where` is an optional escape hatch for modules that need extra filtering
+ * on top of the identical list/count shape — the paging + count-total
+ * mechanics stay shared.
+ *
+ * `orderBy` is mandatory: without an explicit ORDER BY, Postgres returns rows
+ * in unspecified physical order (not guaranteed stable across requests), which
+ * silently breaks the Flutter side's `prependItem()` optimistic-insert
+ * assumption (qirtas_app/lib/Features/CLAUDE.md §CRUD-PATTERNS). Default to
+ * `desc(table.created_at)` unless the module has an explicit reason otherwise.
  */
 
 export async function findManyPaginated<TRow>(
   table: PgTable,
   params: PaginationParams,
-  options?: { where?: SQL; orderBy?: SQL },
+  options: { where?: SQL; orderBy: SQL },
 ): Promise<{ rows: TRow[]; total: number }> {
   const [rows, totalResult] = await Promise.all([
     db
       .select()
       .from(table)
-      .where(options?.where)
-      .orderBy(...(options?.orderBy ? [options.orderBy] : []))
+      .where(options.where)
+      .orderBy(options.orderBy)
       .limit(params.limit)
       .offset(params.offset),
-    db.select({ value: count() }).from(table).where(options?.where),
+    db.select({ value: count() }).from(table).where(options.where),
   ]);
   return { rows: rows as TRow[], total: totalResult[0]?.value ?? 0 };
 }

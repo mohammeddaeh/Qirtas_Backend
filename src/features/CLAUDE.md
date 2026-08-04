@@ -37,17 +37,27 @@ features/<name>/
 
 ### 1) List (`GET /`)
 
-- الـ**repository**: لازم يستخدم `findManyPaginated(table, params)` من `src/core/db/crud-helpers.ts` — ما تكتبش `Promise.all([select, count])` يدويًا من جديد. مثال (`branches.repository.ts`):
+- الـ**repository**: لازم يستخدم `findManyPaginated(table, params, options)` من `src/core/db/crud-helpers.ts` — ما تكتبش `Promise.all([select, count])` يدويًا من جديد. **`options.orderBy` إلزامي** (افتراضياً `desc(table.created_at)`) — بدونه ما فيش `ORDER BY` فيرجع ترتيب PostgreSQL الفيزيائي غير المضمون، وده يكسر افتراض `prependItem()` بالفرونت (`qirtas_app/lib/Features/CLAUDE.md` §CRUD-PATTERNS). مثال (`branches.repository.ts`) مع فلترة اختيارية (تفصيل كامل بـ`docs/rest_api.md` §6.1):
   ```ts
+  const sortColumns = { created_at: branchesTable.created_at, name: branchesTable.name } as const;
+
   export function findMany(
     params: PaginationParams,
+    filter: BranchesFilterQuery,
   ): Promise<{ rows: BranchRow[]; total: number }> {
-    return findManyPaginated<BranchRow>(branchesTable, params);
+    const conditions: SQL[] = [];
+    if (filter.status !== undefined) conditions.push(eq(branchesTable.status, filter.status));
+
+    return findManyPaginated<BranchRow>(branchesTable, params, {
+      where: conditions.length > 0 ? and(...conditions) : undefined,
+      orderBy: (filter.sort_dir === 'asc' ? asc : desc)(sortColumns[filter.sort_by]),
+    });
   }
   ```
 - الـ**service**: يستدعي الـrepository، يحوّل كل صف لـwire عبر `toWire<X>`، ويرجّع عبر `paginated()` من `core/pagination/pagination.ts`.
-- الـ**controller**: `toPaginationParams(req.query)` → `service.list<X>(params)` → `ok(res, result)`.
-- الـ**route**: `validate(paginationQuerySchema, 'query')` قبل `asyncHandler`.
+- الـ**controller**: `toPaginationParams(req.query)` → `service.list<X>(params, filter)` → `ok(res, result)`.
+- الـ**route**: `validate(paginationQuerySchema.merge({module}FilterQuerySchema), 'query')` قبل `asyncHandler` — الدمج يحافظ على `.strict()` (مُتحقَّق فعلياً بالمشروع)، فأي براميتر غير معرَّف بالـfilter schema يُرفض بـ422.
+- الـ**filter schema**: يُعرَّف بجانب DTOs الموديول (`dtos/{module}.dto.ts`) — `.strict()` إلزامي + `sort_by`/`sort_dir` بافتراض `created_at`/`desc`. **الفرونت يطابقه يدوياً** بـclass `{Module}FilterParams` بـ`domain/params/` (بلا أداة توليد — نفس نمط DTOs/params الحالي) — أي حقل يُضاف/يُحذف هنا يُطابَق هناك بنفس التغيير.
 - فلترة إضافية (زي `?branch_scope=` بـOwnerships) تُضاف كـquery schema منفصل خاص بالموديول — مش جزء من الهيلبر المشترك.
 
 ### 2) Get by ID (`GET /:id`)

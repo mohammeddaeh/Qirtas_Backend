@@ -8,6 +8,41 @@
       "when": 1783599939514,
       "tag": "0000_loud_franklin_richards",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1784802493080,
+      "tag": "0001_sloppy_the_fallen",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785050271242,
+      "tag": "0002_mysterious_warhawk",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785132582481,
+      "tag": "0003_cooing_felicia_hardy",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785826419249,
+      "tag": "0004_lyrical_wendell_vaughn",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785826593981,
+      "tag": "0005_flawless_centennial",
+      "breakpoints": true
     }
   ]
 }

@@ -18,3 +18,5 @@ export * from '../../features/identity/schemas/user-role-assignments.schema.js';
 export * from '../../features/identity/schemas/ownerships.schema.js';
 export * from '../../features/identity/schemas/audit-log-entries.schema.js';
 export * from '../../features/identity/schemas/sessions.schema.js';
+export * from '../../features/localization/schemas/languages.schema.js';
+export * from '../../features/localization/schemas/translation-entries.schema.js';

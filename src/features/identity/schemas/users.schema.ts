@@ -41,8 +41,20 @@ export const usersTable = pgTable('users', {
   phone: varchar('phone', { length: 32 }).notNull(),
   image: text('image'),
   address: text('address'),
-  is_active: boolean('is_active').notNull().default(true),
+  // NOTE: `is_active` was removed 2026-08-04. It was a second source of truth
+  // for something `status` already answers, read by exactly zero pieces of
+  // logic while still being sent to clients — an invitation to write
+  // `if (user.is_active)` and get `true` for a disabled account
+  // (production_readiness.md §B2). Account state lives in `status` alone.
   is_admin: boolean('is_admin').notNull().default(false),
+
+  // --- Root Protected Account (docs/reference/users_roles.md — Feature:
+  // Root Protected Account, 2026-07-27). Set to true ONLY inside
+  // bootstrapSuperAdmin() at first-run — never accepted as request input on
+  // any endpoint (absent from createUserByAdminBodySchema/updateUserBodySchema
+  // and every other user-input zod schema). Exactly one row in the whole
+  // system may ever carry true. ---
+  is_root_protected: boolean('is_root_protected').notNull().default(false),
 
   // --- Authentication (users_roles.md — Feature: Authentication) ---
   password_hash: varchar('password_hash', { length: 255 }).notNull(),

@@ -1,11 +1,43 @@
-import { eq, count, ne, and } from 'drizzle-orm';
+import { eq, count, ne, and, asc, desc, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findManyPaginated, findOneById } from '../../../core/db/crud-helpers.js';
 import { usersTable, type UserRow, type NewUserRow } from '../schemas/users.schema.js';
+import { userRoleAssignmentsTable } from '../schemas/user-role-assignments.schema.js';
 import type { PaginationParams } from '../../../core/pagination/pagination.js';
+import type { UsersFilterQuery } from '../dtos/users.dto.js';
 
-export function findMany(params: PaginationParams): Promise<{ rows: UserRow[]; total: number }> {
-  return findManyPaginated<UserRow>(usersTable, params);
+const sortColumns = {
+  created_at: usersTable.created_at,
+  first_name: usersTable.first_name,
+} as const;
+
+export function findMany(
+  params: PaginationParams,
+  filter: UsersFilterQuery,
+): Promise<{ rows: UserRow[]; total: number }> {
+  const conditions: SQL[] = [];
+  if (filter.status !== undefined) conditions.push(eq(usersTable.status, filter.status));
+  if (filter.is_admin !== undefined) conditions.push(eq(usersTable.is_admin, filter.is_admin));
+  if (filter.requested_role_id !== undefined) {
+    conditions.push(eq(usersTable.requested_role_id, filter.requested_role_id));
+  }
+  if (filter.unassigned !== undefined) {
+    // Correlated EXISTS rather than a join: a join would duplicate a user row
+    // per assignment and break both the page size and the total count.
+    const holdsActiveAssignment = sql`EXISTS (
+      SELECT 1 FROM ${userRoleAssignmentsTable} a
+      WHERE a.user_id = ${usersTable.id}
+        AND (a.valid_to IS NULL OR a.valid_to > now())
+    )`;
+    conditions.push(filter.unassigned ? sql`NOT ${holdsActiveAssignment}` : holdsActiveAssignment);
+  }
+
+  const orderFn = filter.sort_dir === 'asc' ? asc : desc;
+
+  return findManyPaginated<UserRow>(usersTable, params, {
+    where: conditions.length > 0 ? and(...conditions) : undefined,
+    orderBy: orderFn(sortColumns[filter.sort_by]),
+  });
 }
 
 export function findById(id: number): Promise<UserRow | undefined> {

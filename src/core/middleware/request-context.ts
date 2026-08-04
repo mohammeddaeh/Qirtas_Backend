@@ -1,10 +1,11 @@
 import type { NextFunction, Request, Response } from 'express';
+import { DEFAULT_LANG, isSupportedLang, type Lang } from '../i18n/messages.js';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
-      lang: 'ar' | 'en';
+      lang: Lang;
     }
   }
 }
@@ -12,10 +13,13 @@ declare global {
 /**
  * Reads the Accept-language header the Flutter app sends on every request
  * (see auth_interceptor.dart) and normalizes it to req.lang. Defaults to
- * 'ar' since that's this app's primary locale.
+ * DEFAULT_LANG ('ar') for missing/unsupported values. Validated against
+ * SUPPORTED_LANGUAGES (see core/i18n/messages.ts) — adding a language there
+ * is the only change needed here.
  */
 export function requestContext(req: Request, _res: Response, next: NextFunction): void {
   const header = req.header('Accept-language') ?? req.header('Accept-Language');
-  req.lang = header?.toLowerCase().startsWith('en') ? 'en' : 'ar';
+  const code = header?.toLowerCase().split('-')[0];
+  req.lang = isSupportedLang(code) ? code : DEFAULT_LANG;
   next();
 }

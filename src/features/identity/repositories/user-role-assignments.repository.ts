@@ -8,6 +8,7 @@ import {
 } from '../schemas/user-role-assignments.schema.js';
 import { usersTable } from '../schemas/users.schema.js';
 import { rolesTable } from '../schemas/roles.schema.js';
+import { branchesTable } from '../schemas/branches.schema.js';
 import { permissionsTable } from '../schemas/permissions.schema.js';
 import { rolePermissionsTable } from '../schemas/role-permissions.schema.js';
 
@@ -18,6 +19,50 @@ export async function findActiveForUser(userId: number): Promise<UserRoleAssignm
     .select()
     .from(userRoleAssignmentsTable)
     .where(and(eq(userRoleAssignmentsTable.user_id, userId), isActiveClause));
+}
+
+/** An assignment row plus the display names of what it points at. */
+export interface AssignmentWithNamesRow {
+  id: number;
+  user_id: number;
+  role_id: number;
+  role_name: string;
+  branch_id: number | null;
+  branch_name: string | null;
+  valid_from: Date;
+  valid_to: Date | null;
+  created_at: Date;
+}
+
+/**
+ * Same rows as [findActiveForUser], joined to the role and branch names.
+ *
+ * Raw ids are unreadable in a UI — "role 3 at branch 16" tells a human nothing
+ * — and resolving them client-side would mean fetching both catalogs just to
+ * label a handful of rows. `leftJoin` on branches because `branch_id` is
+ * nullable: an unrestricted assignment covers every branch and must still be
+ * returned, with a null name the client renders as "all branches".
+ */
+export async function findActiveForUserWithNames(
+  userId: number,
+): Promise<AssignmentWithNamesRow[]> {
+  return db
+    .select({
+      id: userRoleAssignmentsTable.id,
+      user_id: userRoleAssignmentsTable.user_id,
+      role_id: userRoleAssignmentsTable.role_id,
+      role_name: rolesTable.name,
+      branch_id: userRoleAssignmentsTable.branch_id,
+      branch_name: branchesTable.name,
+      valid_from: userRoleAssignmentsTable.valid_from,
+      valid_to: userRoleAssignmentsTable.valid_to,
+      created_at: userRoleAssignmentsTable.created_at,
+    })
+    .from(userRoleAssignmentsTable)
+    .innerJoin(rolesTable, eq(rolesTable.id, userRoleAssignmentsTable.role_id))
+    .leftJoin(branchesTable, eq(branchesTable.id, userRoleAssignmentsTable.branch_id))
+    .where(and(eq(userRoleAssignmentsTable.user_id, userId), isActiveClause))
+    .orderBy(userRoleAssignmentsTable.valid_from);
 }
 
 export function findById(id: number): Promise<UserRoleAssignmentRow | undefined> {
@@ -45,6 +90,19 @@ export async function closeAssignment(
     .where(eq(userRoleAssignmentsTable.id, id))
     .returning();
   return rows[0];
+}
+
+/**
+ * Active assignments still pointing at a branch — the gate on the terminal
+ * `closed` status (users_roles.md §Flow.2: the admin must resolve every
+ * assignment, by transfer or by ending it, before a branch closes for good).
+ */
+export async function countActiveForBranch(branchId: number): Promise<number> {
+  const rows = await db
+    .select({ value: sql<number>`count(*)` })
+    .from(userRoleAssignmentsTable)
+    .where(and(eq(userRoleAssignmentsTable.branch_id, branchId), isActiveClause));
+  return Number(rows[0]?.value ?? 0);
 }
 
 /**
@@ -108,6 +166,25 @@ export async function findEffectivePermissionKeys(
         branchClause,
       ),
     );
+
+  return rows.map((r) => r.key);
+}
+
+/**
+ * Union of permission keys across ALL of a user's active assignments,
+ * regardless of branch — used for branch-agnostic checks (identity/admin
+ * endpoints like roles/branches/ownerships management, which aren't
+ * themselves scoped to a single branch). For branch-scoped business actions,
+ * use findEffectivePermissionKeys(userId, branchId) instead.
+ */
+export async function findAllEffectivePermissionKeys(userId: number): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ key: rolePermissionsTable.permission_key })
+    .from(userRoleAssignmentsTable)
+    .innerJoin(rolesTable, eq(rolesTable.id, userRoleAssignmentsTable.role_id))
+    .innerJoin(rolePermissionsTable, eq(rolePermissionsTable.role_id, rolesTable.id))
+    .innerJoin(permissionsTable, eq(permissionsTable.key, rolePermissionsTable.permission_key))
+    .where(and(eq(userRoleAssignmentsTable.user_id, userId), isActiveClause, eq(rolesTable.is_active, true)));
 
   return rows.map((r) => r.key);
 }

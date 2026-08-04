@@ -1,4 +1,4 @@
-import { eq, count, and, sql } from 'drizzle-orm';
+import { eq, count, and, sql, asc, desc, type SQL } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findManyPaginated, findOneById } from '../../../core/db/crud-helpers.js';
 import { rolesTable, type RoleRow, type NewRoleRow } from '../schemas/roles.schema.js';
@@ -10,9 +10,42 @@ import {
 import { permissionsTable, type PermissionRow } from '../schemas/permissions.schema.js';
 import { userRoleAssignmentsTable } from '../schemas/user-role-assignments.schema.js';
 import type { PaginationParams } from '../../../core/pagination/pagination.js';
+import type { RolesFilterQuery } from '../dtos/roles.dto.js';
 
-export function findMany(params: PaginationParams): Promise<{ rows: RoleRow[]; total: number }> {
-  return findManyPaginated<RoleRow>(rolesTable, params);
+const sortColumns = {
+  created_at: rolesTable.created_at,
+  name: rolesTable.name,
+  level: rolesTable.level,
+} as const;
+
+export function findMany(
+  params: PaginationParams,
+  filter: RolesFilterQuery,
+  /**
+   * The caller's highest authority level, resolved by the service. `null` means
+   * they hold no levelled assignment at all, which the guard treats as exempt —
+   * so `assignable` then filters nothing.
+   */
+  actorLevel?: number | null,
+): Promise<{ rows: RoleRow[]; total: number }> {
+  const conditions: SQL[] = [];
+  if (filter.category !== undefined) conditions.push(eq(rolesTable.category, filter.category));
+  if (filter.is_active !== undefined) conditions.push(eq(rolesTable.is_active, filter.is_active));
+  if (filter.assignable === true && actorLevel !== null && actorLevel !== undefined) {
+    // Mirrors assertActorOutranksRole exactly: a role is assignable when it
+    // carries no level, or sits strictly BELOW the actor's (lower = higher
+    // authority, so "below" means a greater number).
+    conditions.push(
+      sql`(${rolesTable.level} IS NULL OR ${rolesTable.level} > ${actorLevel})` as SQL,
+    );
+  }
+
+  const orderFn = filter.sort_dir === 'asc' ? asc : desc;
+
+  return findManyPaginated<RoleRow>(rolesTable, params, {
+    where: conditions.length > 0 ? and(...conditions) : undefined,
+    orderBy: orderFn(sortColumns[filter.sort_by]),
+  });
 }
 
 export function findById(id: number): Promise<RoleRow | undefined> {

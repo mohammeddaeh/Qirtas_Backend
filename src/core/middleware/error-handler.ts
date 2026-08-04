@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { ZodError } from 'zod';
 import { ApiError } from '../http/api-error.js';
 import { logger } from '../logger/logger.js';
+import { resolveMessage } from '../i18n/messages.js';
 
 /**
  * The error envelope shape. `status` is ALWAYS boolean false here (mirrors
@@ -13,6 +14,8 @@ export interface ErrorEnvelope {
   message: string;
   code: number;
   errors?: Record<string, string[]>;
+  /** Optional machine-readable payload beyond `message` — see ApiError.data. */
+  data?: Record<string, unknown>;
 }
 
 /**
@@ -29,11 +32,22 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
         res.setHeader(key, value);
       }
     }
+    // `message_key` rides along inside `data` so a client can branch on WHICH
+    // rule refused it, not on the wording. Two different refusals often share a
+    // status code — a duplicate role NAME and a duplicate PERMISSION SET are
+    // both 409, but only the second is overridable with `force` — and matching
+    // translated prose to tell them apart breaks the moment a word changes.
+    const data =
+      err.messageKey !== undefined
+        ? { ...(err.data ?? {}), message_key: err.messageKey }
+        : err.data;
+
     const body: ErrorEnvelope = {
       status: false,
-      message: err.message,
+      message: resolveMessage(err.messageKey, req.lang, err.message),
       code: err.httpStatus,
       ...(err.details ? { errors: err.details } : {}),
+      ...(data ? { data } : {}),
     };
     res.status(err.httpStatus).json(body);
     return;

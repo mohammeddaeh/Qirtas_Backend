@@ -1,18 +1,24 @@
 import type { Request, Response } from 'express';
 import { ok, created } from '../../../core/http/response.js';
 import { toPaginationParams } from '../../../core/pagination/pagination.js';
-import { requireActorId } from '../../../core/http/require-actor.js';
+import { requireActorId, buildActorContext } from '../../../core/http/require-actor.js';
+import { resetLoginRateLimit } from '../../../core/middleware/login-rate-limit.js';
 import * as usersService from '../services/users.service.js';
 import type {
   RegisterStaffBody,
   DecideRegistrationBody,
   LoginBody,
   BootstrapSuperAdminBody,
+  UpdateUserBody,
+  CreateUserByAdminBody,
+  UsersFilterQuery,
+  ResubmitRegistrationBody,
 } from '../dtos/users.dto.js';
 
 export async function listUsers(req: Request, res: Response): Promise<void> {
-  const params = toPaginationParams(req.query as unknown as { page: number; limit: number });
-  const result = await usersService.listUsers(params);
+  const query = req.query as unknown as { page: number; limit: number } & UsersFilterQuery;
+  const params = toPaginationParams(query);
+  const result = await usersService.listUsers(params, query);
   ok(res, result);
 }
 
@@ -22,17 +28,46 @@ export async function getUserById(req: Request, res: Response): Promise<void> {
   ok(res, user);
 }
 
+/** Returns the calling user's own data + current effective permission keys — same shape as login()'s data, minus token/session_id. */
+export async function getCurrentUser(req: Request, res: Response): Promise<void> {
+  const actorUserId = requireActorId(req);
+  const result = await usersService.getCurrentUser(actorUserId);
+  ok(res, result);
+}
+
+export async function updateUser(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  const body = req.body as UpdateUserBody;
+  const user = await usersService.updateUser(actor, id, body);
+  ok(res, user);
+}
+
+export async function createUserByAdmin(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const body = req.body as CreateUserByAdminBody;
+  const user = await usersService.createUserByAdmin(actor, body);
+  created(res, user);
+}
+
 export async function registerStaff(req: Request, res: Response): Promise<void> {
   const body = req.body as RegisterStaffBody;
   const user = await usersService.registerStaff(body);
   created(res, user, 'Registration submitted — pending admin approval');
 }
 
-export async function decideRegistration(req: Request, res: Response): Promise<void> {
+export async function resubmitRegistration(req: Request, res: Response): Promise<void> {
   const actorUserId = requireActorId(req);
+  const body = req.body as ResubmitRegistrationBody;
+  const user = await usersService.resubmitRegistration(actorUserId, body);
+  ok(res, user);
+}
+
+export async function decideRegistration(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
   const { id } = req.params as unknown as { id: number };
   const body = req.body as DecideRegistrationBody;
-  const user = await usersService.decideRegistration(actorUserId, id, body);
+  const user = await usersService.decideRegistration(actor, id, body);
   ok(res, user);
 }
 
@@ -45,23 +80,34 @@ export async function bootstrapSuperAdmin(req: Request, res: Response): Promise<
 export async function login(req: Request, res: Response): Promise<void> {
   const body = req.body as LoginBody;
   const result = await usersService.login(body);
+  resetLoginRateLimit(body.email, req.ip ?? 'unknown');
   ok(res, result);
 }
 
+export async function logout(req: Request, res: Response): Promise<void> {
+  const header = req.header('Authorization');
+  const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
+  if (token) await usersService.logout(token);
+  ok(res, null);
+}
+
 export async function suspendUser(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
   const { id } = req.params as unknown as { id: number };
-  const user = await usersService.suspendUser(id);
+  const user = await usersService.suspendUser(actor, id);
   ok(res, user);
 }
 
 export async function disableUser(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
   const { id } = req.params as unknown as { id: number };
-  const user = await usersService.disableUser(id);
+  const user = await usersService.disableUser(actor, id);
   ok(res, user);
 }
 
 export async function reactivateUser(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
   const { id } = req.params as unknown as { id: number };
-  const user = await usersService.reactivateUser(id);
+  const user = await usersService.reactivateUser(actor, id);
   ok(res, user);
 }

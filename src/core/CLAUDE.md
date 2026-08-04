@@ -29,6 +29,8 @@
 > التفصيل الكامل (كيف يبدو كل route فعلياً طبقة بطبقة) بـ[../features/CLAUDE.md](../features/CLAUDE.md) §قواعد CRUD الموحّدة. هنا الأساس المشترك بالكود فقط.
 
 - `db/crud-helpers.ts`: `findManyPaginated(table, params)` و`findOneById(table, table.id, id)` — **الاستخدام الإلزامي** لكل `list`/`getById` repository بكل feature. فُحص فعلياً إن التنفيذ القديم (Promise.all يدوي بكل ملف) والهيلبر بينتجوا نفس الاستعلام حرفياً — لا فرق سلوكي، فرق تكرار كود بس.
+- **`options.orderBy` إلزامي لكل `findManyPaginated` جديد** — بدونه لا يصدر أي `ORDER BY` فيرجع الترتيب الفيزيائي غير المضمون من PostgreSQL (غير مستقر، قد يتغيّر بين طلبين). الافتراضي القياسي `desc(table.created_at)` (الأحدث أولاً) ما لم يطلب الموديول ترتيباً آخر صراحةً — هذا ما يسمح لـ`prependItem()` بالفرونت (`Features/CLAUDE.md` §CRUD-PATTERNS) بإدراج العنصر الجديد بأول القائمة محلياً بثقة أنه يطابق ما سيُرجعه الخادم عند أي `refresh()`/سحب-للتحديث لاحق. مثال: `roles.repository.ts`/`branches.repository.ts`/`users.repository.ts`.
+- **الفلترة/الترتيب الاختياريان لكل list endpoint** — التفصيل الكامل بـ[../../docs/rest_api.md](../../docs/rest_api.md) §6.1. خلاصة: كل موديول list يعرّف `{module}FilterQuerySchema` خاص به بملف `dtos/{module}.dto.ts` (`.strict()` إلزامي — يرفض أي براميتر غير معرَّف بـ422)، يُدمَج مع `paginationQuerySchema` بـ`.merge()` عند الـroute، والـrepository يبني `where`/`orderBy` ديناميكياً من الفلتر بدل تمرير قيمة ثابتة. الأساس يبقى "جلب الكل بلا فلترة" — لا فرق بالسلوك لأي طلب لا يمرّر هذه البراميترات. مطبَّق حالياً على `branches`/`roles`/`users` — القاعدة تُعمَّم على أي list endpoint جديد من v1.
 - **الباقي (findByName, countActive, replacePermissions, ...) يبقى يدوي بالكامل** — التوحيد يقتصر فقط على الجزء المتطابق حرفياً بين كل الموديولات (List وGetById)؛ أي استعلام خاص بمنطق موديول معيّن **لا** يُجبَر على قالب عام.
 - **Delete = تعطيل دائماً، لا Hard Delete افتراضيًا** — `is_active=false` أو `status='disabled'` حسب الجدول، أبدًا `DELETE FROM`. الاستثناء الوحيد (كيان بدون أي نشاط تاريخي) قرار صريح بالـservice، مش نمط عام.
 - **Route لتعطيل كيان دايمًا `POST /:id/deactivate`** (فعل صريح)، مش `DELETE /:id` — يعكس إنها عملية تغيير حالة، مش حذف فعلي.
@@ -39,11 +41,13 @@
 
 - `http/response.ts`: `ok()`/`created()`/`noContentOk()` — الاستخدام الوحيد المسموح لبناء نجاح.
 - `http/api-error.ts`: `ApiError` + subclasses (`NotFoundError`, `UnauthorizedError`, `ForbiddenError`, `ValidationError`, `ConflictError`, `RateLimitError`, `BusinessError`) — الاستخدام الوحيد المسموح لبناء خطأ.
+- **رسائل خطأ مترجمة (`ar`/`en`)**: `ApiError` تدعم `messageKey` اختياري (مدعوم حالياً على `UnauthorizedError`/`ForbiddenError`) — يُترجَم بـ`error-handler.ts` عبر `core/i18n/messages.ts` حسب `req.lang` (من `middleware/request-context.ts`). أضف key جديد فقط لخطأ يقرأه مستخدم حقيقي فعلاً (مو أخطاء داخلية/logs) — التفاصيل والقاعدة الكاملة بـ`docs/rest_api.md` §2.
 - `http/async-handler.ts`: لف أي controller async بـ`asyncHandler(...)` بالـroutes — بدونها أي `throw` داخل async function ما توصل لـ`error-handler.ts`.
 
 ## §Validation
 
 - `validation/validate.ts` + **zod** فقط. `validate(schema, 'body'|'query'|'params')` كـmiddleware قبل الـcontroller — يرمي `ValidationError(422)` بشكل Laravel (`errors: {field: [msgs]}`) تلقائياً عند الفشل، ويستبدل `req[source]` بالقيمة المُحقّقة/المُحوَّلة (فيدة: query params تصير أرقام حقيقية بعد التحقق).
+- **رقم الهاتف/التواصل — قاعدة صارمة إلزامية (لا استثناء)**: أي حقل يمثّل رقم هاتف أو رقم تواصل (`phone`, `contact_info`, أو أي اسم مشابه بأي DTO مستقبلي) **يجب** استخدام `syrianPhoneSchema`/`optionalSyrianPhoneSchema`/`nullableSyrianPhoneSchema` من `core/validation/common-schemas.ts` — **ممنوع مطلقاً** `z.string()` بحد أقصى طول فقط بلا تنسيق (`z.string().max(N)`). القاعدة: 10 أرقام بالضبط، تبدأ بـ`09` (سوريا). اكتُشفت هذه الثغرة فعلياً حين قبل `branches.contact_info` القيمة `"تر"` كرقم تواصل صالح — لا تحقق تنسيق كان موجوداً بتاتاً. مطابق حرفياً لـ`CustomRegex.syrianPhoneRegex` بالفرونت (`qirtas_app/lib/core/foundation/utils/validators.dart`) — أي تعديل بالقاعدة يجب أن يطابَق بالطرفين بنفس التغيير.
 
 ## §Pagination
 

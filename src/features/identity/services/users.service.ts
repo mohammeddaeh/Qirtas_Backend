@@ -10,12 +10,18 @@ import {
   type Paginated,
 } from '../../../core/pagination/pagination.js';
 import { hashPassword, verifyPassword } from '../../../core/security/password.js';
+import { generateSessionToken } from '../../../core/security/token.js';
 import * as usersRepository from '../repositories/users.repository.js';
 import * as rolesRepository from '../repositories/roles.repository.js';
 import * as assignmentsRepository from '../repositories/user-role-assignments.repository.js';
 import * as ownershipsRepository from '../repositories/ownerships.repository.js';
+import * as branchesRepository from '../repositories/branches.repository.js';
 import * as sessionsRepository from '../repositories/sessions.repository.js';
 import { SUPER_ADMIN_ROLE_NAME } from './roles.service.js';
+import * as assignmentsService from './user-role-assignments.service.js';
+import * as auditService from './audit.service.js';
+import { AUDIT, target } from './audit-actions.js';
+import type { RequestActorContext } from '../../../core/http/require-actor.js';
 import {
   toWireUser,
   type WireUser,
@@ -23,18 +29,82 @@ import {
   type DecideRegistrationBody,
   type LoginBody,
   type BootstrapSuperAdminBody,
+  type UpdateUserBody,
+  type CreateUserByAdminBody,
+  type UsersFilterQuery,
+  type ResubmitRegistrationBody,
 } from '../dtos/users.dto.js';
 
 const MAX_OWNERSHIP_PERCENTAGE = 100;
 
-export async function listUsers(params: PaginationParams): Promise<Paginated<WireUser>> {
-  const { rows, total } = await usersRepository.findMany(params);
+/** Renameable afterwards — this is a starting point, not a fixed identity. */
+const DEFAULT_BRANCH_NAME = 'الفرع الرئيسي';
+
+export async function listUsers(
+  params: PaginationParams,
+  filter: UsersFilterQuery,
+): Promise<Paginated<WireUser>> {
+  const { rows, total } = await usersRepository.findMany(params, filter);
   return paginated(rows.map(toWireUser), total, params);
 }
 
 export async function getUserById(id: number): Promise<WireUser> {
   const row = await usersRepository.findById(id);
   if (!row) throw new NotFoundError('User not found');
+  return toWireUser(row);
+}
+
+/**
+ * Edits identity/profile fields only (first/last name, email, phone) —
+ * status transitions go through suspend/disable/reactivate/decide-registration,
+ * password change is a separate out-of-scope flow, neither is touched here.
+ */
+export async function updateUser(
+  actor: RequestActorContext,
+  id: number,
+  body: UpdateUserBody,
+): Promise<WireUser> {
+  const existing = await usersRepository.findById(id);
+  if (!existing) throw new NotFoundError('User not found');
+
+  if (existing.is_root_protected) {
+    throw new ForbiddenError('This account is root-protected and cannot be modified');
+  }
+
+  if (body.email !== undefined && body.email !== existing.email) {
+    const conflict = await usersRepository.existsByEmailExcluding(body.email, id);
+    if (conflict) {
+      throw new BusinessError(409, 'An account with this email already exists');
+    }
+  }
+
+  const row = await usersRepository.update(id, {
+    ...(body.first_name !== undefined ? { first_name: body.first_name } : {}),
+    ...(body.last_name !== undefined ? { last_name: body.last_name } : {}),
+    ...(body.email !== undefined ? { email: body.email } : {}),
+    ...(body.phone !== undefined ? { phone: body.phone } : {}),
+  });
+  if (!row) throw new NotFoundError('User not found');
+
+  // Identity fields only — no password_hash reaches the log, by construction:
+  // this endpoint cannot change it (password has its own path).
+  await auditService.record(
+    actor,
+    AUDIT.userUpdate,
+    target.user(id),
+    {
+      first_name: existing.first_name,
+      last_name: existing.last_name,
+      email: existing.email,
+      phone: existing.phone,
+    },
+    {
+      first_name: row.first_name,
+      last_name: row.last_name,
+      email: row.email,
+      phone: row.phone,
+    },
+  );
   return toWireUser(row);
 }
 
@@ -75,6 +145,119 @@ export async function registerStaff(body: RegisterStaffBody): Promise<WireUser> 
 }
 
 /**
+ * Lets a `rejected` account submit a new request without changing email/
+ * password/name — only the requested role/branch/ownership% can change.
+ * Flips status back to pending_approval and clears the previous decision
+ * (reason/decided_at/decided_by), same as a fresh registerStaff row.
+ * (users_roles.md — Feature: Internal Self-Registration & Approval — "the
+ * person can see the rejection reason and resubmit a new request")
+ */
+export async function resubmitRegistration(
+  userId: number,
+  body: ResubmitRegistrationBody,
+): Promise<WireUser> {
+  const user = await usersRepository.findById(userId);
+  if (!user) throw new NotFoundError('User not found');
+  if (user.status !== 'rejected') {
+    throw new BusinessError(
+      409,
+      `Only a rejected registration can be resubmitted (current status: ${user.status})`,
+    );
+  }
+
+  const role = await rolesRepository.findById(body.requested_role_id);
+  if (!role) throw new NotFoundError('Requested role not found');
+
+  const row = await usersRepository.update(userId, {
+    status: 'pending_approval',
+    requested_role_id: body.requested_role_id,
+    requested_branch_id: body.requested_branch_id ?? null,
+    requested_ownership_percentage:
+      body.requested_ownership_percentage !== undefined
+        ? body.requested_ownership_percentage.toFixed(2)
+        : null,
+    rejection_reason: null,
+    decided_at: null,
+    decided_by_user_id: null,
+  });
+  if (!row) throw new NotFoundError('User not found');
+
+  return toWireUser(row);
+}
+
+/**
+ * Admin-direct creation — distinct from registerStaff above (self-service +
+ * later review). Here the admin creating the account IS the approval: the
+ * account lands at status=active immediately, with role/branch/ownership
+ * assigned in the same call — mirroring exactly what decideRegistration's
+ * approve branch does to a pending_approval account, just in one step
+ * instead of two. Never reuse/conflate with registerStaff.
+ */
+export async function createUserByAdmin(
+  actor: RequestActorContext,
+  body: CreateUserByAdminBody,
+): Promise<WireUser> {
+  const createdByUserId = actor.userId;
+  const existing = await usersRepository.findByEmail(body.email);
+  if (existing) {
+    throw new BusinessError(409, 'An account with this email already exists');
+  }
+
+  const role = await rolesRepository.findById(body.role_id);
+  if (!role) throw new NotFoundError('Role not found');
+  if (!role.is_active) {
+    throw new BusinessError(422, 'Cannot assign an inactive role');
+  }
+
+  if (body.ownership_percentage !== undefined) {
+    const currentSum = await ownershipsRepository.sumActivePercentage(body.branch_id ?? null);
+    if (currentSum + body.ownership_percentage > MAX_OWNERSHIP_PERCENTAGE) {
+      throw new BusinessError(
+        422,
+        `Assigning ${body.ownership_percentage}% ownership would push the scope total to ${currentSum + body.ownership_percentage}%, exceeding the 100% cap.`,
+      );
+    }
+  }
+
+  const passwordHash = await hashPassword(body.password);
+
+  const row = await usersRepository.insert({
+    first_name: body.first_name,
+    last_name: body.last_name,
+    email: body.email,
+    phone: body.phone,
+    password_hash: passwordHash,
+    status: 'active',
+    decided_at: new Date(),
+    decided_by_user_id: createdByUserId,
+  });
+
+  await assignmentsRepository.insert({
+    user_id: row.id,
+    role_id: body.role_id,
+    branch_id: body.branch_id ?? null,
+  });
+
+  if (body.ownership_percentage !== undefined) {
+    await ownershipsRepository.insert({
+      user_id: row.id,
+      percentage: body.ownership_percentage.toFixed(2),
+      branch_scope: body.branch_id ?? null,
+    });
+  }
+
+  // previous = null: the account did not exist before this call.
+  await auditService.record(actor, AUDIT.userCreate, target.user(row.id), null, {
+    email: row.email,
+    status: row.status,
+    role_id: body.role_id,
+    branch_id: body.branch_id ?? null,
+    ownership_percentage: body.ownership_percentage ?? null,
+  });
+  return toWireUser(row);
+}
+
+/**
  * Admin decision on a pending_approval account.
  * - approve: activates the account and opens the UserRoleAssignment (and
  *   Ownership record if requested) — using the admin's chosen role/branch/
@@ -83,10 +266,11 @@ export async function registerStaff(body: RegisterStaffBody): Promise<WireUser> 
  *   reason; the person can log in to see it and submit a new request.
  */
 export async function decideRegistration(
-  decidedByUserId: number,
+  actor: RequestActorContext,
   userId: number,
   decision: DecideRegistrationBody,
 ): Promise<WireUser> {
+  const decidedByUserId = actor.userId;
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
   if (user.status !== 'pending_approval') {
@@ -104,6 +288,15 @@ export async function decideRegistration(
       decided_by_user_id: decidedByUserId,
     });
     if (!row) throw new NotFoundError('User not found');
+    // The reason is logged with the decision: a rejection without its stated
+    // reason is unreviewable later, and the reason is the decision's substance.
+    await auditService.record(
+      actor,
+      AUDIT.userRegistrationDecide,
+      target.user(userId),
+      { status: user.status },
+      { status: row.status, decision: 'reject', reason: decision.reason },
+    );
     return toWireUser(row);
   }
 
@@ -152,6 +345,22 @@ export async function decideRegistration(
     });
   }
 
+  // Records what was actually granted, not what was requested — the admin may
+  // approve with a different role/branch/percentage than the applicant asked
+  // for, and the granted values are the ones that need answering for.
+  await auditService.record(
+    actor,
+    AUDIT.userRegistrationDecide,
+    target.user(userId),
+    { status: user.status },
+    {
+      status: row.status,
+      decision: 'approve',
+      role_id: roleId,
+      branch_id: branchId ?? null,
+      ownership_percentage: ownershipPercentage ?? null,
+    },
+  );
   return toWireUser(row);
 }
 
@@ -182,6 +391,10 @@ export async function bootstrapSuperAdmin(body: BootstrapSuperAdminBody): Promis
     is_admin: true,
     status: 'active',
     decided_at: new Date(),
+    // The ONLY code path in the whole codebase allowed to set this to true
+    // (docs/reference/users_roles.md — Feature: Root Protected Account).
+    // Never sourced from request body — this literal is the sole origin.
+    is_root_protected: true,
   });
 
   await assignmentsRepository.insert({
@@ -195,68 +408,189 @@ export async function bootstrapSuperAdmin(body: BootstrapSuperAdminBody): Promis
     branch_scope: null,
   });
 
+  // A fresh install with zero branches cannot place its first employee
+  // anywhere, so the system starts unusable — contradicting the settled
+  // decision that it begins with one default branch
+  // (users_roles.md; production_readiness.md §B4).
+  //
+  // Guarded rather than unconditional: bootstrap gates on zero *users*, and a
+  // deployment could conceivably have branches seeded before its first
+  // account. Creating a second "Main Branch" there would be worse than
+  // creating none.
+  const branchCount = await branchesRepository.countAll();
+  if (branchCount === 0) {
+    await branchesRepository.insert({
+      name: DEFAULT_BRANCH_NAME,
+      is_default: true,
+    });
+  }
+
   return toWireUser(row);
 }
 
 export interface LoginResult {
   user: WireUser;
+  token: string;
   session_id: number;
+  permission_keys: string[];
+}
+
+/** Shape shared by login() and getCurrentUser() — same {user, permission_keys} pair, minus the session-only fields (token/session_id). */
+export interface CurrentUserResult {
+  user: WireUser;
+  permission_keys: string[];
 }
 
 export async function login(body: LoginBody): Promise<LoginResult> {
   const user = await usersRepository.findByEmail(body.email);
-  if (!user) throw new UnauthorizedError('Invalid email or password');
+  if (!user) throw new UnauthorizedError('Invalid email or password', 'invalid_credentials');
 
   const valid = await verifyPassword(body.password, user.password_hash);
-  if (!valid) throw new UnauthorizedError('Invalid email or password');
+  if (!valid) throw new UnauthorizedError('Invalid email or password', 'invalid_credentials');
 
-  if (user.status === 'pending_approval') {
-    throw new ForbiddenError('Your registration is still pending admin approval');
-  }
-  if (user.status === 'rejected') {
-    throw new ForbiddenError(user.rejection_reason ?? 'Your registration request was rejected');
-  }
+  // pending_approval/rejected still get a real session — the account must
+  // stay reachable (status screen, edit-and-resubmit) even after the app is
+  // reinstalled and the original registration response is long gone. This
+  // session unlocks nothing protected: requirePermission() looks up active
+  // UserRoleAssignment rows, and these statuses never have one.
+  // (users_roles.md — Feature: Internal Self-Registration & Approval)
   if (user.status === 'suspended') {
-    throw new ForbiddenError('Your account is temporarily suspended');
+    throw new ForbiddenError(
+      'Your account is temporarily suspended',
+      { account_status: 'suspended' },
+      'account_suspended',
+    );
   }
   if (user.status === 'disabled') {
-    throw new ForbiddenError('Your account has been disabled');
+    throw new ForbiddenError(
+      'Your account has been disabled',
+      { account_status: 'disabled' },
+      'account_disabled',
+    );
   }
 
+  const token = generateSessionToken();
   const session = await sessionsRepository.insert({
     user_id: user.id,
+    token,
     device_info: body.device_info ?? null,
   });
+  const permissionKeys = await assignmentsRepository.findAllEffectivePermissionKeys(user.id);
 
-  return { user: toWireUser(user), session_id: session.id };
+  return { user: toWireUser(user), token, session_id: session.id, permission_keys: permissionKeys };
 }
 
-/** Temporary, reversible hold (investigation, long leave) — distinct from disable (permanent/manual offboarding). */
-export async function suspendUser(userId: number): Promise<WireUser> {
+/**
+ * Returns the calling user's own data + current effective permission keys —
+ * same shape login() returns (minus token/session_id, not needed here).
+ * Backs GET /users/me, the silent background-refresh endpoint the frontend
+ * polls after restoring a cached session (docs/reference/
+ * session_permission_integrity.md §6/§10). Defensive NotFoundError: with a
+ * valid session this should never trigger, but the user row could in theory
+ * vanish between session creation and this call.
+ */
+export async function getCurrentUser(userId: number): Promise<CurrentUserResult> {
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
+
+  const permissionKeys = await assignmentsRepository.findAllEffectivePermissionKeys(user.id);
+  return { user: toWireUser(user), permission_keys: permissionKeys };
+}
+
+/** Ends the current session only — other concurrent sessions for the same user are untouched (multi-session is allowed by design). */
+export async function logout(token: string): Promise<void> {
+  await sessionsRepository.deleteByToken(token);
+}
+
+/**
+ * Temporary, reversible hold (investigation, long leave) — distinct from
+ * disable (permanent/manual offboarding).
+ *
+ * Subject to the "last qualified staff" guard: a suspended account is
+ * explicitly NOT counted as an available replacement (users_roles.md §Flow.6),
+ * so suspending the only holder of a role in an operating branch empties that
+ * role exactly as ending the assignment would.
+ */
+export async function suspendUser(
+  actor: RequestActorContext,
+  userId: number,
+): Promise<WireUser> {
+  const user = await usersRepository.findById(userId);
+  if (!user) throw new NotFoundError('User not found');
+  if (user.is_root_protected) {
+    throw new ForbiddenError('This account is root-protected and cannot be modified');
+  }
+  await assignmentsService.assertUserIsReleasable(userId);
+
   const row = await usersRepository.update(userId, { status: 'suspended' });
   if (!row) throw new NotFoundError('User not found');
+  await auditService.record(
+    actor,
+    AUDIT.userSuspend,
+    target.user(userId),
+    { status: user.status },
+    { status: row.status },
+  );
   return toWireUser(row);
 }
 
-/** Permanent offboarding path — historical records stay attributed to this user forever. Never a hard delete. */
-export async function disableUser(userId: number): Promise<WireUser> {
+/**
+ * Permanent offboarding path — historical records stay attributed to this user
+ * forever. Never a hard delete.
+ *
+ * Same guard as [suspendUser]: disabling ends every assignment this person
+ * holds at once, so it must clear the bar that ending a single one does.
+ */
+export async function disableUser(
+  actor: RequestActorContext,
+  userId: number,
+): Promise<WireUser> {
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
+  if (user.is_root_protected) {
+    throw new ForbiddenError('This account is root-protected and cannot be modified');
+  }
+  await assignmentsService.assertUserIsReleasable(userId);
+
   const row = await usersRepository.update(userId, { status: 'disabled' });
   if (!row) throw new NotFoundError('User not found');
+  await auditService.record(
+    actor,
+    AUDIT.userDisable,
+    target.user(userId),
+    { status: user.status },
+    { status: row.status },
+  );
   return toWireUser(row);
 }
 
-/** Re-activation of a suspended or previously-disabled account — no new account is ever created for a returning employee. */
-export async function reactivateUser(userId: number): Promise<WireUser> {
+/**
+ * Re-activation of a suspended or previously-disabled account — no new
+ * account is ever created for a returning employee. A root-protected account
+ * should never reach suspended/disabled in the first place (suspend/disable
+ * above reject it unconditionally), so this guard is defensive/moot in
+ * practice — kept only for consistency with the other three mutation paths.
+ */
+export async function reactivateUser(
+  actor: RequestActorContext,
+  userId: number,
+): Promise<WireUser> {
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
+  if (user.is_root_protected) {
+    throw new ForbiddenError('This account is root-protected and cannot be modified');
+  }
   if (user.status !== 'suspended' && user.status !== 'disabled') {
     throw new BusinessError(409, `Cannot reactivate a user with status "${user.status}"`);
   }
   const row = await usersRepository.update(userId, { status: 'active' });
   if (!row) throw new NotFoundError('User not found');
+  await auditService.record(
+    actor,
+    AUDIT.userReactivate,
+    target.user(userId),
+    { status: user.status },
+    { status: row.status },
+  );
   return toWireUser(row);
 }

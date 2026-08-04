@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "is_root_protected" boolean DEFAULT false NOT NULL;

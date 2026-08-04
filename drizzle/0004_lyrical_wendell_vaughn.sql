@@ -1,0 +1,3 @@
+CREATE UNIQUE INDEX IF NOT EXISTS "branches_name_unique_idx" ON "branches" USING btree ("name");--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS "user_role_assignments_active_unique_idx" ON "user_role_assignments" USING btree ("user_id","role_id",COALESCE("branch_id", -1)) WHERE "user_role_assignments"."valid_to" IS NULL;--> statement-breakpoint
+ALTER TABLE "users" DROP COLUMN IF EXISTS "is_active";

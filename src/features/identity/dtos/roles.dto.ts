@@ -67,3 +67,26 @@ export const updateRoleLevelBodySchema = z.object({
   level: z.number().int().min(0),
 });
 export type UpdateRoleLevelBody = z.infer<typeof updateRoleLevelBodySchema>;
+
+/** See docs/rest_api.md §6.1 Filtering & Sorting — merged with paginationQuerySchema at the route. */
+export const rolesFilterQuerySchema = z
+  .object({
+    category: z.enum(['system', 'management', 'operational', 'financial', 'external']).optional(),
+    is_active: z.coerce.boolean().optional(),
+    /**
+     * `true` → only roles the CALLER may actually assign, i.e. strictly below
+     * their own authority level (a role with `level = null` carries no
+     * authority and is always assignable).
+     *
+     * Exists so a picker cannot offer a role that `assertActorOutranksRole`
+     * will certainly reject: without it the user chooses, submits, and only
+     * then learns it was never permitted. The comparison stays here on the
+     * server, beside the guard it mirrors, rather than being restated in each
+     * client where it would drift out of sync silently.
+     */
+    assignable: z.coerce.boolean().optional(),
+    sort_by: z.enum(['created_at', 'name', 'level']).default('created_at'),
+    sort_dir: z.enum(['asc', 'desc']).default('desc'),
+  })
+  .strict();
+export type RolesFilterQuery = z.infer<typeof rolesFilterQuerySchema>;

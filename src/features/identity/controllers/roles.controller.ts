@@ -7,11 +7,15 @@ import type {
   CreateRoleBody,
   UpdateRolePermissionsBody,
   UpdateRoleLevelBody,
+  RolesFilterQuery,
 } from '../dtos/roles.dto.js';
 
 export async function listRoles(req: Request, res: Response): Promise<void> {
-  const params = toPaginationParams(req.query as unknown as { page: number; limit: number });
-  const result = await rolesService.listRoles(params);
+  const query = req.query as unknown as { page: number; limit: number } & RolesFilterQuery;
+  const params = toPaginationParams(query);
+  // The actor is needed only for `?assignable=true`, which is relative to
+  // whoever is asking.
+  const result = await rolesService.listRoles(params, query, requireActorId(req));
   ok(res, result);
 }
 
@@ -22,9 +26,9 @@ export async function getRoleById(req: Request, res: Response): Promise<void> {
 }
 
 export async function createRole(req: Request, res: Response): Promise<void> {
-  const actorUserId = requireActorId(req);
+  const actor = buildActorContext(req, requireActorId(req));
   const body = req.body as CreateRoleBody;
-  const role = await rolesService.createRole(actorUserId, body);
+  const role = await rolesService.createRole(actor, body);
   const overSoftCap = await rolesService.isOverSoftCap();
   created(
     res,
@@ -48,15 +52,16 @@ export async function updateRolePermissions(req: Request, res: Response): Promis
 }
 
 export async function updateRoleLevel(req: Request, res: Response): Promise<void> {
-  const actorUserId = requireActorId(req);
+  const actor = buildActorContext(req, requireActorId(req));
   const { id } = req.params as unknown as { id: number };
   const body = req.body as UpdateRoleLevelBody;
-  const role = await rolesService.updateRoleLevel(actorUserId, id, body.level);
+  const role = await rolesService.updateRoleLevel(actor, id, body.level);
   ok(res, role);
 }
 
 export async function deactivateRole(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
   const { id } = req.params as unknown as { id: number };
-  const role = await rolesService.deactivateRole(id);
+  const role = await rolesService.deactivateRole(actor, id);
   ok(res, role);
 }

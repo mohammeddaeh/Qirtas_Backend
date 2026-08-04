@@ -11,6 +11,16 @@ export class ApiError extends Error {
     message: string,
     public readonly details?: Record<string, string[]>,
     public readonly headers?: Record<string, string>,
+    /** Optional machine-readable payload beyond `message` — e.g. a discriminator field a client branches on instead of matching free-text. */
+    public readonly data?: Record<string, unknown>,
+    /**
+     * Optional key into src/core/i18n/messages.ts. When set, error-handler.ts
+     * resolves it against req.lang ('ar'/'en') and uses that instead of
+     * `message`. `message` remains the English fallback (used when the key
+     * has no entry, and for logs). Most throw sites don't need this — only
+     * set it for errors a real end user reads (see messages.ts scope note).
+     */
+    public readonly messageKey?: string,
   ) {
     super(message);
     this.name = new.target.name;
@@ -24,14 +34,14 @@ export class NotFoundError extends ApiError {
 }
 
 export class UnauthorizedError extends ApiError {
-  constructor(message = 'Unauthorized') {
-    super(401, message);
+  constructor(message = 'Unauthorized', messageKey?: string) {
+    super(401, message, undefined, undefined, undefined, messageKey);
   }
 }
 
 export class ForbiddenError extends ApiError {
-  constructor(message = 'Forbidden') {
-    super(403, message);
+  constructor(message = 'Forbidden', data?: Record<string, unknown>, messageKey?: string) {
+    super(403, message, undefined, undefined, data, messageKey);
   }
 }
 
@@ -54,14 +64,26 @@ export class ConflictError extends ApiError {
 }
 
 export class RateLimitError extends ApiError {
-  constructor(retryAfterSeconds: number, message = 'Too many requests') {
-    super(429, message, undefined, { 'Retry-After': String(retryAfterSeconds) });
+  /**
+   * [messageKey] follows `req.lang` like every other user-facing refusal — a
+   * rate-limit message is read by an actual person mid-task, not by a
+   * developer, so leaving it English-only was an oversight.
+   */
+  constructor(retryAfterSeconds: number, message = 'Too many requests', messageKey?: string) {
+    super(
+      429,
+      message,
+      undefined,
+      { 'Retry-After': String(retryAfterSeconds) },
+      undefined,
+      messageKey,
+    );
   }
 }
 
 /** Generic 4xx business-rule failure that isn't one of the above. */
 export class BusinessError extends ApiError {
-  constructor(httpStatus: number, message: string) {
-    super(httpStatus, message);
+  constructor(httpStatus: number, message: string, messageKey?: string) {
+    super(httpStatus, message, undefined, undefined, undefined, messageKey);
   }
 }

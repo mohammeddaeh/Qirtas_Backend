@@ -13,6 +13,7 @@ import {
   updateRolePermissionsBodySchema,
   updateRoleLevelBodySchema,
   roleResponseSchema,
+  rolesFilterQuerySchema,
 } from './dtos/roles.dto.js';
 
 const tags = ['Roles (RBAC)'];
@@ -31,8 +32,8 @@ registry.registerPath({
   method: 'get',
   path: '/api/v1/roles',
   tags,
-  summary: 'List roles (paginated, without permissions per item)',
-  request: { query: paginationQuerySchema },
+  summary: 'List roles (paginated, filterable, sortable, without permissions per item)',
+  request: { query: paginationQuerySchema.merge(rolesFilterQuerySchema) },
   responses: {
     200: {
       description: 'Paginated list of roles',

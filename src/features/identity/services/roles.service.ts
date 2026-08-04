@@ -9,20 +9,34 @@ import * as userRoleAssignmentsRepository from '../repositories/user-role-assign
 import * as permissionsService from './permissions.service.js';
 import * as auditService from './audit.service.js';
 import type { RequestActorContext } from './audit.service.js';
+import { AUDIT, target } from './audit-actions.js';
 import {
   toWireRole,
   type WireRole,
   type CreateRoleBody,
   type UpdateRolePermissionsBody,
+  type RolesFilterQuery,
 } from '../dtos/roles.dto.js';
 import { toWirePermission } from '../dtos/permissions.dto.js';
 
-export const SUPER_ADMIN_ROLE_NAME = 'Super Admin';
+export const SUPER_ADMIN_ROLE_NAME = 'المدير العام';
 /** Soft cap — informational only, never blocks creation (users_roles.md, 2026-07-09). */
 const ROLE_SOFT_CAP = 25;
 
-export async function listRoles(params: PaginationParams): Promise<Paginated<WireRole>> {
-  const { rows, total } = await rolesRepository.findMany(params);
+export async function listRoles(
+  params: PaginationParams,
+  filter: RolesFilterQuery,
+  /** Required only when `filter.assignable` is set — see the filter's doc. */
+  actorUserId?: number,
+): Promise<Paginated<WireRole>> {
+  // Resolved here, not in the repository: the level lives behind the
+  // assignments repository, and the guard this mirrors reads it the same way.
+  const actorLevel =
+    filter.assignable === true && actorUserId !== undefined
+      ? await userRoleAssignmentsRepository.findHighestAuthorityLevel(actorUserId)
+      : undefined;
+
+  const { rows, total } = await rolesRepository.findMany(params, filter, actorLevel);
   return paginated(
     rows.map((r) => toWireRole(r)),
     total,
@@ -48,14 +62,29 @@ async function assertActorOutranks(actorUserId: number, targetLevel: number | nu
   const actorLevel = await userRoleAssignmentsRepository.findHighestAuthorityLevel(actorUserId);
   if (actorLevel === null) return;
   if (targetLevel <= actorLevel) {
-    throw new ForbiddenError('Cannot create or modify a role at or above your own authority level');
+    throw new ForbiddenError(
+      'Cannot create or modify a role at or above your own authority level',
+      undefined,
+      'role_edit_above_actor_level',
+    );
   }
 }
 
-export async function createRole(actorUserId: number, body: CreateRoleBody): Promise<WireRole> {
+export async function createRole(
+  actor: RequestActorContext,
+  body: CreateRoleBody,
+): Promise<WireRole> {
+  const actorUserId = actor.userId;
   const existingByName = await rolesRepository.findByName(body.name);
   if (existingByName) {
-    throw new BusinessError(409, `Role name "${body.name}" is already in use`);
+    // Deliberately a DIFFERENT messageKey from the duplicate-permission-set
+    // 409 below: both share a status code, but only that one is overridable
+    // with `force`. The key is how a client tells them apart.
+    throw new BusinessError(
+      409,
+      `Role name "${body.name}" is already in use`,
+      'role_name_taken',
+    );
   }
 
   let permissionKeys = body.permission_keys;
@@ -80,6 +109,10 @@ export async function createRole(actorUserId: number, body: CreateRoleBody): Pro
       throw new BusinessError(
         409,
         `An active role (id ${duplicate}) already has this exact permission set. Pass force=true to create anyway.`,
+        // Translated: an admin reads this mid-task. The English fallback keeps
+        // the offending role id for logs; the translated text drops it because
+        // a raw id means nothing to the reader.
+        'role_duplicate_permission_set',
       );
     }
   }
@@ -93,6 +126,19 @@ export async function createRole(actorUserId: number, body: CreateRoleBody): Pro
   });
   await rolesRepository.insertPermissions(row.id, permissionKeys);
   const permissions = await rolesRepository.findPermissionsByRole(row.id);
+
+  // Logged unconditionally, unlike updateRolePermissions which logs only when
+  // a sensitive permission is touched: creating a role is the moment its whole
+  // permission set comes into existence, so there is no prior state to compare
+  // against and decide it was harmless.
+  await auditService.record(actor, AUDIT.roleCreate, target.role(row.id), null, {
+    name: row.name,
+    category: row.category,
+    level: row.level,
+    permission_keys: permissionKeys,
+    cloned_from_role_id: body.clone_from_role_id ?? null,
+    forced: body.force === true,
+  });
 
   return toWireRole(row, permissions.map(toWirePermission));
 }
@@ -123,8 +169,8 @@ export async function updateRolePermissions(
   if (touchesSensitive) {
     await auditService.record(
       actor,
-      'role.permissions.update',
-      `role:${roleId}`,
+      AUDIT.rolePermissionsUpdate,
+      target.role(roleId),
       previousKeys,
       body.permission_keys,
     );
@@ -146,11 +192,11 @@ export async function updateRolePermissions(
  * supplied flag.
  */
 export async function updateRoleLevel(
-  actorUserId: number,
+  actor: RequestActorContext,
   roleId: number,
   level: number,
 ): Promise<WireRole> {
-  const isSuperAdmin = await actorHoldsSuperAdmin(actorUserId);
+  const isSuperAdmin = await actorHoldsSuperAdmin(actor.userId);
   if (!isSuperAdmin) {
     throw new ForbiddenError("Only Super Admin can change a role's authority level");
   }
@@ -159,6 +205,17 @@ export async function updateRoleLevel(
 
   const row = await rolesRepository.setLevel(roleId, level);
   if (!row) throw new NotFoundError('Role not found');
+
+  // Authority level decides who may assign this role to whom — a change here
+  // silently rewrites the privilege-escalation boundary for every future
+  // assignment, so it is audited even though only Super Admin can reach it.
+  await auditService.record(
+    actor,
+    AUDIT.roleLevelUpdate,
+    target.role(roleId),
+    { level: role.level },
+    { level: row.level },
+  );
   return toWireRole(row);
 }
 
@@ -170,7 +227,10 @@ async function actorHoldsSuperAdmin(actorUserId: number): Promise<boolean> {
   return assignments.some((a) => a.role_id === superAdminRole.id);
 }
 
-export async function deactivateRole(roleId: number): Promise<WireRole> {
+export async function deactivateRole(
+  actor: RequestActorContext,
+  roleId: number,
+): Promise<WireRole> {
   const role = await rolesRepository.findById(roleId);
   if (!role) throw new NotFoundError('Role not found');
 
@@ -188,5 +248,12 @@ export async function deactivateRole(roleId: number): Promise<WireRole> {
 
   const row = await rolesRepository.setActive(roleId, false);
   if (!row) throw new NotFoundError('Role not found');
+  await auditService.record(
+    actor,
+    AUDIT.roleDeactivate,
+    target.role(roleId),
+    { is_active: role.is_active },
+    { is_active: row.is_active },
+  );
   return toWireRole(row);
 }
