@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { RoleRow } from '../schemas/roles.schema.js';
+import type { RoleHolderRow } from '../repositories/roles.repository.js';
+import { queryBooleanSchema } from '../../../core/validation/common-schemas.js';
 import {
   permissionKeySchema,
   permissionResponseSchema,
@@ -16,6 +18,9 @@ export const roleResponseSchema = z.object({
   is_active: z.boolean(),
   created_at: z.string(),
   permissions: z.array(permissionResponseSchema).optional(),
+  active_holders_count: z.number().int().optional(),
+  is_deletable: z.boolean().optional(),
+  assignments_ever_count: z.number().int().optional(),
 });
 
 export interface WireRole {
@@ -27,9 +32,46 @@ export interface WireRole {
   is_active: boolean;
   created_at: string;
   permissions?: WirePermission[];
+  /**
+   * Distinct active people holding this role right now.
+   *
+   * Present on `GET /:id` only — the same reason `permissions` is: the list
+   * would need one aggregate per row. Editing a role's permissions changes what
+   * every holder can do, the instant it is saved, so the count is the size of
+   * that consequence and belongs beside the decision rather than in a report
+   * nobody opens first.
+   */
+  active_holders_count?: number;
+  /**
+   * Whether this role can be hard-deleted — no assignment has EVER referenced
+   * it, and it is not a seeded default.
+   *
+   * Computed by the same rule `deleteRole` enforces, so the client offers the
+   * action only where it can succeed instead of offering it everywhere and
+   * refusing afterwards. `GET /:id` only, like the fields above.
+   */
+  is_deletable?: boolean;
+
+  /**
+   * Assignment rows that have ever referenced this role — active and ended
+   * alike. `GET /:id` only.
+   *
+   * Sent so the client can say WHY deletion is unavailable instead of hiding
+   * the button. "Nobody holds it now" and "nobody ever held it" are different
+   * facts, and a role with 0 active but 3 historical assignments looks
+   * deletable to a reader and is not. [is_deletable] stays the authority on
+   * whether the action is offered; this only chooses the sentence.
+   */
+  assignments_ever_count?: number;
 }
 
-export function toWireRole(row: RoleRow, permissions?: WirePermission[]): WireRole {
+export function toWireRole(
+  row: RoleRow,
+  permissions?: WirePermission[],
+  activeHoldersCount?: number,
+  isDeletable?: boolean,
+  assignmentsEverCount?: number,
+): WireRole {
   return {
     id: row.id,
     name: row.name,
@@ -39,6 +81,50 @@ export function toWireRole(row: RoleRow, permissions?: WirePermission[]): WireRo
     is_active: row.is_active,
     created_at: row.created_at.toISOString(),
     ...(permissions ? { permissions } : {}),
+    // Omitted rather than sent as 0 when not computed: "no holders" and "not
+    // asked" are different answers, and 0 would let a list row claim the former.
+    ...(activeHoldersCount !== undefined ? { active_holders_count: activeHoldersCount } : {}),
+    ...(isDeletable !== undefined ? { is_deletable: isDeletable } : {}),
+    ...(assignmentsEverCount !== undefined
+      ? { assignments_ever_count: assignmentsEverCount }
+      : {}),
+  };
+}
+
+/** Mirrors WireRoleHolder for OpenAPI generation only. */
+export const roleHolderResponseSchema = z.object({
+  assignment_id: z.number().int(),
+  user_id: z.number().int(),
+  full_name: z.string(),
+  email: z.string(),
+  user_status: z.string(),
+  branch_id: z.number().int().nullable(),
+  branch_name: z.string().nullable(),
+  valid_from: z.string(),
+});
+
+export interface WireRoleHolder {
+  assignment_id: number;
+  user_id: number;
+  full_name: string;
+  email: string;
+  user_status: string;
+  /** Null = unrestricted: they hold the role without being confined to a branch. */
+  branch_id: number | null;
+  branch_name: string | null;
+  valid_from: string;
+}
+
+export function toWireRoleHolder(row: RoleHolderRow): WireRoleHolder {
+  return {
+    assignment_id: row.assignment_id,
+    user_id: row.user_id,
+    full_name: `${row.first_name} ${row.last_name}`.trim(),
+    email: row.email,
+    user_status: row.user_status,
+    branch_id: row.branch_id,
+    branch_name: row.branch_name,
+    valid_from: row.valid_from.toISOString(),
   };
 }
 
@@ -50,6 +136,21 @@ export const createRoleBodySchema = z.object({
   name: z.string().trim().min(1).max(100),
   category: z.enum(['system', 'management', 'operational', 'financial', 'external']),
   permission_keys: z.array(permissionKeySchema).default([]),
+  /**
+   * Authority rank — **lower is stronger**, Super Admin is 0. Omit for a role
+   * that carries no authority at all (the common case: an operational post).
+   *
+   * Settable at creation, unlike `PUT /:id/level` which is Super-Admin-only,
+   * and the difference is not an inconsistency. `assertActorOutranks` already
+   * refuses a level at or above the caller's own, so creating a *subordinate*
+   * role is self-limiting. Editing an *existing* role's level is not: the role
+   * being edited may be the caller's own, and the check would be passed before
+   * the raise it authorises. Hence one gate for each.
+   *
+   * Before this, `level` was reachable **only** by cloning a role that already
+   * had one — so a first hierarchy could never be built at all.
+   */
+  level: z.number().int().min(0).optional(),
   /** Optional source role to clone permissions from as the starting point. */
   clone_from_role_id: z.coerce.number().int().positive().optional(),
   /** Explicit override to proceed despite an exact-permission-set match warning. */
@@ -57,8 +158,38 @@ export const createRoleBodySchema = z.object({
 });
 export type CreateRoleBody = z.infer<typeof createRoleBodySchema>;
 
+/**
+ * Identity edits — name and/or category. `level` is deliberately absent: it
+ * has its own Super-Admin-only endpoint (see below), and folding it in here
+ * would silently widen that gate to anyone holding `roles.edit`.
+ *
+ * At least one field must be present; an empty body is a caller mistake, not a
+ * no-op worth a 200.
+ */
+export const updateRoleBodySchema = z
+  .object({
+    name: z.string().trim().min(1).max(100).optional(),
+    category: z.enum(['system', 'management', 'operational', 'financial', 'external']).optional(),
+  })
+  .strict()
+  .refine((b) => b.name !== undefined || b.category !== undefined, {
+    message: 'Provide at least one of: name, category',
+  });
+export type UpdateRoleBody = z.infer<typeof updateRoleBodySchema>;
+
 export const updateRolePermissionsBodySchema = z.object({
   permission_keys: z.array(permissionKeySchema),
+  /**
+   * Explicit override for the exact-permission-set warning, exactly as on
+   * create.
+   *
+   * The check ran on `POST /roles` only, so the warning could be raised when a
+   * role was born and never again — clone a role, save its permissions
+   * untouched, and two roles with identical powers existed with nothing said.
+   * The rule is about the resulting state, not about which endpoint produced
+   * it.
+   */
+  force: z.boolean().default(false),
 });
 export type UpdateRolePermissionsBody = z.infer<typeof updateRolePermissionsBodySchema>;
 
@@ -72,7 +203,14 @@ export type UpdateRoleLevelBody = z.infer<typeof updateRoleLevelBodySchema>;
 export const rolesFilterQuerySchema = z
   .object({
     category: z.enum(['system', 'management', 'operational', 'financial', 'external']).optional(),
-    is_active: z.coerce.boolean().optional(),
+    is_active: queryBooleanSchema.optional(),
+    /** Free-text match on role name. Same contract as `GET /users?search=`. */
+    search: z
+      .string()
+      .trim()
+      .max(150)
+      .optional()
+      .transform((v) => (v !== undefined && v.length > 0 ? v : undefined)),
     /**
      * `true` → only roles the CALLER may actually assign, i.e. strictly below
      * their own authority level (a role with `level = null` carries no
@@ -84,7 +222,7 @@ export const rolesFilterQuerySchema = z
      * server, beside the guard it mirrors, rather than being restated in each
      * client where it would drift out of sync silently.
      */
-    assignable: z.coerce.boolean().optional(),
+    assignable: queryBooleanSchema.optional(),
     sort_by: z.enum(['created_at', 'name', 'level']).default('created_at'),
     sort_dir: z.enum(['asc', 'desc']).default('desc'),
   })

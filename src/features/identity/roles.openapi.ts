@@ -10,6 +10,7 @@ import { paginationQuerySchema } from '../../core/pagination/pagination.js';
 import {
   roleIdParamsSchema,
   createRoleBodySchema,
+  updateRoleBodySchema,
   updateRolePermissionsBodySchema,
   updateRoleLevelBodySchema,
   roleResponseSchema,
@@ -107,6 +108,43 @@ registry.registerPath({
     200: { description: 'Level updated', ...jsonBody(successEnvelope(roleResponseSchema)) },
     ...unauthorizedResponse,
     403: { description: 'Actor does not hold the Super Admin role', ...businessError(403) },
+    ...commonErrorResponses,
+  },
+});
+
+registry.registerPath({
+  method: 'patch',
+  path: '/api/v1/roles/{id}',
+  tags,
+  summary: "Rename a role and/or change its category",
+  description:
+    'At least one of name/category is required. The Super Admin role cannot be renamed — authority checks identify it by name. Changing category to or from management/system changes whether the "last qualified staff" guard applies to this role\'s assignments, so both old and new values are audited. level is NOT editable here (see PUT /{id}/level).',
+  request: { params: roleIdParamsSchema, body: jsonBody(updateRoleBodySchema) },
+  responses: {
+    200: { description: 'Role updated', ...jsonBody(successEnvelope(roleResponseSchema)) },
+    403: {
+      description: 'The Super Admin role cannot be renamed, or the role outranks the actor',
+      ...businessError(403),
+    },
+    409: { description: 'Role name already in use', ...businessError(409) },
+    ...unauthorizedResponse,
+    ...commonErrorResponses,
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/roles/{id}/reactivate',
+  tags,
+  summary: 'Put a deactivated role back into service',
+  description:
+    'The counterpart to deactivate. Subject to the same relative-authority check as creating a role — reviving a high-authority role grants the same privilege.',
+  request: { params: roleIdParamsSchema },
+  responses: {
+    200: { description: 'Role reactivated', ...jsonBody(successEnvelope(roleResponseSchema)) },
+    403: { description: 'Role is at or above the actor authority level', ...businessError(403) },
+    409: { description: 'Role is already active', ...businessError(409) },
+    ...unauthorizedResponse,
     ...commonErrorResponses,
   },
 });

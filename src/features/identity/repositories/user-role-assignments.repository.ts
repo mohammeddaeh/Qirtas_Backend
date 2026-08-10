@@ -1,4 +1,4 @@
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, desc } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findOneById } from '../../../core/db/crud-helpers.js';
 import {
@@ -29,6 +29,7 @@ export interface AssignmentWithNamesRow {
   role_name: string;
   branch_id: number | null;
   branch_name: string | null;
+  branch_status: 'active' | 'temporarily_closed' | 'closed' | null;
   valid_from: Date;
   valid_to: Date | null;
   created_at: Date;
@@ -46,6 +47,33 @@ export interface AssignmentWithNamesRow {
 export async function findActiveForUserWithNames(
   userId: number,
 ): Promise<AssignmentWithNamesRow[]> {
+  return selectAssignmentsWithNames()
+    .where(and(eq(userRoleAssignmentsTable.user_id, userId), isActiveClause))
+    .orderBy(userRoleAssignmentsTable.valid_from);
+}
+
+/**
+ * The postings this person no longer holds — the closed half of the record.
+ *
+ * Nothing is deleted here: ending an assignment stamps `valid_to` and the row
+ * stays. Until now only the open half was ever queried, so a person's past
+ * postings existed in the database and nowhere a human could see them, which
+ * makes "was they ever a cashier?" unanswerable from the app.
+ */
+export async function findEndedForUserWithNames(
+  userId: number,
+): Promise<AssignmentWithNamesRow[]> {
+  return selectAssignmentsWithNames()
+    .where(
+      and(
+        eq(userRoleAssignmentsTable.user_id, userId),
+        sql`${userRoleAssignmentsTable.valid_to} IS NOT NULL AND ${userRoleAssignmentsTable.valid_to} <= now()`,
+      ),
+    )
+    .orderBy(desc(userRoleAssignmentsTable.valid_to));
+}
+
+function selectAssignmentsWithNames() {
   return db
     .select({
       id: userRoleAssignmentsTable.id,
@@ -54,6 +82,10 @@ export async function findActiveForUserWithNames(
       role_name: rolesTable.name,
       branch_id: userRoleAssignmentsTable.branch_id,
       branch_name: branchesTable.name,
+      // Same leftJoin that supplies the name, so no extra cost: an assignment
+      // reads as active employment unless the branch's own state travels with
+      // it (see the dto for why this is not optional).
+      branch_status: branchesTable.status,
       valid_from: userRoleAssignmentsTable.valid_from,
       valid_to: userRoleAssignmentsTable.valid_to,
       created_at: userRoleAssignmentsTable.created_at,
@@ -61,8 +93,7 @@ export async function findActiveForUserWithNames(
     .from(userRoleAssignmentsTable)
     .innerJoin(rolesTable, eq(rolesTable.id, userRoleAssignmentsTable.role_id))
     .leftJoin(branchesTable, eq(branchesTable.id, userRoleAssignmentsTable.branch_id))
-    .where(and(eq(userRoleAssignmentsTable.user_id, userId), isActiveClause))
-    .orderBy(userRoleAssignmentsTable.valid_from);
+    .$dynamic();
 }
 
 export function findById(id: number): Promise<UserRoleAssignmentRow | undefined> {
@@ -102,6 +133,34 @@ export async function countActiveForBranch(branchId: number): Promise<number> {
     .select({ value: sql<number>`count(*)` })
     .from(userRoleAssignmentsTable)
     .where(and(eq(userRoleAssignmentsTable.branch_id, branchId), isActiveClause));
+  return Number(rows[0]?.value ?? 0);
+}
+
+/**
+ * How many **distinct active people** currently hold this role, anywhere.
+ *
+ * Editing a role's permissions is retroactive: every one of them gains or loses
+ * the ability the moment it is saved. That blast radius was invisible in the
+ * app — the editor asked "which permissions?" and never said how many people
+ * the answer would reach.
+ *
+ * Distinct users, not assignment rows: one person holding the same role in
+ * three branches is one person whose abilities change, and counting three would
+ * overstate the consequence. Suspended and disabled accounts are excluded —
+ * they cannot act, so widening a role does not widen anything for them today.
+ */
+export async function countActiveHoldersOfRole(roleId: number): Promise<number> {
+  const rows = await db
+    .select({ value: sql<number>`count(distinct ${userRoleAssignmentsTable.user_id})` })
+    .from(userRoleAssignmentsTable)
+    .innerJoin(usersTable, eq(usersTable.id, userRoleAssignmentsTable.user_id))
+    .where(
+      and(
+        eq(userRoleAssignmentsTable.role_id, roleId),
+        isActiveClause,
+        eq(usersTable.status, 'active'),
+      ),
+    );
   return Number(rows[0]?.value ?? 0);
 }
 

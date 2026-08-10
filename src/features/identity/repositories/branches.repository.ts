@@ -1,6 +1,7 @@
 import { eq, asc, desc, and, count, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findManyPaginated, findOneById } from '../../../core/db/crud-helpers.js';
+import { likeTerm } from '../../../core/db/like-term.js';
 import { branchesTable, type BranchRow, type NewBranchRow } from '../schemas/branches.schema.js';
 import { usersTable, type UserRow } from '../schemas/users.schema.js';
 import { rolesTable } from '../schemas/roles.schema.js';
@@ -21,6 +22,14 @@ export function findMany(
   if (filter.status !== undefined) conditions.push(eq(branchesTable.status, filter.status));
   if (filter.is_default !== undefined) {
     conditions.push(eq(branchesTable.is_default, filter.is_default));
+  }
+  if (filter.search !== undefined && filter.search.length > 0) {
+    // Address included, not just name: branches are commonly identified by
+    // where they are ("الزراعة", "الكورنيش") as much as by what they are called.
+    const term = likeTerm(filter.search);
+    conditions.push(
+      sql`(${branchesTable.name} ILIKE ${term} OR ${branchesTable.address} ILIKE ${term})`,
+    );
   }
 
   const orderFn = filter.sort_dir === 'asc' ? asc : desc;

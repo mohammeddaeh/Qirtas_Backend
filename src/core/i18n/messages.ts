@@ -94,6 +94,102 @@ export const MESSAGES = {
     en: 'Cannot create or modify a role at or above your own authority level',
     ar: 'لا يمكنك إنشاء أو تعديل دور بمستوى صلاحية مساوٍ لمستواك أو أعلى منه',
   },
+  role_has_history: {
+    en: 'This role appears in the assignment history. Deactivate it instead — deleting would erase what those people once were.',
+    ar: 'هذا الدور موجود بسجل التعيينات. عطّله بدل حذفه — الحذف يمحو ما كان عليه أولئك الأشخاص.',
+  },
+  role_system_default_undeletable: {
+    en: 'A system-default role cannot be deleted — re-seeding would recreate it',
+    ar: 'الدور الافتراضي بالنظام لا يُحذف — إعادة الزرع تُنشئه من جديد',
+  },
+  role_already_active: {
+    en: 'This role is already active',
+    ar: 'هذا الدور فعّال بالفعل',
+  },
+  permission_key_taken: {
+    en: 'This permission key already exists in the catalogue',
+    ar: 'مفتاح الصلاحية هذا موجود بالكتالوج بالفعل',
+  },
+  permission_module_display_required: {
+    en: 'This is a new module — provide its display name in Arabic and English so its permission group has a title',
+    ar: 'هذه وحدة جديدة — أدخل اسمها بالعربية والإنجليزية ليحمل صف صلاحياتها عنواناً',
+  },
+  super_admin_role_immutable: {
+    en: 'The Super Admin role cannot be renamed — core authority checks identify it by name',
+    ar: 'لا يمكن إعادة تسمية دور المدير العام — فحوص الصلاحية الأساسية تُعرِّفه باسمه',
+  },
+  auth_required: {
+    en: 'Authentication required',
+    ar: 'يلزم تسجيل الدخول',
+  },
+  permission_missing: {
+    en: 'You do not have the permission required for this action',
+    ar: 'لا تملك الصلاحية اللازمة لهذا الإجراء',
+  },
+  ownership_sum_exceeded: {
+    en: 'Ownership percentages for this scope would exceed 100%',
+    ar: 'مجموع نسب الملكية لهذا النطاق سيتجاوز ١٠٠٪',
+  },
+  permission_key_unknown: {
+    en: 'One or more permission keys do not exist in the catalogue',
+    ar: 'مفتاح صلاحية أو أكثر غير موجود بالكتالوج',
+  },
+  language_not_seeded: {
+    en: 'A bundled language row is missing — run the seed script',
+    ar: 'صف لغة أساسية مفقود — شغّل سكربت الزرع',
+  },
+  role_level_super_admin_only: {
+    en: "Only the Super Admin can change a role's authority level",
+    ar: 'تعديل مستوى سلطة الدور متاح للمدير العام حصراً',
+  },
+  super_admin_role_undeactivatable: {
+    en: 'The Super Admin role can never be deactivated',
+    ar: 'دور المدير العام لا يُعطَّل أبداً',
+  },
+  role_has_active_assignments: {
+    en: 'This role is still held by active staff. Move or end their assignments first — you can do that from the holders list below.',
+    ar: 'ما زال هذا الدور محمولاً من موظفين فعّالين. انقل تعييناتهم أو أنهِها أولاً — تستطيع ذلك من قائمة الحاملين أسفل الشاشة.',
+  },
+  user_root_protected: {
+    en: 'This account is protected and cannot be modified',
+    ar: 'هذا الحساب محميّ ولا يمكن تعديله',
+  },
+  email_taken: {
+    en: 'An account with this email already exists',
+    ar: 'يوجد حساب بهذا البريد الإلكتروني بالفعل',
+  },
+  registration_not_rejected: {
+    en: 'Only a rejected registration can be resubmitted',
+    ar: 'إعادة الإرسال متاحة للطلب المرفوض وحده',
+  },
+  role_inactive_unassignable: {
+    en: 'An inactive role cannot be assigned',
+    ar: 'لا يمكن إسناد دور معطَّل',
+  },
+  registration_not_pending: {
+    en: 'This account is not awaiting approval',
+    ar: 'هذا الحساب ليس بانتظار الموافقة',
+  },
+  registration_role_required: {
+    en: 'A role must be chosen to approve this registration',
+    ar: 'يجب اختيار دور للموافقة على هذا الطلب',
+  },
+  setup_already_completed: {
+    en: 'Setup has already been completed — bootstrap is only available on a fresh install',
+    ar: 'الإعداد الأولي تمّ سابقاً — التهيئة متاحة على تثبيت جديد فقط',
+  },
+  super_admin_role_not_seeded: {
+    en: 'The Super Admin role is not seeded — run the seed script first',
+    ar: 'دور المدير العام غير مزروع — شغّل سكربت الزرع أولاً',
+  },
+  user_status_not_reactivatable: {
+    en: 'An account with this status cannot be reactivated',
+    ar: 'لا يمكن إعادة تفعيل حساب بهذه الحالة',
+  },
+  language_code_taken: {
+    en: 'A language with this code already exists',
+    ar: 'يوجد لغة بهذا الرمز بالفعل',
+  },
 } as const satisfies Record<string, Record<Lang, string>>;
 
 export type MessageKey = keyof typeof MESSAGES;

@@ -1,7 +1,11 @@
 import { z } from 'zod';
 import type { BranchRow } from '../schemas/branches.schema.js';
 import type { BranchStaffRow } from '../repositories/branches.repository.js';
-import { optionalSyrianPhoneSchema, nullableSyrianPhoneSchema } from '../../../core/validation/common-schemas.js';
+import {
+  optionalSyrianPhoneSchema,
+  nullableSyrianPhoneSchema,
+  queryBooleanSchema,
+} from '../../../core/validation/common-schemas.js';
 
 /** Mirrors WireBranch below for OpenAPI doc generation only — see users.dto.ts for the pattern. */
 export const branchResponseSchema = z.object({
@@ -88,7 +92,14 @@ export function toWireBranchStaffMember(row: BranchStaffRow): WireBranchStaffMem
 export const branchesFilterQuerySchema = z
   .object({
     status: z.enum(['active', 'temporarily_closed', 'closed']).optional(),
-    is_default: z.coerce.boolean().optional(),
+    is_default: queryBooleanSchema.optional(),
+    /** Free-text match across branch name and address. Same contract as `GET /users?search=`. */
+    search: z
+      .string()
+      .trim()
+      .max(150)
+      .optional()
+      .transform((v) => (v !== undefined && v.length > 0 ? v : undefined)),
     sort_by: z.enum(['created_at', 'name']).default('created_at'),
     sort_dir: z.enum(['asc', 'desc']).default('desc'),
   })

@@ -33,7 +33,10 @@ export const AUDIT = {
 
   // — Roles —
   roleCreate: 'role.create',
+  roleUpdate: 'role.update',
+  roleDelete: 'role.delete',
   roleDeactivate: 'role.deactivate',
+  roleReactivate: 'role.reactivate',
   roleLevelUpdate: 'role.level.update',
   rolePermissionsUpdate: 'role.permissions.update',
 } as const;

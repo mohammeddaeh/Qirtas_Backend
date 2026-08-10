@@ -18,6 +18,7 @@ import * as ownershipsRepository from '../repositories/ownerships.repository.js'
 import * as branchesRepository from '../repositories/branches.repository.js';
 import * as sessionsRepository from '../repositories/sessions.repository.js';
 import { SUPER_ADMIN_ROLE_NAME } from './roles.service.js';
+import * as rolesService from './roles.service.js';
 import * as assignmentsService from './user-role-assignments.service.js';
 import * as auditService from './audit.service.js';
 import { AUDIT, target } from './audit-actions.js';
@@ -68,13 +69,17 @@ export async function updateUser(
   if (!existing) throw new NotFoundError('User not found');
 
   if (existing.is_root_protected) {
-    throw new ForbiddenError('This account is root-protected and cannot be modified');
+    throw new ForbiddenError(
+      'This account is root-protected and cannot be modified',
+      undefined,
+      'user_root_protected',
+    );
   }
 
   if (body.email !== undefined && body.email !== existing.email) {
     const conflict = await usersRepository.existsByEmailExcluding(body.email, id);
     if (conflict) {
-      throw new BusinessError(409, 'An account with this email already exists');
+      throw new BusinessError(409, 'An account with this email already exists', 'email_taken');
     }
   }
 
@@ -118,7 +123,7 @@ export async function updateUser(
 export async function registerStaff(body: RegisterStaffBody): Promise<WireUser> {
   const existing = await usersRepository.findByEmail(body.email);
   if (existing) {
-    throw new BusinessError(409, 'An account with this email already exists');
+    throw new BusinessError(409, 'An account with this email already exists', 'email_taken');
   }
 
   const role = await rolesRepository.findById(body.requested_role_id);
@@ -162,6 +167,8 @@ export async function resubmitRegistration(
     throw new BusinessError(
       409,
       `Only a rejected registration can be resubmitted (current status: ${user.status})`,
+
+      'registration_not_rejected',
     );
   }
 
@@ -200,13 +207,13 @@ export async function createUserByAdmin(
   const createdByUserId = actor.userId;
   const existing = await usersRepository.findByEmail(body.email);
   if (existing) {
-    throw new BusinessError(409, 'An account with this email already exists');
+    throw new BusinessError(409, 'An account with this email already exists', 'email_taken');
   }
 
   const role = await rolesRepository.findById(body.role_id);
   if (!role) throw new NotFoundError('Role not found');
   if (!role.is_active) {
-    throw new BusinessError(422, 'Cannot assign an inactive role');
+    throw new BusinessError(422, 'Cannot assign an inactive role', 'role_inactive_unassignable');
   }
 
   if (body.ownership_percentage !== undefined) {
@@ -215,6 +222,8 @@ export async function createUserByAdmin(
       throw new BusinessError(
         422,
         `Assigning ${body.ownership_percentage}% ownership would push the scope total to ${currentSum + body.ownership_percentage}%, exceeding the 100% cap.`,
+
+        'ownership_sum_exceeded',
       );
     }
   }
@@ -277,6 +286,8 @@ export async function decideRegistration(
     throw new BusinessError(
       409,
       `This account is not pending approval (current status: ${user.status})`,
+
+      'registration_not_pending',
     );
   }
 
@@ -302,7 +313,11 @@ export async function decideRegistration(
 
   const roleId = decision.role_id ?? user.requested_role_id;
   if (!roleId)
-    throw new BusinessError(422, 'A role must be specified to approve this registration');
+    throw new BusinessError(
+      422,
+      'A role must be specified to approve this registration',
+      'registration_role_required',
+    );
   const role = await rolesRepository.findById(roleId);
   if (!role) throw new NotFoundError('Role not found');
 
@@ -320,6 +335,8 @@ export async function decideRegistration(
       throw new BusinessError(
         422,
         `Approving with ${ownershipPercentage}% ownership would push the scope total to ${currentSum + ownershipPercentage}%, exceeding the 100% cap.`,
+
+        'ownership_sum_exceeded',
       );
     }
   }
@@ -370,6 +387,8 @@ export async function bootstrapSuperAdmin(body: BootstrapSuperAdminBody): Promis
   if (existingCount > 0) {
     throw new ForbiddenError(
       'Setup has already been completed — bootstrap is only available on a fresh install',
+      undefined,
+      'setup_already_completed',
     );
   }
 
@@ -378,6 +397,8 @@ export async function bootstrapSuperAdmin(body: BootstrapSuperAdminBody): Promis
     throw new BusinessError(
       500,
       'Super Admin role is not seeded — run the seed script before bootstrapping',
+
+      'super_admin_role_not_seeded',
     );
   }
 
@@ -433,12 +454,28 @@ export interface LoginResult {
   token: string;
   session_id: number;
   permission_keys: string[];
+  /** See [CurrentUserResult.is_super_admin]. */
+  is_super_admin: boolean;
 }
 
 /** Shape shared by login() and getCurrentUser() — same {user, permission_keys} pair, minus the session-only fields (token/session_id). */
 export interface CurrentUserResult {
   user: WireUser;
   permission_keys: string[];
+  /**
+   * Whether the caller actually holds the Super Admin role.
+   *
+   * Sent because two operations are gated on it and **no permission key
+   * expresses it** — changing a role's authority level (`PUT /roles/:id/level`)
+   * and being the protected root account. Without this the client either hides
+   * a control every Super Admin needs, or offers one that everyone else is
+   * refused — the same "let the user choose, then tell them they may not"
+   * problem `?assignable=true` exists to avoid on roles.
+   *
+   * Computed by the same lookup the guard uses, so the client restates no rule
+   * of its own and cannot drift from the server's answer.
+   */
+  is_super_admin: boolean;
 }
 
 export async function login(body: LoginBody): Promise<LoginResult> {
@@ -477,7 +514,17 @@ export async function login(body: LoginBody): Promise<LoginResult> {
   });
   const permissionKeys = await assignmentsRepository.findAllEffectivePermissionKeys(user.id);
 
-  return { user: toWireUser(user), token, session_id: session.id, permission_keys: permissionKeys };
+  // `is_super_admin` here too, not only on `getCurrentUser`: the client seeds
+  // its session from THIS response, so omitting it would leave the flag false
+  // until the next background refresh — a control that appears one restart
+  // late reads as a bug, not as a delay.
+  return {
+    user: toWireUser(user),
+    token,
+    session_id: session.id,
+    permission_keys: permissionKeys,
+    is_super_admin: await rolesService.actorHoldsSuperAdmin(user.id),
+  };
 }
 
 /**
@@ -494,7 +541,26 @@ export async function getCurrentUser(userId: number): Promise<CurrentUserResult>
   if (!user) throw new NotFoundError('User not found');
 
   const permissionKeys = await assignmentsRepository.findAllEffectivePermissionKeys(user.id);
-  return { user: toWireUser(user), permission_keys: permissionKeys };
+  return {
+    user: toWireUser(user),
+    permission_keys: permissionKeys,
+    is_super_admin: await rolesService.actorHoldsSuperAdmin(user.id),
+  };
+}
+
+/**
+ * What another person can actually do — the union of every permission their
+ * active assignments grant.
+ *
+ * Separate from the user record rather than a field on it: this is derived from
+ * assignments, it can be long, and most reads of a user do not need it. It is
+ * also the only honest answer to "what does this role mean for THIS person",
+ * since one individual may hold several roles whose permissions overlap.
+ */
+export async function getUserPermissions(userId: number): Promise<string[]> {
+  const user = await usersRepository.findById(userId);
+  if (!user) throw new NotFoundError('User not found');
+  return assignmentsRepository.findAllEffectivePermissionKeys(userId);
 }
 
 /** Ends the current session only — other concurrent sessions for the same user are untouched (multi-session is allowed by design). */
@@ -511,14 +577,15 @@ export async function logout(token: string): Promise<void> {
  * so suspending the only holder of a role in an operating branch empties that
  * role exactly as ending the assignment would.
  */
-export async function suspendUser(
-  actor: RequestActorContext,
-  userId: number,
-): Promise<WireUser> {
+export async function suspendUser(actor: RequestActorContext, userId: number): Promise<WireUser> {
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
   if (user.is_root_protected) {
-    throw new ForbiddenError('This account is root-protected and cannot be modified');
+    throw new ForbiddenError(
+      'This account is root-protected and cannot be modified',
+      undefined,
+      'user_root_protected',
+    );
   }
   await assignmentsService.assertUserIsReleasable(userId);
 
@@ -541,14 +608,15 @@ export async function suspendUser(
  * Same guard as [suspendUser]: disabling ends every assignment this person
  * holds at once, so it must clear the bar that ending a single one does.
  */
-export async function disableUser(
-  actor: RequestActorContext,
-  userId: number,
-): Promise<WireUser> {
+export async function disableUser(actor: RequestActorContext, userId: number): Promise<WireUser> {
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
   if (user.is_root_protected) {
-    throw new ForbiddenError('This account is root-protected and cannot be modified');
+    throw new ForbiddenError(
+      'This account is root-protected and cannot be modified',
+      undefined,
+      'user_root_protected',
+    );
   }
   await assignmentsService.assertUserIsReleasable(userId);
 
@@ -578,10 +646,18 @@ export async function reactivateUser(
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
   if (user.is_root_protected) {
-    throw new ForbiddenError('This account is root-protected and cannot be modified');
+    throw new ForbiddenError(
+      'This account is root-protected and cannot be modified',
+      undefined,
+      'user_root_protected',
+    );
   }
   if (user.status !== 'suspended' && user.status !== 'disabled') {
-    throw new BusinessError(409, `Cannot reactivate a user with status "${user.status}"`);
+    throw new BusinessError(
+      409,
+      `Cannot reactivate a user with status "${user.status}"`,
+      'user_status_not_reactivatable',
+    );
   }
   const row = await usersRepository.update(userId, { status: 'active' });
   if (!row) throw new NotFoundError('User not found');

@@ -19,7 +19,13 @@ export function requirePermission(permissionKey: string) {
       const actorUserId = requireActorId(req);
       const keys = await userRoleAssignmentsRepository.findAllEffectivePermissionKeys(actorUserId);
       if (!keys.includes(permissionKey)) {
-        throw new ForbiddenError(`Missing required permission: ${permissionKey}`);
+        throw new ForbiddenError(
+          `Missing required permission: ${permissionKey}`,
+          undefined,
+          // The English fallback names the key for logs; the translated text does
+          // not, because a raw permission key means nothing to the reader.
+          'permission_missing',
+        );
       }
       next();
     } catch (err) {

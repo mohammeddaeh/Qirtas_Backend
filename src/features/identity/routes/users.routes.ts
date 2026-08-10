@@ -58,6 +58,18 @@ usersRouter.get(
 );
 
 /**
+ * What this person can actually do — the union across their active
+ * assignments. `users.manage`, like every other read of someone else's record.
+ * Own permissions come from `/users/me`, which needs no permission at all.
+ */
+usersRouter.get(
+  '/:id/permissions',
+  requirePermission('users.manage'),
+  validate(userIdParamsSchema, 'params'),
+  asyncHandler(usersController.getUserPermissions),
+);
+
+/**
  * Admin-direct creation — distinct from POST /register (self-service +
  * later decide-registration review). The admin creating the account IS the
  * approval: lands at status=active immediately with role/branch/ownership

@@ -224,6 +224,35 @@ const PERMISSIONS: SeedPermission[] = [
   },
 ];
 
+/**
+ * Display name of each MODULE, stored as `permission.module.<module>`.
+ *
+ * The app groups a person's permissions by module and labels each group with
+ * this entry (`PermissionsSummary` in the Flutter app). Without it the header
+ * fell back to the raw-key heuristic and read "Module Users" — English, in an
+ * otherwise-Arabic screen, for every locale.
+ *
+ * Keyed by `SeedPermission.module`, and completeness is ASSERTED at seed time
+ * (see `seedPermissionDisplayNames`) — adding a permission that introduces a
+ * new module fails the seed loudly instead of shipping an untranslated header.
+ */
+const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
+  users: { ar: 'المستخدمون', en: 'Users' },
+  branches: { ar: 'الفروع', en: 'Branches' },
+  ownerships: { ar: 'الملكيات', en: 'Ownerships' },
+  permissions: { ar: 'الصلاحيات', en: 'Permissions' },
+  roles: { ar: 'الأدوار', en: 'Roles' },
+  dashboard: { ar: 'لوحة التحكم', en: 'Dashboard' },
+  audit_log: { ar: 'سجل التدقيق', en: 'Audit Log' },
+  localization: { ar: 'الترجمة', en: 'Localization' },
+  reports: { ar: 'التقارير', en: 'Reports' },
+  inventory: { ar: 'المخزون', en: 'Inventory' },
+  printing: { ar: 'الطباعة', en: 'Printing' },
+  customization: { ar: 'التخصيص', en: 'Customization' },
+  orders: { ar: 'الطلبات', en: 'Orders' },
+  customers: { ar: 'العملاء', en: 'Customers' },
+};
+
 const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 
 const ROLES: SeedRole[] = [
@@ -373,14 +402,30 @@ async function seedRoles(): Promise<void> {
 }
 
 /**
- * Writes `permission.<key>` entries for both bundled languages, derived
- * directly from `PERMISSIONS` above — nothing to keep in sync by hand.
- * Upserts by (language_code, key) via the same repository the
- * `PUT /:code/translations` endpoint uses, so re-running only overwrites
- * values with identical text and bumps each language's `version`.
+ * Writes `permission.<key>` AND `permission.module.<module>` entries for both
+ * bundled languages, derived directly from `PERMISSIONS`/`MODULE_DISPLAY`
+ * above — nothing to keep in sync by hand. Upserts by (language_code, key) via
+ * the same repository the `PUT /:code/translations` endpoint uses, so
+ * re-running only overwrites values with identical text and bumps each
+ * language's `version`.
+ *
+ * A module with no `MODULE_DISPLAY` entry aborts the seed. The alternative —
+ * skipping it — produces a screen that renders "Module Foo" in every locale,
+ * which nobody notices until a user reports it. Failing here costs one line in
+ * a map; failing there costs a bug report.
  */
 async function seedPermissionDisplayNames(): Promise<void> {
   await ensureBundledLanguagesExist('permission display names');
+
+  const modules = [...new Set(PERMISSIONS.map((p) => p.module))].sort();
+  const untranslated = modules.filter((m) => MODULE_DISPLAY[m] === undefined);
+  if (untranslated.length > 0) {
+    throw new Error(
+      `MODULE_DISPLAY is missing an entry for: ${untranslated.join(', ')}. ` +
+        'Every module a permission belongs to must have an ar/en display name — ' +
+        'the app labels permission groups with it.',
+    );
+  }
 
   for (const language of BUNDLED_LANGUAGES) {
     const code = language.code as keyof SeedPermission['display'];
@@ -388,12 +433,15 @@ async function seedPermissionDisplayNames(): Promise<void> {
     for (const permission of PERMISSIONS) {
       entries[`permission.${permission.key}`] = permission.display[code];
     }
+    for (const module of modules) {
+      entries[`permission.module.${module}`] = MODULE_DISPLAY[module]![code];
+    }
     await translationEntriesRepository.upsertMany(language.code, entries);
     await languagesRepository.incrementVersion(language.code);
   }
 
   logger.info(
-    `Seeded ${PERMISSIONS.length} permission.* translation entries for ${BUNDLED_LANGUAGES.map((l) => l.code).join(' + ')}`,
+    `Seeded ${PERMISSIONS.length} permission.* + ${modules.length} permission.module.* translation entries for ${BUNDLED_LANGUAGES.map((l) => l.code).join(' + ')}`,
   );
 }
 

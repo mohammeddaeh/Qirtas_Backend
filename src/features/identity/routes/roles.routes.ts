@@ -6,6 +6,7 @@ import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 import {
   roleIdParamsSchema,
   createRoleBodySchema,
+  updateRoleBodySchema,
   updateRolePermissionsBodySchema,
   updateRoleLevelBodySchema,
   rolesFilterQuerySchema,
@@ -37,6 +38,14 @@ rolesRouter.post(
   asyncHandler(rolesController.createRole),
 );
 
+rolesRouter.patch(
+  '/:id',
+  requirePermission('roles.edit'),
+  validate(roleIdParamsSchema, 'params'),
+  validate(updateRoleBodySchema, 'body'),
+  asyncHandler(rolesController.updateRole),
+);
+
 rolesRouter.put(
   '/:id/permissions',
   requirePermission('roles.edit'),
@@ -53,9 +62,35 @@ rolesRouter.put(
   asyncHandler(rolesController.updateRoleLevel),
 );
 
+// `users.manage`, not `roles.view`: the payload is a list of people (names,
+// emails, account status). Reading a role and reading who holds it are
+// different privileges, and the endpoint follows the data it exposes — the same
+// boundary `GET /branches/:id/staff` draws.
+rolesRouter.get(
+  '/:id/holders',
+  requirePermission('users.manage'),
+  validate(roleIdParamsSchema, 'params'),
+  validate(paginationQuerySchema, 'query'),
+  asyncHandler(rolesController.listRoleHolders),
+);
+
+rolesRouter.delete(
+  '/:id',
+  requirePermission('roles.edit'),
+  validate(roleIdParamsSchema, 'params'),
+  asyncHandler(rolesController.deleteRole),
+);
+
 rolesRouter.post(
   '/:id/deactivate',
   requirePermission('roles.edit'),
   validate(roleIdParamsSchema, 'params'),
   asyncHandler(rolesController.deactivateRole),
+);
+
+rolesRouter.post(
+  '/:id/reactivate',
+  requirePermission('roles.edit'),
+  validate(roleIdParamsSchema, 'params'),
+  asyncHandler(rolesController.reactivateRole),
 );

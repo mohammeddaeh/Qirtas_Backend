@@ -21,6 +21,41 @@ export async function listActiveForUser(userId: number): Promise<WireUserRoleAss
   return rows.map(toWireUserRoleAssignmentWithNames);
 }
 
+/**
+ * The postings this person has finished — the archive half of the same record.
+ *
+ * Each carries the role's name as it stood while the posting ran, which is the
+ * whole reason this list is worth reading: the live join gives today's name, so
+ * without the reconstruction a closed 2025 posting would claim the person held
+ * a role that did not exist under that name until 2026.
+ *
+ * Resolved per row rather than in one pass because the rows rarely number more
+ * than a handful and each needs its own instant; the index this rides on
+ * (`audit_log_entries_target_created_idx`) is built for exactly this lookup.
+ */
+export async function listEndedForUser(userId: number): Promise<WireUserRoleAssignment[]> {
+  const rows = await assignmentsRepository.findEndedForUserWithNames(userId);
+
+  return Promise.all(
+    rows.map(async (row) => {
+      const wire = toWireUserRoleAssignmentWithNames(row);
+      const nameThen = await auditService.resolveNameAt(
+        target.role(row.role_id),
+        row.valid_from,
+        row.role_name,
+      );
+      return {
+        ...wire,
+        // Null, not a copy of `role_name`, when nothing was renamed: the client
+        // shows the "was called X" note only when there is something to say,
+        // and an equal pair would make every ended posting carry a redundant
+        // aside.
+        role_name_then: nameThen === row.role_name ? null : nameThen,
+      };
+    }),
+  );
+}
+
 async function assertActorOutranksRole(actorUserId: number, roleId: number): Promise<void> {
   const role = await rolesRepository.findById(roleId);
   if (!role) throw new NotFoundError('Role not found');
@@ -139,9 +174,7 @@ export async function assertUserIsReleasable(userId: number): Promise<void> {
  */
 const GUARDED_ROLE_CATEGORIES = new Set(['management', 'system']);
 
-async function assertAssignmentIsReplaceable(
-  assignment: UserRoleAssignmentRow,
-): Promise<void> {
+async function assertAssignmentIsReplaceable(assignment: UserRoleAssignmentRow): Promise<void> {
   // Category first: it decides whether the rule applies at all, and skipping
   // the branch/holder lookups for the common (operational) case keeps ordinary
   // staff moves at a single query.

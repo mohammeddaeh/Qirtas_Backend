@@ -17,7 +17,9 @@
     "db:push": "tsx node_modules/drizzle-kit/bin.cjs push",
     "db:studio": "tsx node_modules/drizzle-kit/bin.cjs studio",
     "db:seed": "tsx src/core/db/seed.ts",
-    "db:setup": "npm run db:migrate && tsx src/core/db/seed.ts --admin --demo --reset"
+    "db:setup": "npm run db:migrate && tsx src/core/db/seed.ts --admin --demo --reset",
+    "smoke": "tsx src/core/db/smoke-test.ts",
+    "check:messages": "tsx src/core/i18n/check-message-keys.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.0",

@@ -35,6 +35,11 @@ export async function getCurrentUser(req: Request, res: Response): Promise<void>
   ok(res, result);
 }
 
+export async function getUserPermissions(req: Request, res: Response): Promise<void> {
+  const { id } = req.params as unknown as { id: number };
+  ok(res, await usersService.getUserPermissions(id));
+}
+
 export async function updateUser(req: Request, res: Response): Promise<void> {
   const actor = buildActorContext(req, requireActorId(req));
   const { id } = req.params as unknown as { id: number };

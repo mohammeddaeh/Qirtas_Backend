@@ -25,7 +25,7 @@ export async function getLanguageByCode(code: string): Promise<WireLanguage> {
 export async function createLanguage(body: CreateLanguageBody): Promise<WireLanguage> {
   const existing = await languagesRepository.findByCode(body.code);
   if (existing) {
-    throw new BusinessError(409, `Language "${body.code}" already exists`);
+    throw new BusinessError(409, `Language "${body.code}" already exists`, 'language_code_taken');
   }
   const row = await languagesRepository.insert({
     code: body.code,
@@ -35,7 +35,10 @@ export async function createLanguage(body: CreateLanguageBody): Promise<WireLang
   return toWireLanguage(row);
 }
 
-export async function updateLanguage(code: string, body: UpdateLanguageBody): Promise<WireLanguage> {
+export async function updateLanguage(
+  code: string,
+  body: UpdateLanguageBody,
+): Promise<WireLanguage> {
   const existing = await languagesRepository.findByCode(code);
   if (!existing) throw new NotFoundError('Language not found');
 

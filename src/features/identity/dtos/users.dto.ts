@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import type { UserRow } from '../schemas/users.schema.js';
-import { syrianPhoneSchema, optionalSyrianPhoneSchema } from '../../../core/validation/common-schemas.js';
+import {
+  syrianPhoneSchema,
+  optionalSyrianPhoneSchema,
+  queryBooleanSchema,
+} from '../../../core/validation/common-schemas.js';
 
 /**
  * Mirrors WireUser below for OpenAPI doc generation only (zod-to-openapi
@@ -222,7 +226,7 @@ export const currentUserResponseSchema = z.object({
 export const usersFilterQuerySchema = z
   .object({
     status: z.enum(['pending_approval', 'active', 'suspended', 'rejected', 'disabled']).optional(),
-    is_admin: z.coerce.boolean().optional(),
+    is_admin: queryBooleanSchema.optional(),
     requested_role_id: z.coerce.number().int().positive().optional(),
     /**
      * `true` → only users holding NO active assignment; `false` → only users
@@ -231,7 +235,21 @@ export const usersFilterQuerySchema = z
      * for staffing an empty branch — and the subject of the dashboard's
      * `user_unassigned` signal, which had no way to be listed before this.
      */
-    unassigned: z.coerce.boolean().optional(),
+    unassigned: queryBooleanSchema.optional(),
+    /**
+     * Free-text match across full name, email and phone.
+     *
+     * A staff directory becomes unusable by scrolling long before it becomes
+     * large — an admin looking for one person should not page through the
+     * organisation. Trimmed, and an all-whitespace value is treated as absent
+     * so a stray space never filters everything out.
+     */
+    search: z
+      .string()
+      .trim()
+      .max(150)
+      .optional()
+      .transform((v) => (v !== undefined && v.length > 0 ? v : undefined)),
     sort_by: z.enum(['created_at', 'first_name']).default('created_at'),
     sort_dir: z.enum(['asc', 'desc']).default('desc'),
   })

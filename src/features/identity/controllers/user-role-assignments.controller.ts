@@ -13,6 +13,12 @@ export async function listForUser(req: Request, res: Response): Promise<void> {
   ok(res, result);
 }
 
+export async function listEndedForUser(req: Request, res: Response): Promise<void> {
+  const { userId } = req.params as unknown as { userId: number };
+  const result = await assignmentsService.listEndedForUser(userId);
+  ok(res, result);
+}
+
 export async function createAssignment(req: Request, res: Response): Promise<void> {
   const actor = buildActorContext(req, requireActorId(req));
   const { userId } = req.params as unknown as { userId: number };

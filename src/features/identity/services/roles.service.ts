@@ -14,8 +14,11 @@ import {
   toWireRole,
   type WireRole,
   type CreateRoleBody,
+  type UpdateRoleBody,
   type UpdateRolePermissionsBody,
   type RolesFilterQuery,
+  type WireRoleHolder,
+  toWireRoleHolder,
 } from '../dtos/roles.dto.js';
 import { toWirePermission } from '../dtos/permissions.dto.js';
 
@@ -47,8 +50,86 @@ export async function listRoles(
 export async function getRoleById(id: number): Promise<WireRole> {
   const row = await rolesRepository.findById(id);
   if (!row) throw new NotFoundError('Role not found');
-  const permissions = await rolesRepository.findPermissionsByRole(id);
-  return toWireRole(row, permissions.map(toWirePermission));
+  const [permissions, holders, assignmentsEver] = await Promise.all([
+    rolesRepository.findPermissionsByRole(id),
+    userRoleAssignmentsRepository.countActiveHoldersOfRole(id),
+    rolesRepository.countAllAssignmentsEver(id),
+  ]);
+  return toWireRole(
+    row,
+    permissions.map(toWirePermission),
+    holders,
+    !row.is_system_default && assignmentsEver === 0,
+    assignmentsEver,
+  );
+}
+
+/** The people holding this role right now — one row per active assignment. */
+export async function listRoleHolders(
+  roleId: number,
+  params: PaginationParams,
+): Promise<Paginated<WireRoleHolder>> {
+  const role = await rolesRepository.findById(roleId);
+  if (!role) throw new NotFoundError('Role not found');
+  const { rows, total } = await rolesRepository.findHolders(roleId, params);
+  return paginated(rows.map(toWireRoleHolder), total, params);
+}
+
+/**
+ * Hard-deletes a role — the ONE case where this project deletes anything.
+ *
+ * The rule everywhere else is that nothing is destroyed, only retired, because
+ * a record someone once held must stay readable. A role that **no assignment
+ * has ever referenced** carries no such history: nobody ever was it, so there
+ * is nothing to preserve and a permanently-retired row is just clutter in every
+ * picker and filter forever.
+ *
+ * "Nobody holds it now" is NOT the condition — that is what deactivation is
+ * for. `user_role_assignments.role_id` is `ON DELETE RESTRICT`, so the database
+ * would refuse regardless; this check exists so the refusal arrives as a
+ * sentence naming the reason rather than a raw constraint error.
+ *
+ * Seeded defaults are excluded outright: the next `db:seed` recreates them, so
+ * deleting one is a no-op that looks like it worked.
+ */
+export async function deleteRole(actor: RequestActorContext, roleId: number): Promise<void> {
+  const role = await rolesRepository.findById(roleId);
+  if (!role) throw new NotFoundError('Role not found');
+
+  if (role.is_system_default) {
+    throw new ForbiddenError(
+      'A system-default role cannot be deleted — re-seeding would recreate it',
+      undefined,
+      'role_system_default_undeletable',
+    );
+  }
+
+  await assertActorOutranks(actor.userId, role.level);
+
+  const assignmentsEver = await rolesRepository.countAllAssignmentsEver(roleId);
+  if (assignmentsEver > 0) {
+    throw new BusinessError(
+      409,
+      `This role has ${assignmentsEver} assignment(s) in its history. Deactivate it instead — deleting would erase what those people once were.`,
+      'role_has_history',
+    );
+  }
+
+  // Recorded BEFORE the delete: afterwards there is no row to describe, and the
+  // whole value of this entry is that it names what disappeared.
+  await auditService.record(
+    actor,
+    AUDIT.roleDelete,
+    target.role(roleId),
+    {
+      name: role.name,
+      category: role.category,
+      level: role.level,
+    },
+    null,
+  );
+
+  await rolesRepository.deleteById(roleId);
 }
 
 /**
@@ -80,16 +161,15 @@ export async function createRole(
     // Deliberately a DIFFERENT messageKey from the duplicate-permission-set
     // 409 below: both share a status code, but only that one is overridable
     // with `force`. The key is how a client tells them apart.
-    throw new BusinessError(
-      409,
-      `Role name "${body.name}" is already in use`,
-      'role_name_taken',
-    );
+    throw new BusinessError(409, `Role name "${body.name}" is already in use`, 'role_name_taken');
   }
 
   let permissionKeys = body.permission_keys;
   let category = body.category;
-  let level: number | null = null;
+  // An explicit level always wins over the clone source's: the caller who
+  // typed one meant it, and silently overriding it with the source's would be
+  // the surprise.
+  let level: number | null = body.level ?? null;
 
   if (body.clone_from_role_id) {
     const source = await rolesRepository.findById(body.clone_from_role_id);
@@ -97,7 +177,7 @@ export async function createRole(
     const sourceKeys = await rolesRepository.findPermissionKeys(source.id);
     permissionKeys = permissionKeys.length > 0 ? permissionKeys : sourceKeys;
     category = category ?? source.category;
-    level = source.level;
+    level ??= source.level;
   }
 
   await assertActorOutranks(actorUserId, level);
@@ -143,6 +223,66 @@ export async function createRole(
   return toWireRole(row, permissions.map(toWirePermission));
 }
 
+/**
+ * Renames a role and/or moves it between categories.
+ *
+ * ── Why the Super Admin role cannot be renamed ─────────────────────────────
+ * [SUPER_ADMIN_ROLE_NAME] is compared against `roles.name` as a plain string in
+ * the guards that decide who may change a role's authority level and who counts
+ * as the protected root account (`users.service.ts`). Renaming that one row
+ * would not fail anywhere — it would quietly make every one of those lookups
+ * return nothing, i.e. disable the checks rather than trip them. Nothing else
+ * is name-addressed, so the other seeded roles rename freely.
+ *
+ * ── Why category is editable at all ────────────────────────────────────────
+ * It decides whether the "last qualified staff" guard applies to a role's
+ * assignments (`management`/`system` are guarded). Moving a role out of those
+ * categories genuinely relaxes that protection — which is why this is audited
+ * with both the old and new value, and why it needs `roles.edit` plus outranking
+ * the role being edited.
+ */
+export async function updateRole(
+  actor: RequestActorContext,
+  roleId: number,
+  body: UpdateRoleBody,
+): Promise<WireRole> {
+  const role = await rolesRepository.findById(roleId);
+  if (!role) throw new NotFoundError('Role not found');
+
+  await assertActorOutranks(actor.userId, role.level);
+
+  if (body.name !== undefined && body.name !== role.name) {
+    if (role.name === SUPER_ADMIN_ROLE_NAME) {
+      throw new ForbiddenError(
+        'The Super Admin role cannot be renamed — core authority checks identify it by name',
+        undefined,
+        'super_admin_role_immutable',
+      );
+    }
+    const existingByName = await rolesRepository.findByName(body.name);
+    if (existingByName) {
+      throw new BusinessError(409, `Role name "${body.name}" is already in use`, 'role_name_taken');
+    }
+  }
+
+  const row = await rolesRepository.updateIdentity(roleId, {
+    ...(body.name !== undefined ? { name: body.name } : {}),
+    ...(body.category !== undefined ? { category: body.category } : {}),
+  });
+  if (!row) throw new NotFoundError('Role not found');
+
+  await auditService.record(
+    actor,
+    AUDIT.roleUpdate,
+    target.role(roleId),
+    { name: role.name, category: role.category },
+    { name: row.name, category: row.category },
+  );
+
+  const permissions = await rolesRepository.findPermissionsByRole(roleId);
+  return toWireRole(row, permissions.map(toWirePermission));
+}
+
 /** True once the number of active roles exceeds the informational soft cap (never blocks creation). */
 export async function isOverSoftCap(): Promise<boolean> {
   const activeCount = await rolesRepository.countActive();
@@ -159,6 +299,26 @@ export async function updateRolePermissions(
 
   await assertActorOutranks(actor.userId, role.level);
   await permissionsService.assertPermissionKeysExist(body.permission_keys);
+
+  // The same role-explosion warning `createRole` raises, and for the same
+  // reason: the rule is about the resulting STATE — two active roles with
+  // identical powers and different names — not about which endpoint produced
+  // it. Checking only on create meant a role could be cloned and saved
+  // untouched, arriving at exactly the state the warning exists to question,
+  // with nothing said. `excludeRoleId` keeps a role from matching itself.
+  if (!body.force) {
+    const duplicate = await rolesRepository.findActiveRoleIdWithExactPermissionSet(
+      body.permission_keys,
+      roleId,
+    );
+    if (duplicate !== undefined) {
+      throw new BusinessError(
+        409,
+        `An active role (id ${duplicate}) already has this exact permission set. Pass force=true to save anyway.`,
+        'role_duplicate_permission_set',
+      );
+    }
+  }
 
   const previousKeys = await rolesRepository.findPermissionKeys(roleId);
   await rolesRepository.replacePermissions(roleId, body.permission_keys);
@@ -198,7 +358,11 @@ export async function updateRoleLevel(
 ): Promise<WireRole> {
   const isSuperAdmin = await actorHoldsSuperAdmin(actor.userId);
   if (!isSuperAdmin) {
-    throw new ForbiddenError("Only Super Admin can change a role's authority level");
+    throw new ForbiddenError(
+      "Only Super Admin can change a role's authority level",
+      undefined,
+      'role_level_super_admin_only',
+    );
   }
   const role = await rolesRepository.findById(roleId);
   if (!role) throw new NotFoundError('Role not found');
@@ -219,7 +383,13 @@ export async function updateRoleLevel(
   return toWireRole(row);
 }
 
-async function actorHoldsSuperAdmin(actorUserId: number): Promise<boolean> {
+/**
+ * Exported so `getCurrentUser` can report it on the wire: two operations are
+ * gated on holding this role and no permission key expresses it, so a client
+ * that cannot ask would either hide the control from the one person who needs
+ * it or offer it to everyone and refuse them afterwards.
+ */
+export async function actorHoldsSuperAdmin(actorUserId: number): Promise<boolean> {
   const assignments = await userRoleAssignmentsRepository.findActiveForUser(actorUserId);
   if (assignments.length === 0) return false;
   const superAdminRole = await rolesRepository.findActiveByName(SUPER_ADMIN_ROLE_NAME);
@@ -235,7 +405,11 @@ export async function deactivateRole(
   if (!role) throw new NotFoundError('Role not found');
 
   if (role.name === SUPER_ADMIN_ROLE_NAME) {
-    throw new ForbiddenError('The Super Admin role can never be deactivated');
+    throw new ForbiddenError(
+      'The Super Admin role can never be deactivated',
+      undefined,
+      'super_admin_role_undeactivatable',
+    );
   }
 
   const hasActive = await rolesRepository.hasActiveAssignments(roleId);
@@ -243,6 +417,8 @@ export async function deactivateRole(
     throw new BusinessError(
       409,
       'This role has active user assignments. Reassign every affected user to another role first.',
+
+      'role_has_active_assignments',
     );
   }
 
@@ -251,6 +427,44 @@ export async function deactivateRole(
   await auditService.record(
     actor,
     AUDIT.roleDeactivate,
+    target.role(roleId),
+    { is_active: role.is_active },
+    { is_active: row.is_active },
+  );
+  return toWireRole(row);
+}
+
+/**
+ * Puts a deactivated role back into service.
+ *
+ * The counterpart to [deactivateRole], which shipped without one — a role could
+ * be retired but never brought back, so a mistaken click was permanent and the
+ * row simply vanished from every list. Deactivation was always meant to be the
+ * reversible alternative to deletion; without this it was just a slower delete.
+ *
+ * [assertActorOutranks] is not ceremony here: reviving a high-authority role is
+ * the same privilege grant as creating one, so it answers to the same bar. The
+ * name-uniqueness index is global (not partial on `is_active`), so a dormant
+ * name was never released and cannot collide on the way back.
+ */
+export async function reactivateRole(
+  actor: RequestActorContext,
+  roleId: number,
+): Promise<WireRole> {
+  const role = await rolesRepository.findById(roleId);
+  if (!role) throw new NotFoundError('Role not found');
+
+  if (role.is_active) {
+    throw new BusinessError(409, 'This role is already active', 'role_already_active');
+  }
+
+  await assertActorOutranks(actor.userId, role.level);
+
+  const row = await rolesRepository.setActive(roleId, true);
+  if (!row) throw new NotFoundError('Role not found');
+  await auditService.record(
+    actor,
+    AUDIT.roleReactivate,
     target.role(roleId),
     { is_active: role.is_active },
     { is_active: row.is_active },

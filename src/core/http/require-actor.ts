@@ -9,7 +9,7 @@ import { UnauthorizedError } from './api-error.js';
  */
 export function requireActorId(req: Request): number {
   if (!req.user) {
-    throw new UnauthorizedError('Authentication required');
+    throw new UnauthorizedError('Authentication required', 'auth_required');
   }
   return req.user.id;
 }

@@ -24,6 +24,8 @@ async function assertWithinCap(
     throw new BusinessError(
       422,
       `Ownership percentage sum for this scope would be ${currentSum + incomingPercentage}%, exceeding the 100% cap (currently ${currentSum}%).`,
+
+      'ownership_sum_exceeded',
     );
   }
 }
@@ -68,6 +70,8 @@ export async function reviseOwnership(
     throw new BusinessError(
       422,
       `Ownership percentage sum for this scope would be ${currentSum + newPercentage}%, exceeding the 100% cap (currently ${currentSum}%, excluding this record).`,
+
+      'ownership_sum_exceeded',
     );
   }
 

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { AuditLogEntryRow } from '../schemas/audit-log-entries.schema.js';
+import type { AuditLogEntryWithActorRow } from '../repositories/audit-log-entries.repository.js';
 
 /** Mirrors WireAuditLogEntry below for OpenAPI doc generation only — see users.dto.ts for the pattern. */
 export const auditLogEntryResponseSchema = z.object({
@@ -12,6 +12,7 @@ export const auditLogEntryResponseSchema = z.object({
   ip_address: z.string().nullable(),
   device_info: z.string().nullable(),
   performed_by_role: z.string().nullable(),
+  performed_by_name: z.string().nullable(),
   branch_context: z.number().int().nullable(),
   created_at: z.string(),
 });
@@ -26,11 +27,13 @@ export interface WireAuditLogEntry {
   ip_address: string | null;
   device_info: string | null;
   performed_by_role: string | null;
+  /** The actor's full name. Null only if the account was since hard-deleted. */
+  performed_by_name: string | null;
   branch_context: number | null;
   created_at: string;
 }
 
-export function toWireAuditLogEntry(row: AuditLogEntryRow): WireAuditLogEntry {
+export function toWireAuditLogEntry(row: AuditLogEntryWithActorRow): WireAuditLogEntry {
   return {
     id: row.id,
     user_id: row.user_id,
@@ -41,6 +44,7 @@ export function toWireAuditLogEntry(row: AuditLogEntryRow): WireAuditLogEntry {
     ip_address: row.ip_address,
     device_info: row.device_info,
     performed_by_role: row.performed_by_role,
+    performed_by_name: row.performed_by_name,
     branch_context: row.branch_context,
     created_at: row.created_at.toISOString(),
   };

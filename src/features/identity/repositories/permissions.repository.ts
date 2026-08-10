@@ -24,6 +24,16 @@ export async function findByKeys(keys: string[]): Promise<PermissionRow[]> {
   return db.select().from(permissionsTable).where(inArray(permissionsTable.key, keys));
 }
 
+/** True when at least one permission already belongs to [module]. */
+export async function moduleExists(module: string): Promise<boolean> {
+  const rows = await db
+    .select({ key: permissionsTable.key })
+    .from(permissionsTable)
+    .where(eq(permissionsTable.module, module))
+    .limit(1);
+  return rows.length > 0;
+}
+
 export async function insert(data: NewPermissionRow): Promise<PermissionRow> {
   const rows = await db.insert(permissionsTable).values(data).returning();
   const row = rows[0];

@@ -25,6 +25,21 @@ userRoleAssignmentsRouter.get(
   asyncHandler(assignmentsController.listForUser),
 );
 
+/**
+ * The closed half of the same record — separate path rather than a `?ended=true`
+ * flag on the list above, because the two are read at different moments and by
+ * different screens: the active list is the working answer to "where is this
+ * person", the ended list is history someone opens deliberately. Folding them
+ * into one response would make every routine load pay for the name
+ * reconstruction each ended row needs.
+ */
+userRoleAssignmentsRouter.get(
+  '/ended',
+  requirePermission('users.manage'),
+  validate(userIdParamsSchema, 'params'),
+  asyncHandler(assignmentsController.listEndedForUser),
+);
+
 userRoleAssignmentsRouter.post(
   '/',
   requirePermission('users.manage'),

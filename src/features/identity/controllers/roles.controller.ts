@@ -5,6 +5,7 @@ import { requireActorId, buildActorContext } from '../../../core/http/require-ac
 import * as rolesService from '../services/roles.service.js';
 import type {
   CreateRoleBody,
+  UpdateRoleBody,
   UpdateRolePermissionsBody,
   UpdateRoleLevelBody,
   RolesFilterQuery,
@@ -39,6 +40,14 @@ export async function createRole(req: Request, res: Response): Promise<void> {
   );
 }
 
+export async function updateRole(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  const body = req.body as UpdateRoleBody;
+  const role = await rolesService.updateRole(actor, id, body);
+  ok(res, role);
+}
+
 export async function updateRolePermissions(req: Request, res: Response): Promise<void> {
   const actorUserId = requireActorId(req);
   const { id } = req.params as unknown as { id: number };
@@ -59,9 +68,29 @@ export async function updateRoleLevel(req: Request, res: Response): Promise<void
   ok(res, role);
 }
 
+export async function listRoleHolders(req: Request, res: Response): Promise<void> {
+  const { id } = req.params as unknown as { id: number };
+  const query = req.query as unknown as { page: number; limit: number };
+  ok(res, await rolesService.listRoleHolders(id, toPaginationParams(query)));
+}
+
+export async function deleteRole(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  await rolesService.deleteRole(actor, id);
+  ok(res, null, 'Deleted');
+}
+
 export async function deactivateRole(req: Request, res: Response): Promise<void> {
   const actor = buildActorContext(req, requireActorId(req));
   const { id } = req.params as unknown as { id: number };
   const role = await rolesService.deactivateRole(actor, id);
+  ok(res, role);
+}
+
+export async function reactivateRole(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  const role = await rolesService.reactivateRole(actor, id);
   ok(res, role);
 }

@@ -1,6 +1,7 @@
-import { eq, count, and, sql, asc, desc, type SQL } from 'drizzle-orm';
+import { eq, ne, count, and, sql, asc, desc, type SQL } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findManyPaginated, findOneById } from '../../../core/db/crud-helpers.js';
+import { likeTerm } from '../../../core/db/like-term.js';
 import { rolesTable, type RoleRow, type NewRoleRow } from '../schemas/roles.schema.js';
 import {
   rolePermissionsTable,
@@ -9,6 +10,8 @@ import {
 } from '../schemas/role-permissions.schema.js';
 import { permissionsTable, type PermissionRow } from '../schemas/permissions.schema.js';
 import { userRoleAssignmentsTable } from '../schemas/user-role-assignments.schema.js';
+import { usersTable } from '../schemas/users.schema.js';
+import { branchesTable } from '../schemas/branches.schema.js';
 import type { PaginationParams } from '../../../core/pagination/pagination.js';
 import type { RolesFilterQuery } from '../dtos/roles.dto.js';
 
@@ -38,6 +41,12 @@ export function findMany(
     conditions.push(
       sql`(${rolesTable.level} IS NULL OR ${rolesTable.level} > ${actorLevel})` as SQL,
     );
+  }
+
+  if (filter.search !== undefined && filter.search.length > 0) {
+    // Name only — a role has no other free-text identity worth matching, and
+    // `category` is already an exact filter of its own.
+    conditions.push(sql`${rolesTable.name} ILIKE ${likeTerm(filter.search)}` as SQL);
   }
 
   const orderFn = filter.sort_dir === 'asc' ? asc : desc;
@@ -81,6 +90,16 @@ export async function insert(data: NewRoleRow): Promise<RoleRow> {
   return row;
 }
 
+/** Identity fields only — `level` and `is_active` have their own setters so the
+ * guards protecting each cannot be bypassed through a generic update. */
+export async function updateIdentity(
+  id: number,
+  data: Partial<Pick<RoleRow, 'name' | 'category'>>,
+): Promise<RoleRow | undefined> {
+  const rows = await db.update(rolesTable).set(data).where(eq(rolesTable.id, id)).returning();
+  return rows[0];
+}
+
 export async function setActive(id: number, isActive: boolean): Promise<RoleRow | undefined> {
   const rows = await db
     .update(rolesTable)
@@ -115,13 +134,25 @@ export async function findPermissionsByRole(roleId: number): Promise<PermissionR
 /** Exact-match lookup used by the role-explosion-prevention warning (same permission set as an existing active role). */
 export async function findActiveRoleIdWithExactPermissionSet(
   permissionKeys: string[],
+  /**
+   * The role being edited, excluded from the comparison.
+   *
+   * Without it, saving a role's permissions would always report a duplicate —
+   * itself. Absent on create, where there is no self yet.
+   */
+  excludeRoleId?: number,
 ): Promise<number | undefined> {
+  const activeAndNotSelf =
+    excludeRoleId === undefined
+      ? eq(rolesTable.is_active, true)
+      : and(eq(rolesTable.is_active, true), ne(rolesTable.id, excludeRoleId));
+
   if (permissionKeys.length === 0) {
     const rows = await db
       .select({ id: rolesTable.id })
       .from(rolesTable)
       .leftJoin(rolePermissionsTable, eq(rolePermissionsTable.role_id, rolesTable.id))
-      .where(eq(rolesTable.is_active, true))
+      .where(activeAndNotSelf)
       .groupBy(rolesTable.id)
       .having(sql`count(${rolePermissionsTable.id}) = 0`)
       .limit(1);
@@ -138,12 +169,104 @@ export async function findActiveRoleIdWithExactPermissionSet(
     })
     .from(rolesTable)
     .innerJoin(rolePermissionsTable, eq(rolePermissionsTable.role_id, rolesTable.id))
-    .where(eq(rolesTable.is_active, true))
+    .where(activeAndNotSelf)
     .groupBy(rolesTable.id)
     .having(sql`count(${rolePermissionsTable.id}) = ${sortedKeys.length}`);
 
   const match = rows.find((r) => JSON.stringify(r.keys) === JSON.stringify(sortedKeys));
   return match?.id;
+}
+
+export interface RoleHolderRow {
+  assignment_id: number;
+  user_id: number;
+  first_name: string;
+  last_name: string;
+  email: string;
+  user_status: string;
+  branch_id: number | null;
+  branch_name: string | null;
+  valid_from: Date;
+}
+
+/**
+ * The people actually holding this role, one row per active assignment.
+ *
+ * Mirrors `branchesRepository.findStaff` deliberately — same shape, same
+ * pagination, same reason for keying on the ASSIGNMENT rather than the user:
+ * one person may hold the same role in two branches, collapsing that to one row
+ * hides the second and leaves the UI without an `assignment_id` to transfer or
+ * end. The unrestricted holder (`branch_id IS NULL`) IS included here, unlike
+ * on a branch roster: they genuinely hold this role, they are simply not
+ * confined to a branch.
+ */
+export async function findHolders(
+  roleId: number,
+  params: PaginationParams,
+): Promise<{ rows: RoleHolderRow[]; total: number }> {
+  const where = and(
+    eq(userRoleAssignmentsTable.role_id, roleId),
+    sql`(${userRoleAssignmentsTable.valid_to} IS NULL OR ${userRoleAssignmentsTable.valid_to} > now())`,
+  );
+
+  const [rows, totalRows] = await Promise.all([
+    db
+      .select({
+        assignment_id: userRoleAssignmentsTable.id,
+        user_id: usersTable.id,
+        first_name: usersTable.first_name,
+        last_name: usersTable.last_name,
+        email: usersTable.email,
+        user_status: usersTable.status,
+        branch_id: branchesTable.id,
+        branch_name: branchesTable.name,
+        valid_from: userRoleAssignmentsTable.valid_from,
+      })
+      .from(userRoleAssignmentsTable)
+      .innerJoin(usersTable, eq(usersTable.id, userRoleAssignmentsTable.user_id))
+      // LEFT, and the clause stays in the ON: an unrestricted assignment has no
+      // branch, and moving this to WHERE would collapse it to an inner join and
+      // silently drop exactly those holders.
+      .leftJoin(branchesTable, eq(branchesTable.id, userRoleAssignmentsTable.branch_id))
+      .where(where)
+      .orderBy(desc(userRoleAssignmentsTable.valid_from), desc(userRoleAssignmentsTable.id))
+      .limit(params.limit)
+      .offset(params.offset),
+    db
+      .select({ value: count() })
+      .from(userRoleAssignmentsTable)
+      .innerJoin(usersTable, eq(usersTable.id, userRoleAssignmentsTable.user_id))
+      .where(where),
+  ]);
+
+  return { rows, total: totalRows[0]?.value ?? 0 };
+}
+
+/**
+ * Assignment rows referencing this role — **active and historical alike**.
+ *
+ * The gate on hard deletion. `user_role_assignments.role_id` is `ON DELETE
+ * RESTRICT`, so the database already refuses; this exists so the refusal
+ * arrives as a translated sentence naming the reason instead of a raw
+ * constraint error.
+ *
+ * Counting ended assignments too is the whole point: "nobody holds it now" and
+ * "nobody ever held it" are different facts, and only the second makes deletion
+ * safe. Deleting a role that appears in someone's history would erase what that
+ * person once was — in a project whose rule is that history is kept.
+ */
+export async function countAllAssignmentsEver(roleId: number): Promise<number> {
+  const rows = await db
+    .select({ value: count() })
+    .from(userRoleAssignmentsTable)
+    .where(eq(userRoleAssignmentsTable.role_id, roleId));
+  return rows[0]?.value ?? 0;
+}
+
+export async function deleteById(roleId: number): Promise<void> {
+  // `role_permissions` cascades; assignments are RESTRICT and were checked by
+  // the service before we got here.
+  await db.delete(rolesTable).where(eq(rolesTable.id, roleId));
 }
 
 export async function replacePermissions(roleId: number, permissionKeys: string[]): Promise<void> {

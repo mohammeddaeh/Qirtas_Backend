@@ -1,6 +1,7 @@
 import { eq, count, ne, and, asc, desc, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findManyPaginated, findOneById } from '../../../core/db/crud-helpers.js';
+import { likeTerm } from '../../../core/db/like-term.js';
 import { usersTable, type UserRow, type NewUserRow } from '../schemas/users.schema.js';
 import { userRoleAssignmentsTable } from '../schemas/user-role-assignments.schema.js';
 import type { PaginationParams } from '../../../core/pagination/pagination.js';
@@ -30,6 +31,19 @@ export function findMany(
         AND (a.valid_to IS NULL OR a.valid_to > now())
     )`;
     conditions.push(filter.unassigned ? sql`NOT ${holdsActiveAssignment}` : holdsActiveAssignment);
+  }
+  if (filter.search !== undefined && filter.search.length > 0) {
+    // Matched against the CONCATENATED name, so "أحمد العبدالله" finds the
+    // person whose first and last names are stored separately — searching the
+    // columns individually never would.
+    const term = likeTerm(filter.search);
+    conditions.push(
+      sql`(
+        ${usersTable.first_name} || ' ' || ${usersTable.last_name} ILIKE ${term}
+        OR ${usersTable.email} ILIKE ${term}
+        OR ${usersTable.phone} ILIKE ${term}
+      )`,
+    );
   }
 
   const orderFn = filter.sort_dir === 'asc' ? asc : desc;
