@@ -9,7 +9,9 @@ import {
   type PaginationParams,
   type Paginated,
 } from '../../../core/pagination/pagination.js';
+import { createHash, randomBytes } from 'node:crypto';
 import { hashPassword, verifyPassword } from '../../../core/security/password.js';
+import { passwordResetDelivery } from '../../../core/notifications/password-reset-delivery.js';
 import { generateSessionToken } from '../../../core/security/token.js';
 import * as usersRepository from '../repositories/users.repository.js';
 import * as rolesRepository from '../repositories/roles.repository.js';
@@ -34,6 +36,9 @@ import {
   type CreateUserByAdminBody,
   type UsersFilterQuery,
   type ResubmitRegistrationBody,
+  type ForgotPasswordBody,
+  type ResetPasswordBody,
+  type ChangePasswordBody,
 } from '../dtos/users.dto.js';
 
 const MAX_OWNERSHIP_PERCENTAGE = 100;
@@ -669,4 +674,146 @@ export async function reactivateUser(
     { status: row.status },
   );
   return toWireUser(row);
+}
+
+// ── Password reset & change ──────────────────────────────────────────────────
+
+/** Unambiguous alphabet: no O/0 or I/1, because this code gets read off a screen and typed. */
+const RESET_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+const RESET_CODE_LENGTH = 8;
+const RESET_CODE_TTL_MINUTES = 15;
+
+function generateResetCode(): string {
+  const bytes = randomBytes(RESET_CODE_LENGTH);
+  let out = '';
+  for (let i = 0; i < RESET_CODE_LENGTH; i += 1) {
+    out += RESET_CODE_ALPHABET[bytes[i]! % RESET_CODE_ALPHABET.length];
+  }
+  return out;
+}
+
+/**
+ * Stored hashed, never in the clear.
+ *
+ * A reset code is a temporary password. If the users table leaks, plaintext
+ * codes hand the attacker every account with a reset in flight — the one thing
+ * the password column is hashed to prevent.
+ *
+ * SHA-256 rather than the password hasher: this value is high-entropy and
+ * short-lived, so the slow salted KDF buys nothing and would add its cost to
+ * every verification.
+ */
+function hashResetCode(code: string): string {
+  return createHash('sha256').update(code).digest('hex');
+}
+
+/**
+ * Step 1 — issue a reset code.
+ *
+ * ## Always resolves, even for an address with no account
+ *
+ * Answering "no such user" would turn this endpoint into a membership oracle:
+ * anyone could test addresses one at a time and learn who has an account here.
+ * So an unknown address takes the same path, returns the same shape, and the
+ * caller cannot tell the difference.
+ *
+ * The same reasoning covers non-active accounts. A suspended user is told
+ * nothing here — not because it would be unhelpful, but because "this account
+ * exists and is suspended" is exactly the fact the oracle was after.
+ */
+export async function requestPasswordReset(body: ForgotPasswordBody): Promise<void> {
+  const user = await usersRepository.findByEmail(body.email);
+
+  // Deliberately silent: no error, no log, no different timing branch worth
+  // measuring. The response is identical to the success path.
+  if (!user || user.status === 'disabled' || user.status === 'rejected') return;
+
+  const code = generateResetCode();
+  await usersRepository.update(user.id, {
+    password_reset_token: hashResetCode(code),
+    password_reset_expires_at: new Date(Date.now() + RESET_CODE_TTL_MINUTES * 60_000),
+  });
+
+  await passwordResetDelivery.send(user.email, code);
+}
+
+/**
+ * Step 2 — spend the code and set the new password.
+ *
+ * Every rejection below is the same error on purpose: wrong code, expired code,
+ * already-used code, and unknown address are indistinguishable to the caller.
+ * Telling them apart would let someone probe which addresses have a reset in
+ * flight, and none of the four suggests a different action to a legitimate user
+ * — they all mean "ask for a new code".
+ */
+export async function resetPassword(body: ResetPasswordBody): Promise<void> {
+  const invalid = (): never => {
+    throw new BusinessError(
+      422,
+      'This reset code is invalid or has expired',
+      'reset_code_invalid',
+    );
+  };
+
+  const user = await usersRepository.findByEmail(body.email);
+  if (!user || !user.password_reset_token || !user.password_reset_expires_at) invalid();
+
+  const row = user!;
+  if (row.password_reset_expires_at!.getTime() < Date.now()) invalid();
+  if (row.password_reset_token !== hashResetCode(body.token)) invalid();
+
+  await usersRepository.update(row.id, {
+    password_hash: await hashPassword(body.new_password),
+    // Cleared in the same write that sets the password: a code that survives
+    // its own use is a second, permanent password.
+    password_reset_token: null,
+    password_reset_expires_at: null,
+  });
+
+  // The reason someone resets a password is usually that someone else knows it.
+  // Leaving existing sessions alive would mean the reset changed nothing for
+  // whoever already had one.
+  await sessionsRepository.deleteAllByUserId(row.id);
+}
+
+/**
+ * Changing your own password while signed in.
+ *
+ * ## Why the wrong current password is a 422 and not a 401
+ *
+ * This request is authenticated, so a 401 means "your session is invalid" — and
+ * every client treats that by signing the user out. Answering 401 for a mistyped
+ * field would eject someone from the app for a typo, which reads as a crash
+ * rather than a correction. The session is fine; one input was wrong.
+ */
+export async function changePassword(
+  actorUserId: number,
+  body: ChangePasswordBody,
+): Promise<void> {
+  const user = await usersRepository.findById(actorUserId);
+  if (!user) throw new NotFoundError('User not found');
+
+  const valid = await verifyPassword(body.current_password, user.password_hash);
+  if (!valid) {
+    throw new BusinessError(422, 'Your current password is incorrect', 'current_password_wrong');
+  }
+
+  if (body.current_password === body.new_password) {
+    throw new BusinessError(
+      422,
+      'The new password must differ from the current one',
+      'password_must_differ',
+    );
+  }
+
+  await usersRepository.update(user.id, {
+    password_hash: await hashPassword(body.new_password),
+    // Any reset in flight is void: the account owner just proved they know the
+    // password, so an outstanding code can only be someone else's attempt.
+    password_reset_token: null,
+    password_reset_expires_at: null,
+  });
+
+  // Sessions are NOT revoked here. The user is present and chose this; signing
+  // their other devices out would be a surprise, not a protection.
 }

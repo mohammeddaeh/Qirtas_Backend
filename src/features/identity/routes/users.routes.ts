@@ -4,6 +4,7 @@ import { validate } from '../../../core/validation/validate.js';
 import { requireAuth } from '../../../core/http/require-actor.js';
 import { requirePermission } from '../../../core/http/require-permission.js';
 import { loginRateLimit } from '../../../core/middleware/login-rate-limit.js';
+import { passwordResetRateLimit } from '../../../core/middleware/password-reset-rate-limit.js';
 import { registerRateLimit } from '../../../core/middleware/register-rate-limit.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 import {
@@ -12,6 +13,9 @@ import {
   resubmitRegistrationBodySchema,
   decideRegistrationBodySchema,
   loginBodySchema,
+  forgotPasswordBodySchema,
+  resetPasswordBodySchema,
+  changePasswordBodySchema,
   bootstrapSuperAdminBodySchema,
   updateUserBodySchema,
   createUserByAdminBodySchema,
@@ -115,6 +119,36 @@ usersRouter.post(
 
 /** Ends only the calling session (identified by its own Bearer token) — other concurrent sessions are untouched. */
 usersRouter.post('/logout', asyncHandler(usersController.logout));
+
+// ── Password reset & change ──────────────────────────────────────────────────
+// The first two are UNAUTHENTICATED by definition: the caller cannot sign in.
+// That makes the rate limit the only thing standing between them and both a
+// mail cannon and an offline-speed guessing loop — see the middleware's doc.
+
+/** Always 200, registered address or not — see the service for why. */
+usersRouter.post(
+  '/forgot-password',
+  validate(forgotPasswordBodySchema, 'body'),
+  passwordResetRateLimit,
+  asyncHandler(usersController.forgotPassword),
+);
+
+usersRouter.post(
+  '/reset-password',
+  validate(resetPasswordBodySchema, 'body'),
+  passwordResetRateLimit,
+  asyncHandler(usersController.resetPassword),
+);
+
+/**
+ * Authenticated — and needs no `requirePermission`: the actor is changing their
+ * OWN password, which is not a privileged action over anyone else.
+ */
+usersRouter.post(
+  '/change-password',
+  validate(changePasswordBodySchema, 'body'),
+  asyncHandler(usersController.changePassword),
+);
 
 usersRouter.post(
   '/:id/decide-registration',

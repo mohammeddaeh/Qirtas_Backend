@@ -13,6 +13,9 @@ import type {
   CreateUserByAdminBody,
   UsersFilterQuery,
   ResubmitRegistrationBody,
+  ForgotPasswordBody,
+  ResetPasswordBody,
+  ChangePasswordBody,
 } from '../dtos/users.dto.js';
 
 export async function listUsers(req: Request, res: Response): Promise<void> {
@@ -115,4 +118,27 @@ export async function reactivateUser(req: Request, res: Response): Promise<void>
   const { id } = req.params as unknown as { id: number };
   const user = await usersService.reactivateUser(actor, id);
   ok(res, user);
+}
+
+// ── Password reset & change ──────────────────────────────────────────────────
+
+/**
+ * Answers 200 whether or not the address is registered — see
+ * `usersService.requestPasswordReset` for why that is the contract and not an
+ * oversight. Do not add a "user not found" branch here.
+ */
+export async function forgotPassword(req: Request, res: Response): Promise<void> {
+  await usersService.requestPasswordReset(req.body as ForgotPasswordBody);
+  ok(res, null);
+}
+
+export async function resetPassword(req: Request, res: Response): Promise<void> {
+  await usersService.resetPassword(req.body as ResetPasswordBody);
+  ok(res, null);
+}
+
+export async function changePassword(req: Request, res: Response): Promise<void> {
+  const actorUserId = requireActorId(req);
+  await usersService.changePassword(actorUserId, req.body as ChangePasswordBody);
+  ok(res, null);
 }

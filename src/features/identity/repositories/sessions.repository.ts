@@ -18,6 +18,22 @@ export async function touchLastActive(id: number): Promise<void> {
   await db.update(sessionsTable).set({ last_active_at: new Date() }).where(eq(sessionsTable.id, id));
 }
 
+/**
+ * Ends every session belonging to `userId`.
+ *
+ * Called after a password reset, and that is not housekeeping — it is the point.
+ * The common reason someone resets a password is that someone else knows it;
+ * leaving the attacker's existing session alive means the reset changed nothing
+ * for them. The owner signs in again with the new password; the attacker does
+ * not, because they do not have it.
+ *
+ * Not called on a voluntary password *change*, where the user is present and
+ * signing every other device out would be a surprise rather than a protection.
+ */
+export async function deleteAllByUserId(userId: number): Promise<void> {
+  await db.delete(sessionsTable).where(eq(sessionsTable.user_id, userId));
+}
+
 /** Logout — deletes the session row outright (sessions carry no historical/audit value once ended). */
 export async function deleteByToken(token: string): Promise<void> {
   await db.delete(sessionsTable).where(eq(sessionsTable.token, token));

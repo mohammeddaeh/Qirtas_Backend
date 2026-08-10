@@ -73,6 +73,28 @@ export const MESSAGES = {
     en: 'Too many registration attempts — please try again later',
     ar: 'محاولات تسجيل كثيرة — حاول مرة أخرى لاحقاً',
   },
+  too_many_reset_attempts: {
+    en: 'Too many password reset attempts — please try again later',
+    ar: 'محاولات استعادة كثيرة — حاول مرة أخرى لاحقاً',
+  },
+
+  // --- Password reset & change ---------------------------------------------
+  // One message covers wrong / expired / already-used / unknown-address on
+  // purpose: telling them apart would let someone probe which addresses have a
+  // reset in flight, and all four mean the same thing to a real user — ask for
+  // a new code.
+  reset_code_invalid: {
+    en: 'This reset code is invalid or has expired',
+    ar: 'رمز الاستعادة غير صالح أو انتهت صلاحيته',
+  },
+  current_password_wrong: {
+    en: 'Your current password is incorrect',
+    ar: 'كلمة المرور الحالية غير صحيحة',
+  },
+  password_must_differ: {
+    en: 'The new password must differ from the current one',
+    ar: 'كلمة المرور الجديدة يجب أن تختلف عن الحالية',
+  },
 
   assignment_duplicate: {
     en: 'This person already holds that role in that branch.',

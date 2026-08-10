@@ -58,6 +58,22 @@ export const usersTable = pgTable('users', {
 
   // --- Authentication (users_roles.md — Feature: Authentication) ---
   password_hash: varchar('password_hash', { length: 255 }).notNull(),
+  /**
+   * ⚠️ RESERVED — the column exists, the feature does NOT.
+   *
+   * Nothing sets it, nothing reads it: no login path checks it, no endpoint
+   * flips it, and no screen shows it. It is always `false`, and it travels to
+   * the client only because the user DTO passes every column through.
+   *
+   * Deliberately kept rather than dropped (decision 2026-08-10) — MFA is
+   * planned, just not now. It is annotated instead, because the danger of a
+   * dormant security column is not the column: it is the next reader who sees
+   * `mfa_enabled` in an API response and concludes the account is protected.
+   *
+   * **Before implementing**, decide the factor first (TOTP / SMS / email) —
+   * they need different columns, and a boolean is unlikely to be one of them.
+   * Tracked as E2 in docs/production_readiness.md.
+   */
   mfa_enabled: boolean('mfa_enabled').notNull().default(false),
   password_reset_token: varchar('password_reset_token', { length: 255 }),
   password_reset_expires_at: timestamp('password_reset_expires_at', { withTimezone: true }),

@@ -179,6 +179,43 @@ export const loginBodySchema = z.object({
 });
 export type LoginBody = z.infer<typeof loginBodySchema>;
 
+// ── Password reset & change ─────────────────────────────────────────────────
+
+/** Step 1 — ask for a reset code. Unauthenticated. */
+export const forgotPasswordBodySchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+});
+export type ForgotPasswordBody = z.infer<typeof forgotPasswordBodySchema>;
+
+/**
+ * Step 2 — spend the code and set the new password. Unauthenticated.
+ *
+ * `email` travels again because the user may finish this step on a different
+ * device from the one that asked for the code — the common case when the code
+ * arrives by email.
+ */
+export const resetPasswordBodySchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  token: z.string().trim().min(1).max(255),
+  new_password: passwordSchema,
+});
+export type ResetPasswordBody = z.infer<typeof resetPasswordBodySchema>;
+
+/**
+ * Changing your own password while signed in.
+ *
+ * `current_password` is `z.string().min(1)` and NOT `passwordSchema`: it is a
+ * value being *checked*, not *set*. Validating it against today's strength
+ * rules would lock out every account created before those rules existed — the
+ * user could not supply a password that satisfies a policy their real password
+ * predates, and the only way out would be the reset flow.
+ */
+export const changePasswordBodySchema = z.object({
+  current_password: z.string().min(1),
+  new_password: passwordSchema,
+});
+export type ChangePasswordBody = z.infer<typeof changePasswordBodySchema>;
+
 /** First-run bootstrap — only callable while zero User rows exist (see setup wizard flow). */
 export const bootstrapSuperAdminBodySchema = z.object({
   first_name: z.string().trim().min(1).max(100),
