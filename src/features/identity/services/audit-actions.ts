@@ -14,6 +14,17 @@
  * account?" had no answer. An audit gap cannot be filled retroactively.
  */
 export const AUDIT = {
+  // — Authentication —
+  // Not listed individually here: the names come from
+  // `core/auth/ports/security-event-sink.ts` (AUTH_EVENT) and are written
+  // through the adapter in `repositories/security-event-sink.impl.ts`.
+  //
+  // They live there rather than here because they belong to the authentication
+  // engine, which is reusable across applications, while this catalogue is
+  // Qirtas's. Both write to the same `action` column and share the
+  // `<entity>.<verb>` convention, so a single query still returns the whole
+  // history of a record regardless of which layer recorded it.
+
   // — Accounts —
   userCreate: 'user.create',
   userUpdate: 'user.update',

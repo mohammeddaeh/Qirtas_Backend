@@ -1,91 +1,93 @@
 import type { NextFunction, Request, Response } from 'express';
-import { eq } from 'drizzle-orm';
-import { db } from '../db/client.js';
-import { sessionsTable } from '../../features/identity/schemas/sessions.schema.js';
-import { usersTable } from '../../features/identity/schemas/users.schema.js';
-import { env } from '../config/env.js';
+import { accountStore } from '../auth/ports/account-store.js';
+import * as sessionService from '../auth/services/session.service.js';
+import * as sessionsRepository from '../auth/repositories/sessions.repository.js';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       user: { id: number } | null;
+      /**
+       * The session backing `user`, when there is one.
+       *
+       * Carried so endpoints that act on sessions — rotate, "sign out my other
+       * devices" — can identify the caller's own without re-resolving the token
+       * they were just authenticated with. Previously such an endpoint would
+       * have had to hash the Authorization header a second time.
+       */
+      session: { id: number; token: string } | null;
     }
   }
 }
 
-const IDLE_TIMEOUT_MS = env.SESSION_IDLE_TIMEOUT_MINUTES * 60 * 1000;
-
 /**
- * Resolves req.user from the Bearer token against the sessions table
- * (features/identity/schemas/sessions.schema.ts — direct table import here
- * mirrors the existing core/db/seed.ts precedent for composition-root-style
- * infra code, not a feature repository/service call).
+ * Resolves `req.user` from the Bearer token.
  *
- * A session idle for longer than SESSION_IDLE_TIMEOUT_MINUTES (measured from
- * last_active_at) is treated as expired and deleted outright — the caller
- * gets the same req.user = null as an unknown/absent token.
+ * ## What it enforces, and what it deliberately does not
  *
- * Also verifies the session's owning user is still status='active'
- * (docs/reference/session_permission_integrity.md §5, decided 2026-07-27) —
- * a disabled/suspended/rejected/pending_approval user's still-valid session
- * is treated exactly like an invalid/absent token, and the session row is
- * deleted at the same time (proactive cleanup, avoids re-checking the same
- * dead session on every subsequent request).
+ * Three independent conditions end a session, and all three are checked here on
+ * every request rather than only at sign-in:
  *
- * Never rejects the request itself — an absent/invalid/expired token, or a
- * token belonging to a non-active user, simply leaves req.user = null.
- * Enforcement stays entirely at requireAuth()/requireActorId() (see
- * require-actor.ts), so route/feature code doesn't change shape.
+ * 1. the token resolves to a live session (idle and absolute timeouts —
+ *    `sessionService.resolveToken`);
+ * 2. the owning account still exists;
+ * 3. the application still permits it to be signed in
+ *    (`AccountStore.canSignIn`).
+ *
+ * The third is why an admin suspending someone takes effect immediately rather
+ * than whenever their token happens to expire. Its session row is deleted at
+ * the same time, so the same dead session is not re-evaluated on every
+ * subsequent request.
+ *
+ * **This middleware never rejects a request.** An absent, invalid or expired
+ * token simply leaves `req.user = null`. Enforcement stays entirely at
+ * `requireAuth()`/`requireActorId()`/`requirePermission()`, so a route's shape
+ * says whether it is public — rather than that fact being spread between here
+ * and there.
+ *
+ * ## Why the account lookup happens here and not in the session query
+ *
+ * It used to be a join onto `users`, reading `status` directly. That was faster
+ * and it hard-coded Qirtas's account model into shared middleware — the exact
+ * coupling `AccountStore` exists to remove. The cost is one indexed primary-key
+ * lookup per authenticated request.
  */
 export async function auth(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  req.user = null;
+  req.session = null;
+
   const header = req.header('Authorization');
   const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
-
   if (!token) {
-    req.user = null;
     next();
     return;
   }
 
-  const rows = await db
-    .select({ session: sessionsTable, userStatus: usersTable.status })
-    .from(sessionsTable)
-    .innerJoin(usersTable, eq(usersTable.id, sessionsTable.user_id))
-    .where(eq(sessionsTable.token, token))
-    .limit(1);
-  const row = rows[0];
-
-  if (!row) {
-    req.user = null;
+  const lookup = await sessionService.resolveToken(token);
+  if (!lookup.ok) {
     next();
     return;
   }
 
-  const { session, userStatus } = row;
-
-  const idleMs = Date.now() - session.last_active_at.getTime();
-  if (idleMs > IDLE_TIMEOUT_MS) {
-    await db.delete(sessionsTable).where(eq(sessionsTable.id, session.id));
-    req.user = null;
+  const account = await accountStore().findById(lookup.session.user_id);
+  if (!account) {
+    // The account vanished under a live session — only reachable through a
+    // hard delete, which this system permits solely for users with zero
+    // history. The orphan session is removed rather than left to the sweep.
+    await sessionsRepository.deleteById(lookup.session.id);
     next();
     return;
   }
 
-  if (userStatus !== 'active') {
-    await db.delete(sessionsTable).where(eq(sessionsTable.id, session.id));
-    req.user = null;
+  const decision = await accountStore().canSignIn(account);
+  if (!decision.allowed) {
+    await sessionsRepository.deleteById(lookup.session.id);
     next();
     return;
   }
 
-  db.update(sessionsTable)
-    .set({ last_active_at: new Date() })
-    .where(eq(sessionsTable.id, session.id))
-    .catch(() => {
-      /* best-effort activity tracking — never blocks the request */
-    });
-
-  req.user = { id: session.user_id };
+  req.user = { id: account.id };
+  req.session = { id: lookup.session.id, token };
   next();
 }

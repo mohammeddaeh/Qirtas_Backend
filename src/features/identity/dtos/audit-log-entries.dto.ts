@@ -4,7 +4,7 @@ import type { AuditLogEntryWithActorRow } from '../repositories/audit-log-entrie
 /** Mirrors WireAuditLogEntry below for OpenAPI doc generation only — see users.dto.ts for the pattern. */
 export const auditLogEntryResponseSchema = z.object({
   id: z.number().int(),
-  user_id: z.number().int(),
+  user_id: z.number().int().nullable(),
   action: z.string(),
   target_entity: z.string(),
   previous_value: z.unknown(),
@@ -19,7 +19,16 @@ export const auditLogEntryResponseSchema = z.object({
 
 export interface WireAuditLogEntry {
   id: number;
-  user_id: number;
+  /**
+   * The actor, or null when there was none.
+   *
+   * Nullable as of 2026-08-11, when authentication events joined this log: a
+   * failed sign-in against an address that does not exist has no actor by
+   * definition, and that is precisely the event a brute-force attempt produces.
+   * Null here means "no authenticated actor", not "unknown" — every business
+   * mutation still carries one.
+   */
+  user_id: number | null;
   action: string;
   target_entity: string;
   previous_value: unknown;

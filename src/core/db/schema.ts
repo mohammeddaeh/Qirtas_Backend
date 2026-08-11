@@ -17,6 +17,10 @@ export * from '../../features/identity/schemas/users.schema.js';
 export * from '../../features/identity/schemas/user-role-assignments.schema.js';
 export * from '../../features/identity/schemas/ownerships.schema.js';
 export * from '../../features/identity/schemas/audit-log-entries.schema.js';
-export * from '../../features/identity/schemas/sessions.schema.js';
+// Authentication tables — moved out of features/identity 2026-08-11 because
+// they belong to the reusable engine, not to Qirtas's user model. See
+// core/auth/schemas/sessions.schema.ts for the full reasoning.
+export * from '../auth/schemas/sessions.schema.js';
+export * from '../auth/schemas/verification-tokens.schema.js';
 export * from '../../features/localization/schemas/languages.schema.js';
 export * from '../../features/localization/schemas/translation-entries.schema.js';

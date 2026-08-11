@@ -120,12 +120,23 @@ usersRouter.post(
 /** Ends only the calling session (identified by its own Bearer token) — other concurrent sessions are untouched. */
 usersRouter.post('/logout', asyncHandler(usersController.logout));
 
-// ── Password reset & change ──────────────────────────────────────────────────
-// The first two are UNAUTHENTICATED by definition: the caller cannot sign in.
-// That makes the rate limit the only thing standing between them and both a
-// mail cannon and an offline-speed guessing loop — see the middleware's doc.
+// ── Password reset & change — DEPRECATED ALIASES ─────────────────────────────
+//
+// These three moved to `/api/v1/auth/*` (2026-08-11). They are kept here, with
+// identical middleware and the identical handler, purely so the already-shipped
+// mobile client keeps working across the deploy.
+//
+// They are aliases, not copies: `usersController.forgotPassword` and friends
+// are re-exports of the `features/auth` handlers, so the two mount points
+// cannot drift. Delete this block once no released client calls `/users/*` for
+// them.
+//
+// The first two are UNAUTHENTICATED by definition — the caller cannot sign in.
+// That makes the rate limit, together with the per-code attempt ceiling in
+// `core/auth/services/verification.service.ts`, the only thing standing between
+// them and both a mail cannon and a machine-speed guessing loop.
 
-/** Always 200, registered address or not — see the service for why. */
+/** Always succeeds, registered address or not — see core/auth/services/auth.service.ts for why. */
 usersRouter.post(
   '/forgot-password',
   validate(forgotPasswordBodySchema, 'body'),
@@ -143,9 +154,16 @@ usersRouter.post(
 /**
  * Authenticated — and needs no `requirePermission`: the actor is changing their
  * OWN password, which is not a privileged action over anyone else.
+ *
+ * `requireAuth` added with the move. Its absence here was a real gap rather
+ * than a shortcut: the handler called `requireActorId(req)` itself, so an
+ * anonymous caller did get a 401 — but only after the body had been validated,
+ * which meant an unauthenticated request reached password-strength checking.
+ * The guard now sits where every other authenticated route puts it.
  */
 usersRouter.post(
   '/change-password',
+  requireAuth,
   validate(changePasswordBodySchema, 'body'),
   asyncHandler(usersController.changePassword),
 );

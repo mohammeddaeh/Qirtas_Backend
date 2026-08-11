@@ -51,6 +51,68 @@ export const MESSAGES = {
     en: 'Your account has been disabled',
     ar: 'تم تعطيل حسابك',
   },
+  account_rejected: {
+    en: 'Your registration request was declined',
+    ar: 'تم رفض طلب تسجيلك',
+  },
+  /**
+   * The address has not been proven yet. Distinct from every other refusal
+   * because it is the only one the user can clear themselves — the client shows
+   * the code screen instead of "contact your administrator".
+   */
+  account_email_unverified: {
+    en: 'Confirm your email address to continue',
+    ar: 'أكّد بريدك الإلكتروني للمتابعة',
+  },
+
+  // --- Sessions ------------------------------------------------------------
+  session_expired: {
+    en: 'Your session has expired — please sign in again',
+    ar: 'انتهت صلاحية جلستك — سجّل الدخول من جديد',
+  },
+  session_not_found: {
+    en: 'This session no longer exists',
+    ar: 'هذه الجلسة لم تعد موجودة',
+  },
+
+  // --- Email verification --------------------------------------------------
+  // One message for wrong / expired / already-used / out-of-attempts, on
+  // purpose: telling them apart would let someone probe which accounts have a
+  // verification in flight, and all four mean the same thing to a real user —
+  // ask for a new code.
+  verification_code_invalid: {
+    en: 'This verification code is invalid or has expired',
+    ar: 'رمز التأكيد غير صالح أو انتهت صلاحيته',
+  },
+  verification_already_verified: {
+    en: 'This email address is already confirmed',
+    ar: 'هذا البريد الإلكتروني مؤكَّد بالفعل',
+  },
+  verification_resend_cooldown: {
+    en: 'A code was just sent — please wait before requesting another',
+    ar: 'أُرسل رمز للتوّ — انتظر قليلاً قبل طلب رمز جديد',
+  },
+  verification_disabled: {
+    en: 'Email verification is not enabled on this server',
+    ar: 'تأكيد البريد الإلكتروني غير مفعَّل على هذا الخادم',
+  },
+  auth_provider_missing: {
+    en: 'Sign-in is not configured on this server',
+    ar: 'تسجيل الدخول غير مُهيّأ على هذا الخادم',
+  },
+  /**
+   * Fallback when an [AccountStore] refuses a sign-in without naming a reason.
+   *
+   * Qirtas's own store always names one (`account_suspended`,
+   * `account_disabled`), so this should never be reached here. It exists
+   * because `reasonKey` is optional in the port, and an application that omits
+   * it must still get a translated refusal rather than the English fallback —
+   * a hole the message-key check caught before it shipped.
+   */
+  sign_in_not_permitted: {
+    en: 'Sign-in is not permitted for this account',
+    ar: 'تسجيل الدخول غير متاح لهذا الحساب',
+  },
 
   // --- Assignment & role guards -------------------------------------------
   // These are read by an admin mid-task (staffing a branch, moving someone),
@@ -76,6 +138,10 @@ export const MESSAGES = {
   too_many_reset_attempts: {
     en: 'Too many password reset attempts — please try again later',
     ar: 'محاولات استعادة كثيرة — حاول مرة أخرى لاحقاً',
+  },
+  too_many_verification_attempts: {
+    en: 'Too many verification attempts — please try again later',
+    ar: 'محاولات تأكيد كثيرة — حاول مرة أخرى لاحقاً',
   },
 
   // --- Password reset & change ---------------------------------------------
@@ -140,7 +206,7 @@ export const MESSAGES = {
     en: 'The Super Admin role cannot be renamed — core authority checks identify it by name',
     ar: 'لا يمكن إعادة تسمية دور المدير العام — فحوص الصلاحية الأساسية تُعرِّفه باسمه',
   },
-  auth_required: {
+  authentication_required: {
     en: 'Authentication required',
     ar: 'يلزم تسجيل الدخول',
   },

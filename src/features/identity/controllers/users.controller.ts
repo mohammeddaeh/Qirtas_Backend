@@ -3,6 +3,7 @@ import { ok, created } from '../../../core/http/response.js';
 import { toPaginationParams } from '../../../core/pagination/pagination.js';
 import { requireActorId, buildActorContext } from '../../../core/http/require-actor.js';
 import { resetLoginRateLimit } from '../../../core/middleware/login-rate-limit.js';
+import type * as authService from '../../../core/auth/services/auth.service.js';
 import * as usersService from '../services/users.service.js';
 import type {
   RegisterStaffBody,
@@ -13,9 +14,6 @@ import type {
   CreateUserByAdminBody,
   UsersFilterQuery,
   ResubmitRegistrationBody,
-  ForgotPasswordBody,
-  ResetPasswordBody,
-  ChangePasswordBody,
 } from '../dtos/users.dto.js';
 
 export async function listUsers(req: Request, res: Response): Promise<void> {
@@ -58,10 +56,29 @@ export async function createUserByAdmin(req: Request, res: Response): Promise<vo
   created(res, user);
 }
 
+/** Request metadata every delegating call carries — for security events and email language, never for a decision. */
+function originOf(req: Request): authService.RequestOrigin {
+  return {
+    ipAddress: req.ip ?? null,
+    deviceInfo: req.header('User-Agent') ?? null,
+    lang: req.lang,
+  };
+}
+
 export async function registerStaff(req: Request, res: Response): Promise<void> {
   const body = req.body as RegisterStaffBody;
-  const user = await usersService.registerStaff(body);
-  created(res, user, 'Registration submitted — pending admin approval');
+  const user = await usersService.registerStaff(body, originOf(req));
+  // The message names the NEXT step, and which step that is depends on whether
+  // this deployment verifies addresses — telling someone to await approval when
+  // the review queue has not seen their request yet is the kind of
+  // accurate-sounding wrong that produces a support ticket a week later.
+  created(
+    res,
+    user,
+    user.status === 'pending_verification'
+      ? 'Registration received — confirm your email address to continue'
+      : 'Registration submitted — pending admin approval',
+  );
 }
 
 export async function resubmitRegistration(req: Request, res: Response): Promise<void> {
@@ -87,7 +104,10 @@ export async function bootstrapSuperAdmin(req: Request, res: Response): Promise<
 
 export async function login(req: Request, res: Response): Promise<void> {
   const body = req.body as LoginBody;
-  const result = await usersService.login(body);
+  const result = await usersService.login(body, originOf(req));
+  // Only on success, and only after it: clearing the counter is what keeps a
+  // legitimate user from being punished by their own earlier typos, and doing
+  // it before the attempt is judged would clear it for failures too.
   resetLoginRateLimit(body.email, req.ip ?? 'unknown');
   ok(res, result);
 }
@@ -95,7 +115,7 @@ export async function login(req: Request, res: Response): Promise<void> {
 export async function logout(req: Request, res: Response): Promise<void> {
   const header = req.header('Authorization');
   const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
-  if (token) await usersService.logout(token);
+  if (token) await usersService.logout(token, originOf(req));
   ok(res, null);
 }
 
@@ -121,24 +141,17 @@ export async function reactivateUser(req: Request, res: Response): Promise<void>
 }
 
 // ── Password reset & change ──────────────────────────────────────────────────
+//
+// MOVED to `features/auth` (2026-08-11). These three are re-exported aliases,
+// not copies: they ARE the new handlers, so the deprecated `/users/*` routes
+// and the current `/auth/*` routes cannot drift apart — there is one
+// implementation with two mount points.
+//
+// Kept only so the already-shipped mobile client keeps working across the
+// deploy. Remove once no released client calls `/users/*` for these.
 
-/**
- * Answers 200 whether or not the address is registered — see
- * `usersService.requestPasswordReset` for why that is the contract and not an
- * oversight. Do not add a "user not found" branch here.
- */
-export async function forgotPassword(req: Request, res: Response): Promise<void> {
-  await usersService.requestPasswordReset(req.body as ForgotPasswordBody);
-  ok(res, null);
-}
-
-export async function resetPassword(req: Request, res: Response): Promise<void> {
-  await usersService.resetPassword(req.body as ResetPasswordBody);
-  ok(res, null);
-}
-
-export async function changePassword(req: Request, res: Response): Promise<void> {
-  const actorUserId = requireActorId(req);
-  await usersService.changePassword(actorUserId, req.body as ChangePasswordBody);
-  ok(res, null);
-}
+export {
+  forgotPassword,
+  resetPassword,
+  changePassword,
+} from '../../auth/controllers/auth.controller.js';

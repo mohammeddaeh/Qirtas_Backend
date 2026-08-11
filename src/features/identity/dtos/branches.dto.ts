@@ -50,7 +50,14 @@ export const branchStaffMemberResponseSchema = z.object({
   user_id: z.number().int(),
   full_name: z.string(),
   email: z.string(),
-  user_status: z.enum(['pending_approval', 'active', 'suspended', 'rejected', 'disabled']),
+  user_status: z.enum([
+    'pending_approval',
+    'active',
+    'suspended',
+    'rejected',
+    'disabled',
+    'pending_verification',
+  ]),
   role_id: z.number().int(),
   role_name: z.string(),
   valid_from: z.string(),
@@ -61,7 +68,13 @@ export interface WireBranchStaffMember {
   user_id: number;
   full_name: string;
   email: string;
-  user_status: 'pending_approval' | 'active' | 'suspended' | 'rejected' | 'disabled';
+  user_status:
+    | 'pending_approval'
+    | 'active'
+    | 'suspended'
+    | 'rejected'
+    | 'disabled'
+    | 'pending_verification';
   role_id: number;
   role_name: string;
   valid_from: string;

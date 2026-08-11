@@ -22,9 +22,21 @@ export const auditLogEntriesTable = pgTable(
   'audit_log_entries',
   {
     id: serial('id').primaryKey(),
-    user_id: integer('user_id')
-      .notNull()
-      .references(() => usersTable.id, { onDelete: 'restrict' }),
+    /**
+     * The actor — nullable as of 2026-08-11.
+     *
+     * It was `NOT NULL`, which was correct while every audited action was
+     * performed by a signed-in admin. It stopped being correct the moment
+     * authentication events joined the log: a failed sign-in against an
+     * address that does not exist has **no actor**, and that is precisely the
+     * event a brute-force attempt produces. The single most alert-worthy row
+     * this table can hold was the one row the schema refused to store.
+     *
+     * Null therefore means "no authenticated actor", not "unknown" — every
+     * business mutation still writes one, and the reader can tell the two
+     * situations apart by the action name.
+     */
+    user_id: integer('user_id').references(() => usersTable.id, { onDelete: 'restrict' }),
     action: varchar('action', { length: 150 }).notNull(),
     target_entity: varchar('target_entity', { length: 150 }).notNull(),
     previous_value: jsonb('previous_value'),

@@ -23,11 +23,38 @@
 | المسار                   | ما تفعله                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `src/features/identity/` | **Users, Roles & Permissions (RBAC) — الموديول التأسيسي الكامل**: users (تسجيل ذاتي + موافقة أدمن + auth)، roles، permissions، user_role_assignments، branches، ownerships، audit_log_entries، sessions. مصدر قواعد العمل الكامل: [docs/reference/users_roles.md](../docs/reference/users_roles.md) و[users_complete_reference.md](../docs/reference/users_complete_reference.md) — **المثال الحي المرجعي** لأي feature جديدة (6 مجلدات فرعية × 9 كيانات) |
+| `src/features/auth/` | **الواجهة HTTP للمصادقة فقط** (routes/controllers/dtos/openapi) — كل المنطق بـ`src/core/auth/`. تخدم: `/auth/refresh` · `/auth/sessions` (عرض/إبطال/خروج من الباقي) · `/auth/verify-email` · `/auth/resend-verification` · `/auth/forgot-password` · `/auth/reset-password` · `/auth/change-password`. **`login`/`logout` ليسا هنا** — بقيا بـ`identity` لأن ردّهما يحمل `permission_keys`/`is_super_admin` (تخويل لا مصادقة)، ويفوّضان المصادقة لنفس خدمة `core/auth` |
 | `src/features/localization/` | **Dynamic (Remote) Localization** — `languages` + `translation_entries`: يخدم أي لغة إضافية بعد ar/en بالكامل (لا قيمة أساسية محلية لها)، **و** يخدم أيضاً طبقة "Override" اختيارية فوق ar/en نفسيهما (اللتان تبقيان compile-time بالفرونت كقيمة أساسية مضمونة أوفلاين دائماً — الـoverride طبقة إضافية غير مُلزِمة فوقها، لا بديل عنها) — انظر §13 (أسماء الصلاحيات) و§15 (أي نص واجهة عادي) بالمرجع أدناه. `GET /languages` (غير مُصفّحة، فعّالة فقط) هو استطلاع الإصدار الذي يتحقق منه التطبيق عند الإقلاع؛ `GET /:code/translations` يرجّع خريطة الترجمة الكاملة (whole-file، لا `since`)؛ `PUT /:code/translations` يرفع `version` تلقائياً كإشارة إبطال كاش. صلاحية `localization.manage` للكتابة. مصدر القرار المعماري الكامل: [docs/reference/dynamic_localization.md](../docs/reference/dynamic_localization.md) (Model 2 — نظامان متوازيان لأي لغة إضافية؛ Local-First with Remote Override لكل اللغات بما فيها ar/en) |
 
 > `orders/`, `inventory/`, `printing/`, `customization/` وبقية موديولات المشروع **لم تُبنَ بعد** — انسخ نمط `features/identity/` بنفس التشريح.
 
 ---
+
+## 🔐 محرّك المصادقة `core/auth/` — قابل لإعادة الاستخدام (2026-08-11)
+
+المصادقة **طبقتان**، والسبب هو قاعدة `features → features ❌` نفسها: لو كان `features/auth` مستقلاً لما استطاع `features/identity` استدعاءه عند التسجيل.
+
+```
+core/auth/          ← المحرّك: منافذ + خدمات + مخططات. صفر منطق عمل.
+     ↑                 (identity يستورده بمشروعية — لا كسر للقاعدة)
+features/auth/      ← الواجهة فقط: routes + controllers + dtos
+features/identity/  ← أدوار/فروع/ملكية/موافقة — ويُنفِّذ منفذ AccountStore
+```
+
+**أربعة منافذ، وواحد فقط إلزامي**:
+
+| المنفذ | من يُنفِّذه | لماذا يوجد |
+|---|---|---|
+| `AccountStore` (**إلزامي**) | `identity/repositories/account-store.impl.ts` | ٧ دوال. **هذا هو الوصل كله**: كل ما يخصّ Qirtas بالحسابات (جدول بعشرين عموداً، قواعد من يدخل، أن التحقق يُقدّم الحساب للطابور) مذكور هناك و`core/auth` يجهله. نقل المحرّك لتطبيق آخر = كتابة هذا الملف وحده |
+| `EmailSender` | `core/auth/adapters/smtp-email-sender.ts` | التبديل من بريد الوزارة إلى Gmail = **تغيير `.env` فقط**. الذي يتغيّر بين النشرات هو الناقل لا الرسالة، فالناقل هو المُجرَّد |
+| `SecurityEventSink` | `identity/repositories/security-event-sink.impl.ts` | يوصل أحداث المصادقة لسجل التدقيق القائم — لا جدول ثانٍ يعيش فيه الماضي |
+| `AuthProvider` | `core/auth/providers/local-auth.provider.ts` | يجيب سؤالاً واحداً: «هل هذا الدليل صحيح؟». إضافة Google/Keycloak = ملف شقيق يرث الجلسات والإبطال والأحداث وقواعد الحالة بلا تعديل سطر فوقه |
+
+الوصل كله بـ`configureAuth({...})` بأول `buildApp()` — ثلاثة أسطر، وهي **القائمة الكاملة** لما يجب أن يوفّره أي تطبيق.
+
+**تُبدَّل بالتهيئة لا بالكود**: `EMAIL_VERIFICATION_MODE` (`off`/`optional`/`required`) · مُهَل ومحاولات الرموز · سياسة كلمة المرور · مُهَل الجلسة والتدوير · SMTP. المعاني المسمّاة بـ`core/auth/config/auth-config.ts`، والقيم بـ`.env` (والأسرار تبقى بـ`env` وحده فلا تتسرّب بسطر سجل يطبع «التهيئة»).
+
+**دورة حياة الحساب صارت**: `pending_verification` → (رمز) → `pending_approval` → (قرار أدمن) → `active`/`rejected`. الترتيب هو الضمانة ضد إغراق طابور المراجعة.
 
 ## ✅ Auth حقيقي + RBAC فعلي + TTL مفعّلون (2026-07-23)
 

@@ -1,24 +1,18 @@
-import {
-  NotFoundError,
-  BusinessError,
-  UnauthorizedError,
-  ForbiddenError,
-} from '../../../core/http/api-error.js';
+import { NotFoundError, BusinessError, ForbiddenError } from '../../../core/http/api-error.js';
 import {
   paginated,
   type PaginationParams,
   type Paginated,
 } from '../../../core/pagination/pagination.js';
-import { createHash, randomBytes } from 'node:crypto';
-import { hashPassword, verifyPassword } from '../../../core/security/password.js';
-import { passwordResetDelivery } from '../../../core/notifications/password-reset-delivery.js';
-import { generateSessionToken } from '../../../core/security/token.js';
+import { hashPassword } from '../../../core/auth/services/password.service.js';
+import * as authService from '../../../core/auth/services/auth.service.js';
+import { isEmailVerificationEnabled } from '../../../core/auth/config/auth-config.js';
+import { qirtasAccountStore } from '../repositories/account-store.impl.js';
 import * as usersRepository from '../repositories/users.repository.js';
 import * as rolesRepository from '../repositories/roles.repository.js';
 import * as assignmentsRepository from '../repositories/user-role-assignments.repository.js';
 import * as ownershipsRepository from '../repositories/ownerships.repository.js';
 import * as branchesRepository from '../repositories/branches.repository.js';
-import * as sessionsRepository from '../repositories/sessions.repository.js';
 import { SUPER_ADMIN_ROLE_NAME } from './roles.service.js';
 import * as rolesService from './roles.service.js';
 import * as assignmentsService from './user-role-assignments.service.js';
@@ -36,9 +30,6 @@ import {
   type CreateUserByAdminBody,
   type UsersFilterQuery,
   type ResubmitRegistrationBody,
-  type ForgotPasswordBody,
-  type ResetPasswordBody,
-  type ChangePasswordBody,
 } from '../dtos/users.dto.js';
 
 const MAX_OWNERSHIP_PERCENTAGE = 100;
@@ -125,7 +116,10 @@ export async function updateUser(
  * but can reach nothing protected until an admin decides.
  * (users_roles.md — Feature: Internal Self-Registration & Approval, 2026-07-09)
  */
-export async function registerStaff(body: RegisterStaffBody): Promise<WireUser> {
+export async function registerStaff(
+  body: RegisterStaffBody,
+  origin: authService.RequestOrigin,
+): Promise<WireUser> {
   const existing = await usersRepository.findByEmail(body.email);
   if (existing) {
     throw new BusinessError(409, 'An account with this email already exists', 'email_taken');
@@ -134,23 +128,43 @@ export async function registerStaff(body: RegisterStaffBody): Promise<WireUser> 
   const role = await rolesRepository.findById(body.requested_role_id);
   if (!role) throw new NotFoundError('Requested role not found');
 
-  const passwordHash = await hashPassword(body.password);
+  // ## Where a new registration lands, and why
+  //
+  // With verification enabled the account starts at `pending_verification` and
+  // does NOT enter the admin review queue — it advances to `pending_approval`
+  // only when the code is spent (AccountStore.markEmailVerified). That ordering
+  // is the point: the queue is an admin's working tool, and without this gate
+  // anyone could fill it with thousands of addresses they do not own. Proving
+  // the address costs an attacker a real mailbox per request.
+  //
+  // With verification off the account lands where it always did, so a
+  // deployment that upgrades this backend without configuring SMTP behaves
+  // exactly as before rather than stranding every new registration behind an
+  // email that cannot be sent.
+  const verificationEnabled = isEmailVerificationEnabled();
+  const now = new Date();
 
-  const row = await usersRepository.insert({
-    first_name: body.first_name,
-    last_name: body.last_name,
+  const account = await qirtasAccountStore.create({
     email: body.email,
-    phone: body.phone,
-    password_hash: passwordHash,
-    status: 'pending_approval',
-    requested_role_id: body.requested_role_id,
-    requested_branch_id: body.requested_branch_id ?? null,
-    requested_ownership_percentage:
-      body.requested_ownership_percentage !== undefined
-        ? body.requested_ownership_percentage.toFixed(2)
-        : null,
+    passwordHash: await hashPassword(body.password),
+    emailVerifiedAt: verificationEnabled ? null : now,
+    profile: {
+      first_name: body.first_name,
+      last_name: body.last_name,
+      phone: body.phone,
+      status: verificationEnabled ? 'pending_verification' : 'pending_approval',
+      requested_role_id: body.requested_role_id,
+      requested_branch_id: body.requested_branch_id ?? null,
+      requested_ownership_percentage: body.requested_ownership_percentage ?? null,
+    },
   });
 
+  // After the row exists, never before: a code that reaches the user but not
+  // the database is unverifiable, while the reverse costs one resend.
+  await authService.sendEmailVerification(account, origin);
+
+  const row = await usersRepository.findById(account.id);
+  if (!row) throw new NotFoundError('User not found');
   return toWireUser(row);
 }
 
@@ -242,6 +256,13 @@ export async function createUserByAdmin(
     phone: body.phone,
     password_hash: passwordHash,
     status: 'active',
+    // Verified without a code, because the admin creating the account IS the
+    // proof — they typed the address, they know the person, and the account is
+    // active from this moment. Sending a code the new employee must find before
+    // they can be assigned anything would gate an admin's deliberate act on a
+    // mailbox neither of them is watching. Verification exists to stop
+    // *self*-registration from being anonymous; there is nothing anonymous here.
+    email_verified_at: new Date(),
     decided_at: new Date(),
     decided_by_user_id: createdByUserId,
   });
@@ -416,6 +437,11 @@ export async function bootstrapSuperAdmin(body: BootstrapSuperAdminBody): Promis
     password_hash: passwordHash,
     is_admin: true,
     status: 'active',
+    // Same reasoning as createUserByAdmin, more sharply: this runs on an empty
+    // database, so there is no mail configured yet and nobody to approve
+    // anything. Gating first-run setup behind an email would make a fresh
+    // install unbootstrappable.
+    email_verified_at: new Date(),
     decided_at: new Date(),
     // The ONLY code path in the whole codebase allowed to set this to true
     // (docs/reference/users_roles.md — Feature: Root Protected Account).
@@ -483,40 +509,36 @@ export interface CurrentUserResult {
   is_super_admin: boolean;
 }
 
-export async function login(body: LoginBody): Promise<LoginResult> {
-  const user = await usersRepository.findByEmail(body.email);
-  if (!user) throw new UnauthorizedError('Invalid email or password', 'invalid_credentials');
+/**
+ * Sign-in — authentication delegated, authorization added here.
+ *
+ * ## Why this stayed in identity instead of moving to features/auth
+ *
+ * The response carries `permission_keys` and `is_super_admin`, which are
+ * authorization facts derived from role assignments. `core/auth` must not know
+ * that roles exist — the moment it does, the engine stops being portable to an
+ * application without them. So the split follows the two questions:
+ * `core/auth` answers "who is this and may they hold a session?", and this
+ * function answers "and what may they do?".
+ *
+ * Everything that used to be inline here — credential checking, the constant-
+ * time miss, the account-status refusals, session creation, the security event
+ * — now lives in `authService.signIn`. The status rules did not disappear: they
+ * moved to `AccountStore.canSignIn` in `repositories/account-store.impl.ts`,
+ * where they remain Qirtas's, and where the auth middleware can re-check them
+ * on every request rather than only at sign-in.
+ */
+export async function login(body: LoginBody, origin: authService.RequestOrigin): Promise<LoginResult> {
+  const { account, session, token } = await authService.signIn(
+    { email: body.email, password: body.password },
+    { ...origin, deviceInfo: body.device_info ?? origin.deviceInfo },
+  );
 
-  const valid = await verifyPassword(body.password, user.password_hash);
-  if (!valid) throw new UnauthorizedError('Invalid email or password', 'invalid_credentials');
+  const user = await usersRepository.findById(account.id);
+  // The engine just authenticated against this row, so its absence here would
+  // mean it vanished mid-request. Defensive, and never expected.
+  if (!user) throw new NotFoundError('User not found');
 
-  // pending_approval/rejected still get a real session — the account must
-  // stay reachable (status screen, edit-and-resubmit) even after the app is
-  // reinstalled and the original registration response is long gone. This
-  // session unlocks nothing protected: requirePermission() looks up active
-  // UserRoleAssignment rows, and these statuses never have one.
-  // (users_roles.md — Feature: Internal Self-Registration & Approval)
-  if (user.status === 'suspended') {
-    throw new ForbiddenError(
-      'Your account is temporarily suspended',
-      { account_status: 'suspended' },
-      'account_suspended',
-    );
-  }
-  if (user.status === 'disabled') {
-    throw new ForbiddenError(
-      'Your account has been disabled',
-      { account_status: 'disabled' },
-      'account_disabled',
-    );
-  }
-
-  const token = generateSessionToken();
-  const session = await sessionsRepository.insert({
-    user_id: user.id,
-    token,
-    device_info: body.device_info ?? null,
-  });
   const permissionKeys = await assignmentsRepository.findAllEffectivePermissionKeys(user.id);
 
   // `is_super_admin` here too, not only on `getCurrentUser`: the client seeds
@@ -568,9 +590,9 @@ export async function getUserPermissions(userId: number): Promise<string[]> {
   return assignmentsRepository.findAllEffectivePermissionKeys(userId);
 }
 
-/** Ends the current session only — other concurrent sessions for the same user are untouched (multi-session is allowed by design). */
-export async function logout(token: string): Promise<void> {
-  await sessionsRepository.deleteByToken(token);
+/** Ends the current session only — other concurrent sessions for the same user are untouched (multi-session is allowed by design). Delegated so the logout security event is recorded in one place. */
+export async function logout(token: string, origin: authService.RequestOrigin): Promise<void> {
+  await authService.signOut(token, origin);
 }
 
 /**
@@ -676,144 +698,16 @@ export async function reactivateUser(
   return toWireUser(row);
 }
 
-// ── Password reset & change ──────────────────────────────────────────────────
-
-/** Unambiguous alphabet: no O/0 or I/1, because this code gets read off a screen and typed. */
-const RESET_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const RESET_CODE_LENGTH = 8;
-const RESET_CODE_TTL_MINUTES = 15;
-
-function generateResetCode(): string {
-  const bytes = randomBytes(RESET_CODE_LENGTH);
-  let out = '';
-  for (let i = 0; i < RESET_CODE_LENGTH; i += 1) {
-    out += RESET_CODE_ALPHABET[bytes[i]! % RESET_CODE_ALPHABET.length];
-  }
-  return out;
-}
-
 /**
- * Stored hashed, never in the clear.
+ * Password reset and change moved to `core/auth/services/auth.service.ts`
+ * (2026-08-11) and are served by `features/auth`.
  *
- * A reset code is a temporary password. If the users table leaks, plaintext
- * codes hand the attacker every account with a reset in flight — the one thing
- * the password column is hashed to prevent.
+ * They were never identity concerns: nothing in them touches a role, a branch
+ * or an approval. Keeping them here meant the reusable half of the system
+ * depended on the Qirtas-specific half, which is what kept the template from
+ * shipping a working authentication module.
  *
- * SHA-256 rather than the password hasher: this value is high-entropy and
- * short-lived, so the slow salted KDF buys nothing and would add its cost to
- * every verification.
+ * The deprecated `/users/forgot-password`, `/users/reset-password` and
+ * `/users/change-password` routes still exist and delegate to the same
+ * service, so no client breaks on the move.
  */
-function hashResetCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex');
-}
-
-/**
- * Step 1 — issue a reset code.
- *
- * ## Always resolves, even for an address with no account
- *
- * Answering "no such user" would turn this endpoint into a membership oracle:
- * anyone could test addresses one at a time and learn who has an account here.
- * So an unknown address takes the same path, returns the same shape, and the
- * caller cannot tell the difference.
- *
- * The same reasoning covers non-active accounts. A suspended user is told
- * nothing here — not because it would be unhelpful, but because "this account
- * exists and is suspended" is exactly the fact the oracle was after.
- */
-export async function requestPasswordReset(body: ForgotPasswordBody): Promise<void> {
-  const user = await usersRepository.findByEmail(body.email);
-
-  // Deliberately silent: no error, no log, no different timing branch worth
-  // measuring. The response is identical to the success path.
-  if (!user || user.status === 'disabled' || user.status === 'rejected') return;
-
-  const code = generateResetCode();
-  await usersRepository.update(user.id, {
-    password_reset_token: hashResetCode(code),
-    password_reset_expires_at: new Date(Date.now() + RESET_CODE_TTL_MINUTES * 60_000),
-  });
-
-  await passwordResetDelivery.send(user.email, code);
-}
-
-/**
- * Step 2 — spend the code and set the new password.
- *
- * Every rejection below is the same error on purpose: wrong code, expired code,
- * already-used code, and unknown address are indistinguishable to the caller.
- * Telling them apart would let someone probe which addresses have a reset in
- * flight, and none of the four suggests a different action to a legitimate user
- * — they all mean "ask for a new code".
- */
-export async function resetPassword(body: ResetPasswordBody): Promise<void> {
-  const invalid = (): never => {
-    throw new BusinessError(
-      422,
-      'This reset code is invalid or has expired',
-      'reset_code_invalid',
-    );
-  };
-
-  const user = await usersRepository.findByEmail(body.email);
-  if (!user || !user.password_reset_token || !user.password_reset_expires_at) invalid();
-
-  const row = user!;
-  if (row.password_reset_expires_at!.getTime() < Date.now()) invalid();
-  if (row.password_reset_token !== hashResetCode(body.token)) invalid();
-
-  await usersRepository.update(row.id, {
-    password_hash: await hashPassword(body.new_password),
-    // Cleared in the same write that sets the password: a code that survives
-    // its own use is a second, permanent password.
-    password_reset_token: null,
-    password_reset_expires_at: null,
-  });
-
-  // The reason someone resets a password is usually that someone else knows it.
-  // Leaving existing sessions alive would mean the reset changed nothing for
-  // whoever already had one.
-  await sessionsRepository.deleteAllByUserId(row.id);
-}
-
-/**
- * Changing your own password while signed in.
- *
- * ## Why the wrong current password is a 422 and not a 401
- *
- * This request is authenticated, so a 401 means "your session is invalid" — and
- * every client treats that by signing the user out. Answering 401 for a mistyped
- * field would eject someone from the app for a typo, which reads as a crash
- * rather than a correction. The session is fine; one input was wrong.
- */
-export async function changePassword(
-  actorUserId: number,
-  body: ChangePasswordBody,
-): Promise<void> {
-  const user = await usersRepository.findById(actorUserId);
-  if (!user) throw new NotFoundError('User not found');
-
-  const valid = await verifyPassword(body.current_password, user.password_hash);
-  if (!valid) {
-    throw new BusinessError(422, 'Your current password is incorrect', 'current_password_wrong');
-  }
-
-  if (body.current_password === body.new_password) {
-    throw new BusinessError(
-      422,
-      'The new password must differ from the current one',
-      'password_must_differ',
-    );
-  }
-
-  await usersRepository.update(user.id, {
-    password_hash: await hashPassword(body.new_password),
-    // Any reset in flight is void: the account owner just proved they know the
-    // password, so an outstanding code can only be someone else's attempt.
-    password_reset_token: null,
-    password_reset_expires_at: null,
-  });
-
-  // Sessions are NOT revoked here. The user is present and chose this; signing
-  // their other devices out would be a surprise, not a protection.
-}

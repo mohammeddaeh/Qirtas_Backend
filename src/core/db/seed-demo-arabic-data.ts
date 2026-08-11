@@ -405,16 +405,33 @@ async function seedPendingUsers(actor: RequestActorContext, branchIds: number[])
       continue;
     }
 
-    const row = await usersService.registerStaff({
-      first_name: def.first_name,
-      last_name: def.last_name,
-      email: def.email,
-      phone: def.phone,
-      password: DEMO_PASSWORD,
-      requested_role_id: role.id,
-      requested_branch_id: branchIds[def.branchIndex],
-    });
+    const row = await usersService.registerStaff(
+      {
+        first_name: def.first_name,
+        last_name: def.last_name,
+        email: def.email,
+        phone: def.phone,
+        password: DEMO_PASSWORD,
+        requested_role_id: role.id,
+        requested_branch_id: branchIds[def.branchIndex],
+      },
+      // Seeding has no HTTP request behind it. `lang` only picks the wording of
+      // a verification email that is never sent here — demo accounts are marked
+      // verified below, and the seed runs with no mail transport configured.
+      { ipAddress: null, deviceInfo: 'seed:demo-arabic-data', lang: 'ar' },
+    );
     created++;
+
+    // Demo staff land verified so the seeded dataset keeps describing the
+    // situations it was built to expose — branches without managers, disabled
+    // holders occupying roles. With verification enforced they would all sit at
+    // `pending_verification`, never reach the review queue, and the dashboard
+    // signals would have nothing to find (production_readiness.md §0: the seed
+    // is a live test case, not data to be cleaned).
+    await usersRepository.update(row.id, {
+      email_verified_at: new Date(),
+      ...(row.status === 'pending_verification' ? { status: 'pending_approval' as const } : {}),
+    });
 
     if (def.reject) {
       await usersService.decideRegistration(actor, row.id, {

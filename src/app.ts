@@ -11,6 +11,10 @@ import { asyncHandler } from './core/http/async-handler.js';
 import { notFound } from './core/middleware/not-found.js';
 import { errorHandler } from './core/middleware/error-handler.js';
 import { buildOpenApiDocument } from './core/openapi/document.js';
+import { configureAuth } from './core/auth/composition.js';
+import { qirtasAccountStore } from './features/identity/repositories/account-store.impl.js';
+import { auditLogSecurityEventSink } from './features/identity/repositories/security-event-sink.impl.js';
+import { authRouter } from './features/auth/routes/auth.routes.js';
 import { usersRouter } from './features/identity/routes/users.routes.js';
 import { rolesRouter } from './features/identity/routes/roles.routes.js';
 import { permissionsRouter } from './features/identity/routes/permissions.routes.js';
@@ -55,6 +59,17 @@ function corsOptions(): CorsOptions {
 export function buildApp(): Express {
   const app = express();
 
+  // Before any middleware, because `core/middleware/auth.ts` resolves every
+  // request through the account store — an unconfigured engine would fail on
+  // the first request rather than at boot, which is the harder failure to
+  // diagnose. This is the ONE place the reusable authentication engine is bound
+  // to Qirtas's implementations; the complete list of what an application must
+  // supply is these three lines.
+  configureAuth({
+    accountStore: qirtasAccountStore,
+    securityEventSink: auditLogSecurityEventSink,
+  });
+
   app.use(helmet());
   app.use(cors(corsOptions()));
   app.use(express.json());
@@ -97,6 +112,7 @@ app.get('/', (_req, res) => {
     swaggerUi.setup(openApiDocument),
   );
 
+  app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/users', usersRouter);
   app.use('/api/v1/roles', rolesRouter);
   app.use('/api/v1/permissions', permissionsRouter);

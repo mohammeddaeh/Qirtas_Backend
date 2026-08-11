@@ -5,6 +5,7 @@ import {
   optionalSyrianPhoneSchema,
   queryBooleanSchema,
 } from '../../../core/validation/common-schemas.js';
+import { passwordSchema } from '../../../core/auth/services/password.service.js';
 
 /**
  * Mirrors WireUser below for OpenAPI doc generation only (zod-to-openapi
@@ -23,7 +24,16 @@ export const userResponseSchema = z.object({
   is_admin: z.boolean(),
   is_root_protected: z.boolean(),
   mfa_enabled: z.boolean(),
-  status: z.enum(['pending_approval', 'active', 'suspended', 'rejected', 'disabled']),
+  email_verified: z.boolean(),
+  email_verified_at: z.string().nullable(),
+  status: z.enum([
+    'pending_approval',
+    'active',
+    'suspended',
+    'rejected',
+    'disabled',
+    'pending_verification',
+  ]),
   rejection_reason: z.string().nullable(),
   requested_role_id: z.number().int().nullable(),
   requested_branch_id: z.number().int().nullable(),
@@ -46,7 +56,24 @@ export interface WireUser {
   is_admin: boolean;
   is_root_protected: boolean;
   mfa_enabled: boolean;
-  status: 'pending_approval' | 'active' | 'suspended' | 'rejected' | 'disabled';
+  /**
+   * Whether the address has been proven.
+   *
+   * Sent alongside the timestamp rather than instead of it: the client asks a
+   * yes/no question ("do I route to the code screen?") and should not have to
+   * restate `email_verified_at != null` to answer it — a derivation every
+   * caller would repeat, and one of them would get wrong. The timestamp stays
+   * for the screens that show *when*.
+   */
+  email_verified: boolean;
+  email_verified_at: string | null;
+  status:
+    | 'pending_approval'
+    | 'active'
+    | 'suspended'
+    | 'rejected'
+    | 'disabled'
+    | 'pending_verification';
   rejection_reason: string | null;
   requested_role_id: number | null;
   requested_branch_id: number | null;
@@ -71,6 +98,8 @@ export function toWireUser(row: UserRow): WireUser {
     is_admin: row.is_admin,
     is_root_protected: row.is_root_protected,
     mfa_enabled: row.mfa_enabled,
+    email_verified: row.email_verified_at !== null,
+    email_verified_at: row.email_verified_at ? row.email_verified_at.toISOString() : null,
     status: row.status,
     rejection_reason: row.rejection_reason,
     requested_role_id: row.requested_role_id,
@@ -90,22 +119,20 @@ export const userIdParamsSchema = z.object({
   id: z.coerce.number().int().positive(),
 });
 
-/**
- * Mirrors the app's own rule (`CustomRegex.passwordRegex`, qirtas_app
- * core/foundation/utils/validators.dart): at least 8 characters, containing at
- * least one letter and one digit.
- *
- * The client-side check is a courtesy, not a boundary — until this matched it,
- * `"aaaaaaaa"` was accepted from curl, Postman, or any future client, and the
- * only rule that actually holds is the server's (production_readiness.md §A4).
- * If the app's regex changes, change this one in the same commit.
- */
-const passwordSchema = z
-  .string()
-  .min(8, 'Password must be at least 8 characters')
-  .max(255)
-  .regex(/[A-Za-z]/, 'Password must contain at least one letter')
-  .regex(/\d/, 'Password must contain at least one digit');
+// `passwordSchema` moved to `core/auth/services/password.service.ts`
+// (2026-08-11) and is imported at the top of this file.
+//
+// It used to be defined here, which meant the password policy was owned by ONE
+// feature's DTO file while five endpoints across two features enforced it — and
+// a second feature needing a password would have had either to import another
+// feature's DTOs (forbidden by the dependency rules) or to restate the regexes,
+// which is how two "identical" policies start diverging.
+//
+// The rules themselves are unchanged: at least 8 characters (now configurable
+// via PASSWORD_MIN_LENGTH), at least one letter, at least one digit — still
+// matching the app's own `CustomRegex.passwordRegex`. The client-side check
+// remains a courtesy; the server's is the only boundary
+// (production_readiness.md §A4).
 
 /**
  * Self-registration — the single entry point for every internal account.
@@ -180,41 +207,26 @@ export const loginBodySchema = z.object({
 export type LoginBody = z.infer<typeof loginBodySchema>;
 
 // ── Password reset & change ─────────────────────────────────────────────────
+//
+// The three schemas that lived here moved to `features/auth/dtos/auth.dto.ts`
+// (2026-08-11) with their endpoints. They are re-exported below rather than
+// duplicated, so the deprecated `/users/*` routes validate against the exact
+// same shapes the `/auth/*` routes do.
+//
+// One deliberate contract change came with the move: reset-password's field is
+// now `code`, not `token`. It was never a token — it is an eight-character
+// string a person reads off a screen and types, and calling it a token invited
+// clients to treat it as opaque and long. The deprecated route accepts both
+// spellings (see auth.routes.ts / users.routes.ts) so no shipped client breaks.
 
-/** Step 1 — ask for a reset code. Unauthenticated. */
-export const forgotPasswordBodySchema = z.object({
-  email: z.string().trim().toLowerCase().email(),
-});
-export type ForgotPasswordBody = z.infer<typeof forgotPasswordBodySchema>;
-
-/**
- * Step 2 — spend the code and set the new password. Unauthenticated.
- *
- * `email` travels again because the user may finish this step on a different
- * device from the one that asked for the code — the common case when the code
- * arrives by email.
- */
-export const resetPasswordBodySchema = z.object({
-  email: z.string().trim().toLowerCase().email(),
-  token: z.string().trim().min(1).max(255),
-  new_password: passwordSchema,
-});
-export type ResetPasswordBody = z.infer<typeof resetPasswordBodySchema>;
-
-/**
- * Changing your own password while signed in.
- *
- * `current_password` is `z.string().min(1)` and NOT `passwordSchema`: it is a
- * value being *checked*, not *set*. Validating it against today's strength
- * rules would lock out every account created before those rules existed — the
- * user could not supply a password that satisfies a policy their real password
- * predates, and the only way out would be the reset flow.
- */
-export const changePasswordBodySchema = z.object({
-  current_password: z.string().min(1),
-  new_password: passwordSchema,
-});
-export type ChangePasswordBody = z.infer<typeof changePasswordBodySchema>;
+export {
+  forgotPasswordBodySchema,
+  resetPasswordBodySchema,
+  changePasswordBodySchema,
+  type ForgotPasswordBody,
+  type ResetPasswordBody,
+  type ChangePasswordBody,
+} from '../../auth/dtos/auth.dto.js';
 
 /** First-run bootstrap — only callable while zero User rows exist (see setup wizard flow). */
 export const bootstrapSuperAdminBodySchema = z.object({
@@ -262,7 +274,14 @@ export const currentUserResponseSchema = z.object({
 /** See docs/rest_api.md §6.1 Filtering & Sorting — merged with paginationQuerySchema at the route. */
 export const usersFilterQuerySchema = z
   .object({
-    status: z.enum(['pending_approval', 'active', 'suspended', 'rejected', 'disabled']).optional(),
+    status: z.enum([
+    'pending_approval',
+    'active',
+    'suspended',
+    'rejected',
+    'disabled',
+    'pending_verification',
+  ]).optional(),
     is_admin: queryBooleanSchema.optional(),
     requested_role_id: z.coerce.number().int().positive().optional(),
     /**

@@ -531,7 +531,6 @@ async function main(): Promise<void> {
   // holds it now" — that is what deactivation is for — but "no assignment has
   // ever referenced it", so nothing anyone once was can be erased.
   let freshId: number | null = null;
-  let usedId: number | null = null;
   try {
     const fresh = await call<{ id: number; is_deletable?: boolean }>('POST', '/roles', {
       name: `__smoke_del_${Date.now()}`,
@@ -599,11 +598,13 @@ async function main(): Promise<void> {
     check('and is really gone', gone.status === 404, `got ${gone.status}`);
     if (deleted.status === 200) freshId = null;
   } finally {
-    for (const id of [freshId, usedId]) {
-      if (id !== null) {
-        await db.delete(rolesTable).where(eq(rolesTable.id, id));
-        console.log(`  🧹 removed probe role ${id}`);
-      }
+    // `usedId` was removed here 2026-08-11: it was declared, never assigned,
+    // and iterated — so this loop had always been a one-element loop wearing a
+    // two-element shape. Nothing behaved differently; it was invisible only
+    // because the ESLint install was broken and reported nothing at all.
+    if (freshId !== null) {
+      await db.delete(rolesTable).where(eq(rolesTable.id, freshId));
+      console.log(`  🧹 removed probe role ${freshId}`);
     }
   }
 

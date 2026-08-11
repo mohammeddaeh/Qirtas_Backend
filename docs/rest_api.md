@@ -162,10 +162,11 @@ Accept-language: ar | en
   "phone": "...",
   "image": null,
   "address": null,
-  "is_active": true,
   "is_admin": false,
   "is_root_protected": false,
   "mfa_enabled": false,
+  "email_verified": true,
+  "email_verified_at": "2026-01-01T00:00:00.000Z",
   "status": "pending_approval",
   "rejection_reason": null,
   "requested_role_id": 5,
@@ -180,7 +181,21 @@ Accept-language: ar | en
 
 مصدر الالتزام: `AuthUserModel` الفعلي بالفرونت + [docs/reference/users_complete_reference.md](../../docs/reference/users_complete_reference.md) بالفرونت (المخطط الكامل لقواعد اليوزرات). `full_name` **مشتق** (`first_name + ' ' + last_name`)، غير مخزّن كعمود DB. `password_hash`/`password_reset_token` **لا تظهر أبداً** بالـwire — يُستبعدان صراحة بـ`toWireUser`.
 
-`status`: `pending_approval` | `active` | `suspended` | `rejected` | `disabled`.
+`status`: `pending_verification` | `pending_approval` | `active` | `suspended` | `rejected` | `disabled`.
+
+`pending_verification` **✅ جديد 2026-08-11** — الحساب سُجِّل ولم يُثبت بريده بعد. **يسبق `pending_approval` بدورة الحياة**، ولا يظهر بطابور مراجعة الأدمن إطلاقاً:
+
+```
+تسجيل → pending_verification → (رمز صحيح) → pending_approval → (قرار أدمن) → active | rejected
+```
+
+هذا الترتيب هو **الضمانة ضد إغراق الطابور**: طابور المراجعة أداةُ عمل أدمن، وبدون هذه البوابة يستطيع أي أحد ملأه بآلاف العناوين التي لا يملكها. إثبات العنوان يكلّف المهاجم صندوق بريد حقيقياً لكل طلب.
+
+الحساب `pending_verification` **يُسجّل دخوله بنجاح** ويحصل على جلسة — لأن شاشة إدخال الرمز داخل التطبيق، والوصول إليها يحتاج جلسة. الجلسة لا تفتح شيئاً محمياً (صفر `UserRoleAssignment` فعّال ← `permission_keys: []`). راجع `POST /auth/verify-email`.
+
+`email_verified` / `email_verified_at` **✅ جديد 2026-08-11** — الأول جواب نعم/لا يقرأه العميل ليقرر وجهة التنقّل، والثاني **متى** حدث. يُرسَل الاثنان معاً عمداً: اشتقاق `email_verified_at != null` بكل مستدعٍ تكرارٌ يُخطئه أحدهم. **كل الحسابات الموجودة قبل هذا التاريخ مُلئت كـ«متحقَّقة»** بترحيل `0006_auth_engine.sql` (بقيمة `created_at` لا `now()`) — أُنشئت تحت نظام لم يطلب إثباتاً قط، فاعتبارها غير متحقَّقة اختراعُ واقعة لا اكتشافها.
+
+> `mfa_enabled` ما زال **محجوزاً بلا تطبيق** — `false` دائماً. راجع `production_readiness.md` §E2. `core/auth/ports/auth-provider.ts` هو المكان الذي يُضاف فيه عامل ثانٍ دون إعادة بناء أي شيء.
 
 `is_root_protected`: **✅ 2026-07-27** — `true` حصراً للحساب الجذري الوحيد بالنظام (أول Super Admin، أُنشئ عبر `POST /bootstrap-super-admin`). لا يُقبل كمدخل بأي جسم طلب (غائب من `createUserByAdminBodySchema`/`updateUserBodySchema`) — المسار الوحيد لضبطه هو `bootstrapSuperAdmin()` نفسها. مُعروض هنا فقط ليقدر الفرونت يعطّل بصرياً أزرار التعديل/التعليق/التعطيل لهذا اليوزر تحديداً بأي قائمة. انظر [docs/reference/users_roles.md — Feature: Root Protected Account](../../docs/reference/users_roles.md#-feature-root-protected-account).
 
@@ -324,13 +339,13 @@ Accept-language: ar | en
 | GET    | `/:id`                     | 🔑 `users.manage` | يوزر واحد أو 404 |
 | POST   | `/`                        | 🔑 `users.manage` | **إنشاء مباشر من الأدمن** — يختلف عن `/register` (تسجيل ذاتي + مراجعة لاحقة). هنا الأدمن يُنشئ الحساب مباشرة لصالح شخص آخر بخطوة واحدة: `status=active` فوراً مع `role_id` (إلزامي) و`branch_id`/`ownership_percentage` (اختياريان) مُعيَّنة في نفس الطلب — الأدمن نفسه هو الموافقة، لا حاجة لـ`decide-registration` بعدها. تعارض إيميل → `409`، دور غير موجود/غير فعّال → `404`/`422` |
 | PATCH  | `/:id`                     | 🔑 `users.manage` | تعديل حقول الهوية/البروفايل فقط (`first_name`/`last_name`/`email`/`phone`) — **لا** `status`/`is_admin`/كلمة المرور (لكل منها endpoint مخصص: suspend/disable/reactivate/decide-registration للحالة، وتدفق منفصل خارج النطاق لكلمة المرور). تعارض إيميل مع يوزر آخر → `409`. الهدف `is_root_protected=true` → `403` دائماً، بلا استثناء لأي منفِّذ (**✅ 2026-07-27**) |
-| POST   | `/register`                | 🌐 عام | **التسجيل الذاتي** — نقطة الدخول الوحيدة لأي حساب موظف/شريك (self-service). ينشئ `status=pending_approval` بدون أي صلاحية فعّالة، يحتاج مراجعة أدمن لاحقاً عبر `decide-registration`. **مختلف عن `POST /` أعلاه** (إنشاء مباشر من الأدمن، فعّال فوراً بدون مراجعة) |
+| POST   | `/register`                | 🌐 عام + Rate Limit | **التسجيل الذاتي** — نقطة الدخول الوحيدة لأي حساب موظف/شريك (self-service). **✅ محدَّث 2026-08-11**: ينشئ `status=pending_verification` (لا `pending_approval`) ويُرسل رمز تأكيد للبريد، فلا يظهر بطابور المراجعة قبل إثبات العنوان — راجع §8. عند `EMAIL_VERIFICATION_MODE=off` يهبط عند `pending_approval` كما كان تماماً. **مختلف عن `POST /` أعلاه** (إنشاء مباشر من الأدمن، فعّال ومتحقَّق فوراً — الأدمن هو الإثبات) |
 | POST   | `/bootstrap-super-admin`   | 🌐 عام | Setup Wizard — ينجح **فقط** لو عدد اليوزرز بالنظام = صفر. ينشئ Super Admin + Ownership 100% + `is_root_protected=true` (المسار الوحيد الذي يضبط هذا الحقل — **✅ 2026-07-27**) |
 | POST   | `/login`                   | 🌐 عام + Rate Limit | إيميل + كلمة مرور → `{user, token, session_id, permission_keys}`. `token` يُستخدم كـ`Authorization: Bearer <token>` بأي طلب لاحق. `permission_keys` هو اتحاد صلاحيات كل تعيينات اليوزر الفعّالة (نفس مصدر `findAllEffectivePermissionKeys` المستخدم بـ`requirePermission`، branch-agnostic) — **✅ 2026-07-27**، يُستهلك بالفرونت لتحديد أي UI مُصرَّح بها فوراً بعد الدخول دون طلب إضافي. **✅ محدَّث (2026-07-28)**: `pending_approval`/`rejected` الآن ينجحان (`200`) ويحصلان على جلسة حقيقية بدل `403` — الحساب يبقى قابل للوصول (شاشة "حالة الطلب"، تعديل وإعادة إرسال) حتى بعد حذف/إعادة تثبيت التطبيق؛ الجلسة لا تفتح أي endpoint محمي فعلياً لأن `permission_keys` تبقى `[]` دائماً (صفر `UserRoleAssignment` فعّال لهاتين الحالتين). فقط `suspended`/`disabled` يبقيان يرفضان بـ**403** مع `data.account_status` للتمييز البرمجي (انظر التفصيل تحت الجدول — لا تعتمد على مطابقة نص `message`). **محدود بـ5 محاولات/15 دقيقة لكل إيميل و5/15 دقيقة لكل IP معاً** (`core/middleware/login-rate-limit.ts`) — تجاوز أي منهما → `429` مع `Retry-After` بالثواني. النجاح يصفّر عدّاد ذاك الإيميل/IP فوراً |
 | POST   | `/logout`                  | 🌐 عام | ينهي الجلسة الحالية فقط (حسب التوكن بالـheader) — بقية جلسات نفس اليوزر تبقى شغّالة. Idempotent (200 حتى لو التوكن أصلاً غير صالح) |
-| POST   | `/forgot-password`         | 🌐 عام + Rate Limit | **✅ جديد (2026-08-10)** — `{email}` → **`200` دائماً**، سواء كان البريد مسجَّلاً أو لا. راجع الصندوق تحت الجدول: هذا عقد أمني لا سهو. يُنتج رمزاً من ٨ محارف (أبجدية بلا `O/0` و`I/1`) صالحاً **١٥ دقيقة**، ويُخزَّن **مُجزَّأً بـSHA-256** لا نصّاً صريحاً. محدود بـ٥ محاولات/ساعة لكل IP |
-| POST   | `/reset-password`          | 🌐 عام + Rate Limit | `{email, token, new_password}` → `200`. الرمز **يُستهلك بنفس الكتابة** التي تضبط كلمة المرور، و**كل جلسات المستخدم تُحذف** بعدها. أي رفض (رمز خاطئ · منتهٍ · مُستهلَك · بريد غير معروف) يرجع **نفس** `422` بمفتاح `reset_code_invalid` — التمييز بينها يكشف أي العناوين لديه استعادة جارية |
-| POST   | `/change-password`         | 🔒 مسجّل دخول | `{current_password, new_password}` → `200`. كلمة حالية خاطئة → **`422`** بمفتاح `current_password_wrong` — **وليس `401`**: الطلب موثَّق، و401 تعني «الجلسة باطلة» فيسجّل العميل الخروج، أي أن خطأً بحقل واحد كان سيطرد المستخدم من التطبيق. تساوي الجديدة بالحالية → `422` (`password_must_differ`). **الجلسات لا تُحذف** هنا (المستخدم حاضر واختار هذا) — بعكس `reset-password` |
+| POST   | `/forgot-password`         | ⚠️ **مهجور** | نُقل إلى `POST /api/v1/auth/forgot-password` (2026-08-11). المسار القديم يبقى عاملاً كـalias — راجع الملاحظة تحت الجدول |
+| POST   | `/reset-password`          | ⚠️ **مهجور** | نُقل إلى `POST /api/v1/auth/reset-password`. **تغيّر اسم حقل**: `code` بدل `token` (الاسم القديم ما زال مقبولاً) |
+| POST   | `/change-password`         | ⚠️ **مهجور** | نُقل إلى `POST /api/v1/auth/change-password` |
 | POST   | `/me/resubmit-registration` | 🔒 مسجّل دخول | **✅ جديد (2026-07-28)** — إعادة تسجيل حساب `rejected` (نفس اليوزر المسجَّل دخوله فقط، عبر الجلسة لا `:id`). يقبل `requested_role_id` (إلزامي)/`requested_branch_id`/`requested_ownership_percentage` (نفس شكل `/register`، بدون حقول الهوية/كلمة المرور). يرجّع `status: rejected → pending_approval` ويصفّر `rejection_reason`/`decided_at`/`decided_by_user_id`. `409` لو الحساب مو `rejected` حالياً |
 | POST   | `/:id/decide-registration` | 🔑 `users.manage` | قرار الأدمن على طلب معلّق: `approve` (كما هو أو بتعديل الدور/الفرع/النسبة) أو `reject` (سبب إلزامي) |
 | POST   | `/:id/suspend`             | 🔑 `users.manage` | إيقاف مؤقت وقابل للرجوع (تحقيق/إجازة) — يختلف عن `disable`. الهدف `is_root_protected=true` → `403` دائماً (**✅ 2026-07-27**) |
@@ -420,6 +435,35 @@ Accept-language: ar | en
 ```
 
 عند الموافقة: `role_id`/`branch_id`/`ownership_percentage` اختيارية — تفتراضياً تُستخدم القيم المطلوبة أصلاً وقت التسجيل، والأدمن يقدر يغيّرها بالكامل قبل التفعيل.
+
+### Authentication & Sessions — `/api/v1/auth` ✅ جديد 2026-08-11
+
+> **لماذا مسار جديد**: هذه الـendpoints لا تعرف شيئاً عن الأدوار ولا الفروع ولا الملكية — منطقها كامل في `core/auth/`، وهي **قابلة للنقل كما هي** لأي تطبيق آخر يبني على هذا القالب. `POST /users/login` و`/users/logout` بقيا مكانهما عمداً: ردّهما يحمل `permission_keys` و`is_super_admin`، وهما حقيقتا **تخويل** لا مصادقة، فلا يجوز أن يعرفهما محرّك قابل لإعادة الاستخدام. الاثنان يفوّضان المصادقة نفسها لنفس خدمة `core/auth` — **تنفيذ واحد بمدخلين، لا تنفيذان**.
+
+| Method | Path | الحماية | ملاحظات |
+| ------ | ---- | --- | --- |
+| POST | `/refresh` | 🌐 عام (يقرأ التوكن من الـheader) | يمدّد الجلسة، ويُصدر توكناً بديلاً إن تجاوز عمره `SESSION_ROTATE_AFTER_HOURS`. الردّ `{token, rotated, expires_at}` — العميل يخزّن ما يصله في الحالتين. **`rotated=false`** يعني أن التوكن ما زال فتيّاً فعاد كما هو (تدوير عند كل إقلاق ضجيجٌ بلا مكسب). جلسة منتهية بالخمول أو بالسقف المطلق أو مُبطَلة → **`401` ولا تُحيا أبداً**. **بلا `requireAuth` عمداً**: الجلسة المنتهية هي بالضبط من يستدعي هذا |
+| GET | `/sessions` | 🔒 مسجّل دخول | أجهزة المستخدم نفسه (`WireSession[]`). **التوكن لا يُرجَع إطلاقاً** — المخزَّن تجزئته فقط. `is_current` يميّز الجلسة صاحبة الطلب |
+| DELETE | `/sessions/:id` | 🔒 مسجّل دخول | إنهاء جلسة بعينها. جلسة غير موجودة وجلسة شخص آخر ترجعان **نفس** `404` — فلا يكشف تعداد المعرّفات أيها حيّ |
+| POST | `/sessions/revoke-others` | 🔒 مسجّل دخول | «سجّل خروج أجهزتي الأخرى» — **يستثني جلسة المنفِّذ**: أن تُخرج نفسك أثناء تأمين حسابك يُقرأ كعطل. الردّ `{sessions_revoked}` |
+| POST | `/verify-email` | 🔒 مسجّل دخول + Rate Limit | `{code}` → `200`. عند النجاح ينتقل الحساب من `pending_verification` إلى `pending_approval` ويدخل طابور المراجعة. **موثَّق** لأن شاشة الرمز داخل التطبيق ولا يُوصل إليها بلا جلسة. رمز خاطئ · منتهٍ · مُستهلَك · نفدت محاولاته → **نفس** `422` بمفتاح `verification_code_invalid` |
+| POST | `/resend-verification` | 🔒 مسجّل دخول + Rate Limit | يُصدر رمزاً جديداً **ويُبطل السابق** (وإلا ضاعف كل resend ميزانية التخمين ضد الحساب). فترة تهدئة → `429` (`verification_resend_cooldown`) — **يُصرَّح بها هنا** لأن الطلب موثَّق فلا يكشف شيئاً، بعكس `/forgot-password` تماماً. حساب متحقَّق أصلاً → `409` |
+| POST | `/forgot-password` | 🌐 عام + Rate Limit | `{email}` → **`200` دائماً**، مسجَّلاً كان البريد أو لا. عقد أمني لا سهو — راجع الصندوق تحت جدول `/users`. حتى فترة التهدئة تُبتلع صامتةً: «انتظر ٤٠ ثانية» تؤكد أن رمزاً أُرسل للتوّ، أي تؤكد أن الحساب موجود |
+| POST | `/reset-password` | 🌐 عام + Rate Limit | `{email, code, new_password}` → `200`. **`code` هو الاسم الجديد لـ`token`** (والقديم ما زال مقبولاً): لم يكن توكناً قط، بل ثمانية محارف يقرؤها إنسان ويعيد كتابتها. **كل جلسات الحساب تُحذف** بعدها |
+| POST | `/change-password` | 🔒 مسجّل دخول | `{current_password, new_password, revoke_other_sessions?}` → `{sessions_revoked}`. كلمة حالية خاطئة → **`422`** لا `401`. **جديد**: `revoke_other_sessions` (افتراضياً `false`) — الخيار للمستخدم لأنه وحده يعرف إن كان التغيير روتينياً أم رداً على شيء. جلسة المنفِّذ تنجو دائماً |
+
+**حدود التخمين — طبقتان لا واحدة**:
+
+| الطبقة | المكان | ما تحمي منه | ما لا تحميه |
+|---|---|---|---|
+| سقف محاولات **لكل رمز** | `auth_verification_tokens.attempts` | التخمين — **ويصمد أمام تدوير الـIP** | حجم الطلبات |
+| حدّ **لكل IP** | `core/middleware/*-rate-limit.ts` | الإغراق وسيناريو «احرق رمزاً واطلب غيره» | مهاجم بمجموعة IPs |
+
+الطبقة الأولى **لم تكن موجودة قبل 2026-08-11**: كان رمز الاستعادة محميّاً بحدّ الـIP وحده، وهو حدٌّ لا يمتلئ أصلاً لمن يدوّر عناوينه. بلوغ السقف **يحرق الرمز لا يقفل الحساب** — القفل يجعل التخمين السيّئ سلاحَ حرمانِ خدمة ضد الضحية.
+
+**الجلسة — ثلاث نهايات مستقلة**: خمول (`SESSION_IDLE_TIMEOUT_MINUTES`، ينزلق مع الاستخدام) · سقف مطلق (`SESSION_ABSOLUTE_TIMEOUT_DAYS`، لا ينزلق — وهو ما يحدّ توكناً مسروقاً من جهاز يستقصي بالخلفية فيجدّد نافذة الخمول للأبد) · إبطال صريح. ورابعة يفرضها الـmiddleware بكل طلب: `AccountStore.canSignIn` صار `false` (تعليق/تعطيل) ← الجلسة تُحذف فوراً.
+
+**`sessions.token` صار `sessions.token_hash`** (SHA-256): تسريب نسخة احتياطية كان يسلّم القارئ جلسةً عاملة لكل مستخدم مسجَّل دخوله، بلا كلمة مرور — نفس الانكشاف الذي يوجد `password_hash` لمنعه، وبجوار رمزِ استعادةٍ كان مُجزَّأً أصلاً. **الجلسات القائمة لا تُرحَّل** (تجزئتها تتطلب قراءة النص الصريح، وهو ما توقّفنا عن الاحتفاظ به): الجميع يسجّل دخوله مرة واحدة بعد النشر.
 
 ### Role Assignments — `/api/v1/users/:userId/role-assignments` و`/api/v1/role-assignments`
 

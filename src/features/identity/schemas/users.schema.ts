@@ -31,6 +31,28 @@ export const userStatusEnum = pgEnum('user_status', [
   'suspended',
   'rejected',
   'disabled',
+  /**
+   * pending_verification: registered, but the email address is not yet proven.
+   *
+   * Added 2026-08-11, and it sits BEFORE `pending_approval` in the lifecycle
+   * even though it is listed last here (enum order is storage order, not
+   * process order — a new value can only be appended in PostgreSQL).
+   *
+   * ## Why it is a status and not only an `email_verified_at` column
+   *
+   * Both exist. The timestamp records the fact; the status records where the
+   * account *is*. The distinction earns its keep at the review queue: admins
+   * read `GET /users?status=pending_approval`, and an account that has not
+   * proven its address must not appear there. With verification expressed only
+   * as a nullable timestamp, either every queue query grows a second condition
+   * — and the one that forgets it silently shows unverified registrations — or
+   * the queue is floodable by anyone with a list of addresses they do not own.
+   *
+   * A verified account advances to `pending_approval` in the same write that
+   * stamps `email_verified_at` (see AccountStore.markEmailVerified), so the two
+   * cannot disagree.
+   */
+  'pending_verification',
 ]);
 
 export const usersTable = pgTable('users', {
@@ -75,8 +97,25 @@ export const usersTable = pgTable('users', {
    * Tracked as E2 in docs/production_readiness.md.
    */
   mfa_enabled: boolean('mfa_enabled').notNull().default(false),
-  password_reset_token: varchar('password_reset_token', { length: 255 }),
-  password_reset_expires_at: timestamp('password_reset_expires_at', { withTimezone: true }),
+  /**
+   * When this address was proven, or null if it has not been.
+   *
+   * A timestamp rather than a boolean: "when" answers questions "whether"
+   * cannot — how long an account went unverified, whether verification predates
+   * an incident, whether a re-verification after an email change ever happened.
+   * Storing the fact costs the same either way.
+   *
+   * Paired with `status = 'pending_verification'`; see that value's note for
+   * why both exist. The two are written together and never separately.
+   */
+  email_verified_at: timestamp('email_verified_at', { withTimezone: true }),
+
+  // NOTE: `password_reset_token`/`password_reset_expires_at` were removed
+  // 2026-08-11 and replaced by `auth_verification_tokens`. Two columns on this
+  // row could hold exactly one token type and could not carry a per-code
+  // attempt counter — so the reset code's only guessing limit was a per-IP rate
+  // limiter, which an attacker rotating addresses never fills. See
+  // core/auth/schemas/verification-tokens.schema.ts for the full reasoning.
 
   // --- Self-registration & approval lifecycle ---
   status: userStatusEnum('status').notNull().default('pending_approval'),
