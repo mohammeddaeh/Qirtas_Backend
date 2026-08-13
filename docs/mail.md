@@ -186,6 +186,34 @@ Both are fixed: `send()` returns `EmailDeliveryResult`, the audit event is chose
 from it (`auth.email.verification_send_failed` on failure), and every send —
 success or failure — logs.
 
+### 5.1 The same symptom, one hop further out
+
+*(2026-08-13 — and this one gets past every check §5 added.)*
+
+`SMTP_HOST` was moved to the organisation relay (`mow.gov.sy`, STARTTLS on 587)
+and `MAIL_FROM` was left at `Qirtas <no-reply@qirtas.test>`. **`qirtas.test` does
+not exist in DNS** — it is a reserved TLD that never resolves.
+
+The relay has no sender restriction, so it answered `250 2.0.0 Ok: queued` for
+that From, to an external recipient, every time. Everything downstream of that
+`250` was therefore green: the success line was logged, `messageId` and all, and
+the audit event was `auth.email.verification_sent`. The message died at the
+*receiving* server, which refuses a From on a non-existent domain (SPF cannot
+even be evaluated), and the bounce was addressed to `@qirtas.test` — nowhere. No
+error reaches the application, because by SMTP's own rules nothing went wrong on
+the hop the application made.
+
+**The rule this leaves**: `MAIL_FROM` must be on a domain that resolves and whose
+SPF authorises the sending relay. `mow.gov.sy` publishes
+`v=spf1 +mx +ip4:185.216.132.68 +ip4:185.216.132.7 ~all` — which authorises this
+relay, and only for a From on that domain. A sandbox (§2) is the one place a
+made-up From domain is safe, precisely because it delivers nowhere.
+
+**Diagnosing it**: an SMTP `250` proves the relay accepted the message, not that
+anyone received it. When a send logs success and nothing arrives, the next look
+is the recipient server or the sender's own mailbox for a bounce — not the
+application.
+
 ---
 
 ## 6. What is logged

@@ -16,11 +16,14 @@ export const roleResponseSchema = z.object({
   level: z.number().int().nullable(),
   is_system_default: z.boolean(),
   is_active: z.boolean(),
+  archived_at: z.string().nullable(),
   created_at: z.string(),
   permissions: z.array(permissionResponseSchema).optional(),
   active_holders_count: z.number().int().optional(),
   is_deletable: z.boolean().optional(),
+  is_archivable: z.boolean().optional(),
   assignments_ever_count: z.number().int().optional(),
+  open_assignments_count: z.number().int().optional(),
 });
 
 export interface WireRole {
@@ -30,6 +33,17 @@ export interface WireRole {
   level: number | null;
   is_system_default: boolean;
   is_active: boolean;
+  /**
+   * When this role was retired from the catalogue, or null if it is in it.
+   *
+   * Sent on every role, list included — it is a plain column, and a client
+   * looking at the archived view needs to know that is what it has.
+   *
+   * Not the same statement as `is_active: false`. A deactivated role is browsed
+   * under the list's "معطَّل" filter because reviving it is routine; an archived
+   * one is gone from the list entirely.
+   */
+  archived_at: string | null;
   created_at: string;
   permissions?: WirePermission[];
   /**
@@ -63,15 +77,44 @@ export interface WireRole {
    * whether the action is offered; this only chooses the sentence.
    */
   assignments_ever_count?: number;
+
+  /**
+   * Whether this role can be archived — held by nobody right now, and not a
+   * seeded default.
+   *
+   * The exit for the case [is_deletable] cannot cover, which is most of them:
+   * a role that has ever been assigned can never be deleted, so before this
+   * existed a retired job title had no way off the list at all. Computed by the
+   * rule `archiveRole` enforces, so the client offers the action exactly where
+   * it succeeds. `GET /:id` only.
+   */
+  is_archivable?: boolean;
+
+  /**
+   * Assignment rows still open on this role — the number archiving is blocked
+   * by, and NOT the same as [active_holders_count].
+   *
+   * That one counts distinct people whose account status is `active`, because
+   * it measures who is affected by a permission change. This one counts open
+   * rows whatever the person's status, because a suspended employee still
+   * occupies the post: archiving under them would leave a live assignment
+   * pointing at a role the app shows nowhere. Sending only the first would let
+   * the screen say "nobody holds this" beside a refusal that says otherwise.
+   */
+  open_assignments_count?: number;
 }
 
-export function toWireRole(
-  row: RoleRow,
-  permissions?: WirePermission[],
-  activeHoldersCount?: number,
-  isDeletable?: boolean,
-  assignmentsEverCount?: number,
-): WireRole {
+/** The `GET /:id`-only fields, gathered so the call site reads as facts rather than five positional booleans. */
+export interface RoleDetailFacts {
+  permissions: WirePermission[];
+  active_holders_count: number;
+  is_deletable: boolean;
+  is_archivable: boolean;
+  assignments_ever_count: number;
+  open_assignments_count: number;
+}
+
+export function toWireRole(row: RoleRow, facts?: RoleDetailFacts): WireRole {
   return {
     id: row.id,
     name: row.name,
@@ -79,15 +122,12 @@ export function toWireRole(
     level: row.level,
     is_system_default: row.is_system_default,
     is_active: row.is_active,
+    archived_at: row.archived_at?.toISOString() ?? null,
     created_at: row.created_at.toISOString(),
-    ...(permissions ? { permissions } : {}),
-    // Omitted rather than sent as 0 when not computed: "no holders" and "not
-    // asked" are different answers, and 0 would let a list row claim the former.
-    ...(activeHoldersCount !== undefined ? { active_holders_count: activeHoldersCount } : {}),
-    ...(isDeletable !== undefined ? { is_deletable: isDeletable } : {}),
-    ...(assignmentsEverCount !== undefined
-      ? { assignments_ever_count: assignmentsEverCount }
-      : {}),
+    // Omitted wholesale rather than defaulted when not computed: "no holders"
+    // and "not asked" are different answers, and a 0 would let a list row claim
+    // the former.
+    ...(facts ?? {}),
   };
 }
 
@@ -223,6 +263,12 @@ export const rolesFilterQuerySchema = z
      * client where it would drift out of sync silently.
      */
     assignable: queryBooleanSchema.optional(),
+    /**
+     * Archived roles are excluded unless this asks for them, and `true` returns
+     * ONLY archived roles — the archive is a separate view, not extra rows
+     * mixed into the catalogue where nothing marks which is which.
+     */
+    archived: queryBooleanSchema.optional(),
     sort_by: z.enum(['created_at', 'name', 'level']).default('created_at'),
     sort_dir: z.enum(['asc', 'desc']).default('desc'),
   })

@@ -71,6 +71,44 @@ async function assertActorOutranksRole(actorUserId: number, roleId: number): Pro
   }
 }
 
+/**
+ * Refuses to open an assignment onto an archived role or branch — the rule that
+ * keeps archiving from decaying.
+ *
+ * Archiving is safe precisely because it requires nothing to point at the row
+ * and destroys nothing that already does. A new assignment created afterwards
+ * would break both halves at once: a live posting granting a role that appears
+ * in no catalogue, in a branch that shows in no list, so neither the person's
+ * screen nor any admin list can explain where the permission comes from.
+ *
+ * Enforced here rather than trusted to the pickers. Those already exclude
+ * archived rows, but a picker is a convenience and a body is an id — and this
+ * is also the path a stale screen takes when someone archived the role while
+ * the form was open.
+ */
+async function assertTargetsAreInService(roleId: number, branchId: number | null): Promise<void> {
+  const role = await rolesRepository.findById(roleId);
+  if (!role) throw new NotFoundError('Role not found');
+  if (role.archived_at !== null) {
+    throw new BusinessError(
+      409,
+      `Role "${role.name}" is archived and cannot be assigned. Restore it first.`,
+      'role_archived',
+    );
+  }
+
+  if (branchId === null) return;
+  const branch = await branchesRepository.findById(branchId);
+  if (!branch) throw new NotFoundError('Branch not found');
+  if (branch.archived_at !== null) {
+    throw new BusinessError(
+      409,
+      `Branch "${branch.name}" is archived and cannot be staffed. Restore it first.`,
+      'branch_archived',
+    );
+  }
+}
+
 export async function createAssignment(
   actor: RequestActorContext,
   userId: number,
@@ -79,6 +117,7 @@ export async function createAssignment(
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
 
+  await assertTargetsAreInService(body.role_id, body.branch_id ?? null);
   await assertActorOutranksRole(actor.userId, body.role_id);
 
   // Checked here so the refusal is a translated 409 rather than the raw unique
@@ -347,6 +386,10 @@ export async function transferAssignment(
 ): Promise<WireUserRoleAssignment> {
   const current = await assignmentsRepository.findById(assignmentId);
   if (!current) throw new NotFoundError('Assignment not found');
+
+  // Before the close, not after: a transfer that fails on its destination must
+  // leave the person where they were, not stranded with a closed posting.
+  await assertTargetsAreInService(body.new_role_id, body.new_branch_id);
 
   await assertReplacementAvailableIfLast(assignmentId, body.force === true);
   await assertActorOutranksRole(actor.userId, body.new_role_id);

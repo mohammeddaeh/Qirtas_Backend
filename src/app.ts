@@ -1,4 +1,10 @@
-import express, { type Express, type Request, type Response, type NextFunction } from 'express';
+import express, {
+  type Express,
+  type NextFunction,
+  type Request,
+  type Response,
+  type Router,
+} from 'express';
 import cors, { type CorsOptions } from 'cors';
 import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
@@ -27,6 +33,33 @@ import { roleAssignmentsRouter } from './features/identity/routes/user-role-assi
 import { auditLogRouter } from './features/identity/routes/audit-log.routes.js';
 import { languagesRouter } from './features/localization/routes/languages.routes.js';
 import { branchesTransferResource } from './features/identity/branches.transfer.js';
+
+/**
+ * Every router this API serves, and the prefix it is mounted at.
+ *
+ * A list rather than a run of `app.use()` calls because it is **read back**:
+ * `npm run check:permissions` walks it to assert that every route in the
+ * application declares whether it is public, authenticated or permission
+ * -guarded. Adding a router without adding it here cannot hide a route from
+ * that check — an unmounted router serves nothing at all.
+ *
+ * Mount a new feature router by adding a line.
+ */
+export const API_ROUTERS: ReadonlyArray<{ path: string; router: Router }> = [
+  { path: '/api/v1/auth', router: authRouter },
+  { path: '/api/v1/users', router: usersRouter },
+  { path: '/api/v1/roles', router: rolesRouter },
+  { path: '/api/v1/permissions', router: permissionsRouter },
+  { path: '/api/v1/branches', router: branchesRouter },
+  { path: '/api/v1/dashboard', router: dashboardRouter },
+  { path: '/api/v1/ownerships', router: ownershipsRouter },
+  { path: '/api/v1/role-assignments', router: roleAssignmentsRouter },
+  { path: '/api/v1/audit-log', router: auditLogRouter },
+  { path: '/api/v1/languages', router: languagesRouter },
+
+  /** Generic import/export. Mounted once, serves every resource passed to `configureDataTransfer()`. */
+  { path: '/api/v1/data-transfer', router: dataTransferRouter },
+];
 
 /**
  * Browser origins allowed to call this API, from `ALLOWED_ORIGINS`.
@@ -130,20 +163,11 @@ app.get('/', (_req, res) => {
     swaggerUi.setup(openApiDocument),
   );
 
-  app.use('/api/v1/auth', authRouter);
-  app.use('/api/v1/users', usersRouter);
-  app.use('/api/v1/roles', rolesRouter);
-  app.use('/api/v1/permissions', permissionsRouter);
-  app.use('/api/v1/branches', branchesRouter);
-  app.use('/api/v1/dashboard', dashboardRouter);
-  app.use('/api/v1/ownerships', ownershipsRouter);
-  app.use('/api/v1/role-assignments', roleAssignmentsRouter);
-  app.use('/api/v1/audit-log', auditLogRouter);
-  app.use('/api/v1/languages', languagesRouter);
-
-  // Generic import/export. Mounted once, serves every resource passed to
-  // `configureDataTransfer()` above — a new transferable feature adds no route.
-  app.use('/api/v1/data-transfer', dataTransferRouter);
+  // One loop, so "which routers does this API serve" has a single answer a
+  // checker can read — see [API_ROUTERS]. Add your own feature routers there.
+  for (const { path, router } of API_ROUTERS) {
+    app.use(path, router);
+  }
 
   // Must be registered last, in this order.
   app.use(notFound);

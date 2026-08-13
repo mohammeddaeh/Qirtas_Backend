@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../../../core/http/async-handler.js';
 import { validate } from '../../../core/validation/validate.js';
 import { requireAuth } from '../../../core/http/require-actor.js';
+import { publicRoute } from '../../../core/http/route-marker.js';
 import { requirePermission } from '../../../core/http/require-permission.js';
 import { loginRateLimit } from '../../../core/middleware/login-rate-limit.js';
 import { passwordResetRateLimit } from '../../../core/middleware/password-reset-rate-limit.js';
@@ -98,6 +99,7 @@ usersRouter.patch(
 /** Single self-registration entry point for every internal account (staff/partner). */
 usersRouter.post(
   '/register',
+  publicRoute,
   validate(registerStaffBodySchema, 'body'),
   registerRateLimit,
   asyncHandler(usersController.registerStaff),
@@ -106,19 +108,21 @@ usersRouter.post(
 /** First-run bootstrap — only succeeds while zero User rows exist. */
 usersRouter.post(
   '/bootstrap-super-admin',
+  publicRoute,
   validate(bootstrapSuperAdminBodySchema, 'body'),
   asyncHandler(usersController.bootstrapSuperAdmin),
 );
 
 usersRouter.post(
   '/login',
+  publicRoute,
   validate(loginBodySchema, 'body'),
   loginRateLimit,
   asyncHandler(usersController.login),
 );
 
 /** Ends only the calling session (identified by its own Bearer token) — other concurrent sessions are untouched. */
-usersRouter.post('/logout', asyncHandler(usersController.logout));
+usersRouter.post('/logout', publicRoute, asyncHandler(usersController.logout));
 
 // ── Password reset & change — DEPRECATED ALIASES ─────────────────────────────
 //
@@ -139,6 +143,7 @@ usersRouter.post('/logout', asyncHandler(usersController.logout));
 /** Always succeeds, registered address or not — see core/auth/services/auth.service.ts for why. */
 usersRouter.post(
   '/forgot-password',
+  publicRoute,
   validate(forgotPasswordBodySchema, 'body'),
   passwordResetRateLimit,
   asyncHandler(usersController.forgotPassword),
@@ -146,6 +151,7 @@ usersRouter.post(
 
 usersRouter.post(
   '/reset-password',
+  publicRoute,
   validate(resetPasswordBodySchema, 'body'),
   passwordResetRateLimit,
   asyncHandler(usersController.resetPassword),
@@ -195,6 +201,36 @@ usersRouter.post(
   requirePermission('users.manage'),
   validate(userIdParamsSchema, 'params'),
   asyncHandler(usersController.reactivateUser),
+);
+
+// Destroys an account with nothing recorded against it — no assignment, no
+// ownership, no audit entry it authored. `users.manage` alone, because with no
+// history there is nothing to weigh: this is the mistyped duplicate created ten
+// minutes ago, deleted by whoever created it.
+usersRouter.delete(
+  '/:id',
+  requirePermission('users.manage'),
+  validate(userIdParamsSchema, 'params'),
+  asyncHandler(usersController.deleteUser),
+);
+
+// Retiring an account that HAS a past needs `records.archive` on top — the same
+// pairing as `/branches/:id/archive`, and here it also hides a person from every
+// staffing and review screen, which is not part of running a branch.
+usersRouter.post(
+  '/:id/archive',
+  requirePermission('users.manage'),
+  requirePermission('records.archive'),
+  validate(userIdParamsSchema, 'params'),
+  asyncHandler(usersController.archiveUser),
+);
+
+usersRouter.post(
+  '/:id/unarchive',
+  requirePermission('users.manage'),
+  requirePermission('records.archive'),
+  validate(userIdParamsSchema, 'params'),
+  asyncHandler(usersController.unarchiveUser),
 );
 
 /** :userId here (not :id) so mergeParams hands the nested router a userId key matching its own DTO schema. */

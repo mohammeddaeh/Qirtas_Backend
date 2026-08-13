@@ -308,3 +308,54 @@ registry.registerPath({
     },
   },
 });
+
+// ── Removal: the two exits ───────────────────────────────────────────────────
+//
+// `DELETE` destroys an account nothing was ever recorded against. That is
+// narrower than it sounds: `audit_log_entries.user_id` is RESTRICT, so anybody
+// who has ever signed in has an entry to their name and can never be deleted.
+// What remains is the mistyped duplicate. Everyone else leaves via `archive`,
+// which hides the account and locks it (`status: disabled`) without touching a
+// single record of what they did.
+
+registry.registerPath({
+  method: 'delete',
+  path: '/api/v1/users/{id}',
+  tags,
+  summary: 'Delete an account with no recorded history',
+  description:
+    'Hard delete, permitted only when the account has no assignment, no ownership and no audit entry to its name, is not root-protected, and is not the caller. Refuses 409 `user_has_audit_history` / `user_has_history` otherwise — archive it instead. Requires `users.manage`.',
+  request: { params: userIdParamsSchema },
+  responses: {
+    200: { description: 'User deleted', ...jsonBody(successEnvelope(z.null())) },
+    ...commonErrorResponses,
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/users/{id}/archive',
+  tags,
+  summary: 'Archive an account (hide it and lock it, keeping its history)',
+  description:
+    'Requires `users.manage` AND `records.archive`. Permitted when the person holds no open assignment and no open ownership, is not root-protected, and is not the caller. Writes `status: disabled` in the same statement, so sign-in keeps exactly one gate. Refuses 409 `user_has_active_assignments` / `user_has_active_ownerships`. Idempotent.',
+  request: { params: userIdParamsSchema },
+  responses: {
+    200: { description: 'User archived', ...jsonBody(successEnvelope(userResponseSchema)) },
+    ...commonErrorResponses,
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/users/{id}/unarchive',
+  tags,
+  summary: 'Restore an archived account (still disabled)',
+  description:
+    'Requires `users.manage` AND `records.archive`. Clears `archived_at` only — the account returns `disabled`, and reinstating access stays the separate `POST /{id}/reactivate` decision. Idempotent.',
+  request: { params: userIdParamsSchema },
+  responses: {
+    200: { description: 'User restored', ...jsonBody(successEnvelope(userResponseSchema)) },
+    ...commonErrorResponses,
+  },
+});

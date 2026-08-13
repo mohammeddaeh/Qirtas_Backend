@@ -21,6 +21,10 @@
  *   npm run db:setup                         # migrate, then --admin --demo --reset
  */
 import { pool } from './client.js';
+import { configureAuth } from '../auth/composition.js';
+import type { EmailDeliveryResult, EmailSender } from '../auth/ports/email-sender.js';
+import { qirtasAccountStore } from '../../features/identity/repositories/account-store.impl.js';
+import { auditLogSecurityEventSink } from '../../features/identity/repositories/security-event-sink.impl.js';
 import { seedCore } from './seed-core.js';
 import { bootstrapSuperAdminIfMissing } from './bootstrap-super-admin.js';
 import { seedDemoArabicData } from './seed-demo-arabic-data.js';
@@ -104,12 +108,56 @@ function parseArgs(argv: string[]): SeedOptions | 'help' {
   return options;
 }
 
+/**
+ * The seed's mail transport: none — and it says so rather than pretending.
+ *
+ * The demo dataset is created through the real service layer, and
+ * `registerStaff` issues a verification code for every pending-track account
+ * (`auth.service.sendEmailVerification`). Those accounts are force-verified one
+ * line later, so nothing is waiting on a message; the send is a side effect of
+ * going through the real path, not a step of the seed.
+ *
+ * Two transports would both be wrong here. `selectEmailSender()` — what a server
+ * gets — would hand seven envelopes addressed to `@qirtas.test` to whatever
+ * `SMTP_HOST` points at, which is a real mail server refusing real mail on every
+ * `db:setup`. And a stub reporting `ok: true` would write
+ * `auth.email.verification_sent` into the audit log for messages that were never
+ * built — the exact "confidently wrong" audit row the port was rewritten in
+ * August 2026 to make impossible (see EmailSender's header).
+ *
+ * So it reports `no_transport`, which is the truth: this process has no mail
+ * transport at all. Each seeded registration leaves one
+ * `auth.email.verification_send_failed` row behind, and `--reset` deletes it
+ * with the rest of the demo user's audit trail.
+ */
+const seedEmailSender: EmailSender = {
+  async send(): Promise<EmailDeliveryResult> {
+    return { ok: false, errorCode: 'no_transport' };
+  },
+};
+
 async function main(): Promise<void> {
   const parsed = parseArgs(process.argv.slice(2));
   if (parsed === 'help') {
     console.log(USAGE);
     return;
   }
+
+  // This process is a second composition root, and it needs one for the same
+  // reason `buildApp()` does: the steps below call the real services, and those
+  // resolve the account store, the auth provider and the mail transport through
+  // module-level ports that are empty until something wires them. Nothing did,
+  // so `--demo` died at the first self-registration — `registerStaff` sends a
+  // verification code and then signs the account in, and all three ports are on
+  // that path. The failure surfaced as an EmailSender error only because the
+  // mail port throws first; the two behind it would have followed.
+  //
+  // Same three lines as src/app.ts, with the transport overridden — see above.
+  configureAuth({
+    accountStore: qirtasAccountStore,
+    securityEventSink: auditLogSecurityEventSink,
+    emailSender: seedEmailSender,
+  });
 
   await seedCore();
 

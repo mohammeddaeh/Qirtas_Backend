@@ -44,6 +44,28 @@
 - **رسائل خطأ مترجمة (`ar`/`en`)**: `ApiError` تدعم `messageKey` اختياري (مدعوم حالياً على `UnauthorizedError`/`ForbiddenError`) — يُترجَم بـ`error-handler.ts` عبر `core/i18n/messages.ts` حسب `req.lang` (من `middleware/request-context.ts`). أضف key جديد فقط لخطأ يقرأه مستخدم حقيقي فعلاً (مو أخطاء داخلية/logs) — التفاصيل والقاعدة الكاملة بـ`docs/rest_api.md` §2.
 - `http/async-handler.ts`: لف أي controller async بـ`asyncHandler(...)` بالـroutes — بدونها أي `throw` داخل async function ما توصل لـ`error-handler.ts`.
 
+### 🔑 كل مسار يجب أن يُصنِّف نفسه — `npm run check:permissions`
+
+`http/route-marker.ts`: كل مسار تحت `/api/v1` يُعلن أحد ثلاثة — `requirePermission('<key>')` أو `requireAuth` أو **`publicRoute`** (لا تفعل شيئاً سوى `next()`؛ وظيفتها الوحيدة أن تكون **تصريحاً موجباً** مكان غيابٍ صامت). مسار بلا تصنيف يُفشل الفحص.
+
+**لماذا؟** حارسٌ منسيّ يبدو تماماً كـendpoint عام مقصود، ولا مراجعٌ ولا `tsc` ولا eslint يفرّق بينهما — وقرطاس تجاوز ٧٠ مساراً على عشرة routers.
+
+والفحص يقارن ثلاثة أشياء لم يكن شيء يقارنها:
+
+| الفحص | عند الكسر |
+|---|---|
+| كل مسار مصنَّف | ❌ فشل |
+| كل مفتاح **يفرضه** مسار موجودٌ بكتالوج البذرة | ❌ فشل — وإلا فالـendpoint مغلق لكل مستخدم **بمن فيهم السوبر أدمن**، بصمت |
+| كل مفتاح **مبذور** يفرضه مسار | ⚠️ تحذير بالأسماء |
+
+> أول تشغيل (2026-08-13) كشف **١٧ مفتاحاً مبذوراً لا يفرضه أي مسار** — تظهر بشاشة الأدوار، تُمنَح، ولا تحكم شيئاً. مقبولة ما دامت وحداتها قيد البناء (`orders.*` · `printing.*` · `inventory.*` · `reports.*`)، ومرفوضة كوضع دائم.
+
+`core/authz/registry.ts` يجمع المفاتيح من `requirePermission` نفسها لحظة الإقلاع — لا قائمة تُكتب يدوياً فلا قائمة تتقادم. **وهو لا يستبدل جدول `permissions`**: الجدول يحمل `module` و`is_sensitive` وأسماء العرض التي ترسمها شاشة الأدوار، والـregistry يجيب سؤالاً أضيق لا يستطيعه الجدول — *أي المفاتيح يفرضها الكود الآن؟*
+
+`core/authz/key-grammar.ts`: `module.action` بمقطعين فأكثر — المتداخل مقبول لأن قرطاس يستعمل تسعة منه (`orders.delivery.update` · `reports.financial.view`).
+
+**عند إضافة مسار جديد**: صنّفه، وإن كان محروساً فأضف مفتاحه إلى `PERMISSIONS` بـ`core/db/seed-core.ts`، ثم `npm run check:permissions`.
+
 ## §Validation
 
 - `validation/validate.ts` + **zod** فقط. `validate(schema, 'body'|'query'|'params')` كـmiddleware قبل الـcontroller — يرمي `ValidationError(422)` بشكل Laravel (`errors: {field: [msgs]}`) تلقائياً عند الفشل، ويستبدل `req[source]` بالقيمة المُحقّقة/المُحوَّلة (فيدة: query params تصير أرقام حقيقية بعد التحقق).

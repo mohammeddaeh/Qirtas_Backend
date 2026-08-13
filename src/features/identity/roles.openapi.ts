@@ -187,3 +187,66 @@ registry.registerPath({
     ...commonErrorResponses,
   },
 });
+
+// ── Removal: the two exits, and why there are two ────────────────────────────
+//
+// `DELETE` destroys a role no assignment has EVER referenced — true only of a
+// role created and never used, since `user_role_assignments.role_id` is
+// RESTRICT and those closed rows are somebody's employment history. Every role
+// the organisation actually retired fails that bar, which is what `archive` is
+// for: it hides the role and destroys nothing.
+
+registry.registerPath({
+  method: 'delete',
+  path: '/api/v1/roles/{id}',
+  tags,
+  summary: 'Delete a role that has never been assigned',
+  description:
+    'Hard delete, permitted only when no assignment has ever referenced the role and it is not a seeded default. Refuses 409 `role_has_history` otherwise — archive it instead. Requires `roles.edit`.',
+  request: { params: roleIdParamsSchema },
+  responses: {
+    200: { description: 'Role deleted', ...jsonBody(successEnvelope(z.null())) },
+    403: {
+      description: 'Seeded default role, or the role outranks the actor',
+      ...businessError(403),
+    },
+    409: { description: 'Role has assignment history — archive it instead', ...businessError(409) },
+    ...unauthorizedResponse,
+    ...commonErrorResponses,
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/roles/{id}/archive',
+  tags,
+  summary: 'Archive a role (hide it without destroying its history)',
+  description:
+    'Requires `roles.edit` AND `records.archive`. Permitted when no assignment is currently open on the role, whatever the holder account status. Leaves `is_active` untouched. Refuses 409 `role_has_active_holders`. Idempotent.',
+  request: { params: roleIdParamsSchema },
+  responses: {
+    200: { description: 'Role archived', ...jsonBody(successEnvelope(roleResponseSchema)) },
+    403: {
+      description: 'Seeded default role, or the role outranks the actor',
+      ...businessError(403),
+    },
+    409: { description: 'Role still has open assignments', ...businessError(409) },
+    ...unauthorizedResponse,
+    ...commonErrorResponses,
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/roles/{id}/unarchive',
+  tags,
+  summary: 'Restore an archived role',
+  description:
+    'Requires `roles.edit` AND `records.archive`. Clears `archived_at` and nothing else — a role deactivated before archiving comes back deactivated. Idempotent.',
+  request: { params: roleIdParamsSchema },
+  responses: {
+    200: { description: 'Role restored', ...jsonBody(successEnvelope(roleResponseSchema)) },
+    ...unauthorizedResponse,
+    ...commonErrorResponses,
+  },
+});

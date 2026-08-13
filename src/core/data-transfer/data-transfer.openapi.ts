@@ -37,7 +37,29 @@ const transferColumnSchema = z.object({
   type: z.enum(['string', 'number', 'boolean', 'date', 'datetime']),
   required: z.boolean(),
   importable: z.boolean(),
-  example: z.string().optional(),
+  example: z.string().optional().openapi({
+    example: '0912345678',
+    description:
+      'A sample **value**. Written into the generated template’s example row, where its job is to teach the format.',
+  }),
+  hint: localizedLabel.optional().openapi({
+    description:
+      'One line on what the column **means**. Shown in the app beside the name, never written to a file. Distinct from `example`, which is a value — the app was showing a sample value where an explanation belonged.',
+  }),
+});
+
+const transferFilterSchema = z.object({
+  key: z.string().openapi({
+    example: 'search',
+    description: 'Query-string key, sent verbatim on `/export`.',
+  }),
+  label: localizedLabel,
+  type: z.enum(['text', 'select', 'boolean']),
+  placeholder: localizedLabel.optional(),
+  options: z
+    .array(z.object({ value: z.string(), label: localizedLabel }))
+    .optional()
+    .openapi({ description: 'Required for `select`.' }),
 });
 
 const transferResourceSchema = z.object({
@@ -48,6 +70,10 @@ const transferResourceSchema = z.object({
   max_export_rows: z.number().int().openapi({ example: 50_000 }),
   supports_import: z.boolean(),
   columns: z.array(transferColumnSchema),
+  filters: z.array(transferFilterSchema).openapi({
+    description:
+      'Filter controls the export screen renders, and the query keys it sends. Empty = no filters.\n\n**Declared, not guessed.** The client used to ship a hardcoded `?q=` box; the first application that named its filter `search` got a control that sent an ignored parameter and filtered nothing, with no error anywhere.',
+  }),
 });
 
 const importRowErrorSchema = z.object({
@@ -55,10 +81,24 @@ const importRowErrorSchema = z.object({
     example: 12,
     description: '1-based **data** row — the first row under the header is 1, not 2.',
   }),
-  column: z.string().nullable().openapi({ example: 'title' }),
-  code: z.string().openapi({ example: 'required' }),
+  column: z.string().nullable().openapi({
+    example: 'title',
+    description: 'Column key, or null for a whole-row rule. With `row`, this is a cell.',
+  }),
+  code: z.string().openapi({
+    example: 'duplicate_in_file',
+    description:
+      'Machine-readable. Engine codes: `required`, `invalid_number`, `invalid_boolean`, `invalid_date`, `invalid_date_format`, `duplicate_in_file`, `duplicate_in_database`. A resource’s own zod schema adds its codes on top.',
+  }),
   message: z.string(),
-  value: z.string().optional(),
+  value: z.string().optional().openapi({ description: 'The offending cell as it appeared.' }),
+  severity: z.enum(['error', 'warning']).openapi({
+    description:
+      '`error` — the row cannot be imported until the user changes something. `warning` — the row is being left out by policy (a duplicate under `onDuplicate: skip`), not by mistake. The grid tints the two differently.',
+  }),
+  duplicate_of_row: z.number().int().optional().openapi({
+    description: 'For `duplicate_in_file`: the earlier row it collides with.',
+  }),
 });
 
 const importValidateReportSchema = z.object({
@@ -76,6 +116,18 @@ const importValidateReportSchema = z.object({
   errors: z.array(importRowErrorSchema),
   truncated_errors: z.boolean().openapi({
     description: 'true when the error list was capped at 200 — "the first 200 of many".',
+  }),
+  columns: z.array(z.string()).openapi({
+    example: ['title', 'body'],
+    description: 'The importable column keys found in the file, in declared order — the grid’s headers.',
+  }),
+  rows: z.array(z.record(z.string())).openapi({
+    description:
+      '**Every row of the file as raw text**, valid and invalid alike — the grid’s body. Echoing the user’s own data back is what lets the client paint the failing cells red instead of printing a list of line numbers. Raw text, not coerced values: what they typed is what they must edit.',
+  }),
+  truncated_rows: z.boolean().openapi({
+    description:
+      'true when the file exceeded 2 000 rows and `rows` is empty — the client then shows the error list without a grid, rather than a grid silently missing rows.',
   }),
 });
 
@@ -166,7 +218,7 @@ registry.registerPath({
   tags,
   summary: 'Import rows — validate first, then commit',
   description:
-    'Two phases on one path, selected by `?mode=`.\n\n**`mode=validate`** (default) takes `multipart/form-data` with a single `file` part (≤ 5 MB, ≤ 10 000 rows, `.csv` or `.xlsx`) and answers a row-by-row report plus a token valid for 15 minutes. Nothing is written.\n\n**`mode=commit`** takes `{ "token": "imp_…" }` and writes every staged row inside one transaction — all of them or none. The token is consumed on use, so a retry re-uploads rather than replaying a payload whose effect is now unknown.\n\nThe split exists so a file with three bad rows out of five hundred does not force a choice between writing 497 rows the user cannot identify and refusing all 500 without saying why.',
+    'Two phases on one path, selected by `?mode=`.\n\n**`mode=validate`** (default) accepts **either** body:\n\n- `multipart/form-data` with a single `file` part (≤ 5 MB, ≤ 10 000 rows, `.csv` or `.xlsx`) — the first upload;\n- `application/json` with `{ columns, rows }` — the **same file after the user fixed cells in the app**.\n\nBoth run the identical rules through one code path. A separate re-validate endpoint would be a second copy of them, and the copies would drift until the grid accepted rows the upload refused.\n\nEither way the answer is a row-by-row report *plus every row of the file*, so the client can render the data as a grid and paint the failing cells red. Nothing is written.\n\n**`mode=commit`** takes `{ "token": "imp_…" }` and writes every staged row inside one transaction — all of them or none. The token is consumed on use, so a retry re-uploads rather than replaying a payload whose effect is now unknown.\n\nThe split exists so a file with three bad rows out of five hundred does not force a choice between writing 497 rows the user cannot identify and refusing all 500 without saying why.',
   request: {
     query: z.object({ mode: z.enum(['validate', 'commit']).default('validate') }),
     body: {
@@ -174,7 +226,17 @@ registry.registerPath({
         'multipart/form-data': {
           schema: z.object({ file: z.string().openapi({ type: 'string', format: 'binary' }) }),
         },
-        'application/json': { schema: z.object({ token: z.string() }) },
+        'application/json': {
+          schema: z.union([
+            z
+              .object({
+                columns: z.array(z.string()),
+                rows: z.array(z.record(z.string())),
+              })
+              .openapi({ description: '`mode=validate` — rows edited in the app.' }),
+            z.object({ token: z.string() }).openapi({ description: '`mode=commit`.' }),
+          ]),
+        },
       },
     },
   },

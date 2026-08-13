@@ -10,7 +10,9 @@ import { isEmailVerificationEnabled } from '../../../core/auth/config/auth-confi
 import { qirtasAccountStore } from '../repositories/account-store.impl.js';
 import * as usersRepository from '../repositories/users.repository.js';
 import * as rolesRepository from '../repositories/roles.repository.js';
+import * as auditLogRepository from '../repositories/audit-log-entries.repository.js';
 import type { RoleRow } from '../schemas/roles.schema.js';
+import type { UserRow } from '../schemas/users.schema.js';
 import * as assignmentsRepository from '../repositories/user-role-assignments.repository.js';
 import * as ownershipsRepository from '../repositories/ownerships.repository.js';
 import * as branchesRepository from '../repositories/branches.repository.js';
@@ -23,6 +25,7 @@ import type { RequestActorContext } from '../../../core/http/require-actor.js';
 import {
   toWireUser,
   type WireUser,
+  type UserRetirementFacts,
   type RegisterStaffBody,
   type DecideRegistrationBody,
   type LoginBody,
@@ -67,7 +70,247 @@ export async function listUsers(
 export async function getUserById(id: number): Promise<WireUser> {
   const row = await usersRepository.findById(id);
   if (!row) throw new NotFoundError('User not found');
-  return toWireUser(row);
+  return toWireUser(row, await retirementFacts(row));
+}
+
+/**
+ * What removing this account would run into — computed by exactly the rules
+ * [deleteUser] and [archiveUser] enforce, so the screen offers each action only
+ * where it succeeds and can say why when it does not.
+ *
+ * Five numbers rather than two booleans because the refusals are otherwise
+ * indistinguishable on screen. An account with no assignments and no ownerships
+ * looks plainly deletable; if it once signed in, `audit_entries_count` is the
+ * only thing that explains why it is not, and without it the admin re-checks a
+ * staff list that was never the obstacle.
+ */
+async function retirementFacts(row: UserRow): Promise<UserRetirementFacts> {
+  const [openAssignments, assignmentsEver, openOwnerships, ownershipsEver, auditEntries] =
+    await Promise.all([
+      assignmentsRepository.countOpenForUser(row.id),
+      assignmentsRepository.countAssignmentsEverForUser(row.id),
+      ownershipsRepository.countOpenForUser(row.id),
+      ownershipsRepository.countEverForUser(row.id),
+      auditLogRepository.countByActor(row.id),
+    ]);
+
+  return {
+    is_deletable:
+      !row.is_root_protected &&
+      assignmentsEver === 0 &&
+      ownershipsEver === 0 &&
+      auditEntries === 0,
+    is_archivable:
+      !row.is_root_protected &&
+      row.archived_at === null &&
+      openAssignments === 0 &&
+      openOwnerships === 0,
+    open_assignments_count: openAssignments,
+    assignments_ever_count: assignmentsEver,
+    audit_entries_count: auditEntries,
+  };
+}
+
+/**
+ * The root account is exempt from both exits — the same rule every other
+ * mutation on this service already applies, restated here only because these
+ * two are the ones that would be unrecoverable.
+ */
+function assertNotRootProtected(row: UserRow): void {
+  if (!row.is_root_protected) return;
+  throw new ForbiddenError(
+    'This account is root-protected and cannot be removed',
+    undefined,
+    'user_root_protected',
+  );
+}
+
+/**
+ * Nobody removes their own account through the admin screens.
+ *
+ * Not vanity: archiving forces `disabled`, and disabling yourself ends your own
+ * access mid-action — the response would arrive on a screen that no longer has
+ * the right to be open, and if you were the last administrator, nobody can undo
+ * it. `assertNotLastAdministrator` guards the assignment path; this guards the
+ * shorter route to the same place.
+ */
+function assertNotSelf(actorUserId: number, targetId: number): void {
+  if (actorUserId !== targetId) return;
+  throw new ForbiddenError(
+    'You cannot remove your own account',
+    undefined,
+    'user_cannot_remove_self',
+  );
+}
+
+/**
+ * Destroys an account nothing was ever recorded against.
+ *
+ * The narrow case, and narrower than it looks: `audit_log_entries.user_id` is
+ * `RESTRICT`, so anyone who has ever signed in has an entry to their name and
+ * is permanently undeletable. What is left is genuinely an account created by
+ * mistake — a typo'd address, a duplicate — which had no way off the list
+ * before this and would otherwise sit in it forever wearing `disabled`.
+ *
+ * Assignments and ownerships CASCADE, so the database would happily take
+ * someone's employment record along with the row. That is exactly why both are
+ * counted here first: the check is not a formality ahead of a constraint that
+ * would have caught it anyway — it is the only thing standing between "delete
+ * the empty account" and "delete the record of where somebody worked".
+ */
+export async function deleteUser(actor: RequestActorContext, userId: number): Promise<void> {
+  const user = await usersRepository.findById(userId);
+  if (!user) throw new NotFoundError('User not found');
+
+  assertNotRootProtected(user);
+  assertNotSelf(actor.userId, userId);
+
+  const auditEntries = await auditLogRepository.countByActor(userId);
+  if (auditEntries > 0) {
+    throw new BusinessError(
+      409,
+      `This account has ${auditEntries} audit entr(ies) recorded against it and cannot be deleted. Archive it instead.`,
+      'user_has_audit_history',
+    );
+  }
+
+  const [assignmentsEver, ownershipsEver] = await Promise.all([
+    assignmentsRepository.countAssignmentsEverForUser(userId),
+    ownershipsRepository.countEverForUser(userId),
+  ]);
+  if (assignmentsEver > 0 || ownershipsEver > 0) {
+    throw new BusinessError(
+      409,
+      `This account has ${assignmentsEver} assignment(s) and ${ownershipsEver} ownership record(s) in its history. Archive it instead — deleting would erase where this person worked.`,
+      'user_has_history',
+    );
+  }
+
+  // Before the delete: afterwards there is no row to describe, and naming who
+  // disappeared is the entry's whole value. Safe despite the RESTRICT above —
+  // the actor is the admin, and the account being deleted is the target, which
+  // `target_entity` holds as text with no foreign key.
+  await auditService.record(
+    actor,
+    AUDIT.userDelete,
+    target.user(userId),
+    { full_name: `${user.first_name} ${user.last_name}`.trim(), email: user.email },
+    null,
+  );
+
+  await usersRepository.deleteById(userId);
+}
+
+/**
+ * Retires an account that HAS a past — off the lists, signed out, and locked
+ * out, with everything it ever did still attributed to a real person.
+ *
+ * `status: 'disabled'` is written in the same statement, never separately. It
+ * is what makes archiving safe to define as "hidden": the sign-in gate stays
+ * the one gate, so a hidden row cannot also be a live one — invisible to the
+ * admin reviewing accounts and still opening sessions. It also disposes of an
+ * open session without this service having to reach for the session store:
+ * `core/middleware/auth.ts` re-runs `canSignIn` on every request and deletes
+ * the session the moment it refuses, exactly as it does for `disableUser`.
+ *
+ * The bar is no OPEN assignment and no OPEN ownership. Closed ones are the
+ * history being preserved, and they keep resolving to this row.
+ */
+export async function archiveUser(
+  actor: RequestActorContext,
+  userId: number,
+): Promise<WireUser> {
+  const user = await usersRepository.findById(userId);
+  if (!user) throw new NotFoundError('User not found');
+
+  // Idempotent — the caller's intent already holds.
+  if (user.archived_at !== null) return toWireUser(user, await retirementFacts(user));
+
+  assertNotRootProtected(user);
+  assertNotSelf(actor.userId, userId);
+
+  const [openAssignments, openOwnerships] = await Promise.all([
+    assignmentsRepository.countOpenForUser(userId),
+    ownershipsRepository.countOpenForUser(userId),
+  ]);
+  if (openAssignments > 0) {
+    throw new BusinessError(
+      409,
+      `This person still holds ${openAssignments} active assignment(s). End or transfer them before archiving the account.`,
+      'user_has_active_assignments',
+    );
+  }
+  if (openOwnerships > 0) {
+    throw new BusinessError(
+      409,
+      `This person still holds ${openOwnerships} active ownership record(s). End them before archiving the account.`,
+      'user_has_active_ownerships',
+    );
+  }
+
+  const archivedAt = new Date();
+  const row = await usersRepository.update(userId, {
+    archived_at: archivedAt,
+    status: 'disabled',
+  });
+  if (!row) throw new NotFoundError('User not found');
+
+  await auditService.record(
+    actor,
+    AUDIT.userArchive,
+    target.user(userId),
+    { status: user.status, archived_at: null },
+    { status: row.status, archived_at: archivedAt.toISOString() },
+  );
+
+  return toWireUser(row, await retirementFacts(row));
+}
+
+/**
+ * Puts an archived account back on the lists — still disabled.
+ *
+ * Restoring undoes the hiding and nothing else. `disabled` was written by
+ * archiving and stays, so reinstating someone remains the deliberate,
+ * separately-audited act it already is (`reactivateUser`). Folding the two
+ * together would make one click restore an account AND grant it access, with
+ * only the first half announced.
+ */
+export async function unarchiveUser(
+  actor: RequestActorContext,
+  userId: number,
+): Promise<WireUser> {
+  const user = await usersRepository.findById(userId);
+  if (!user) throw new NotFoundError('User not found');
+  if (user.archived_at === null) return toWireUser(user, await retirementFacts(user));
+
+  const row = await usersRepository.update(userId, { archived_at: null });
+  if (!row) throw new NotFoundError('User not found');
+
+  await auditService.record(
+    actor,
+    AUDIT.userUnarchive,
+    target.user(userId),
+    { archived_at: user.archived_at.toISOString() },
+    { archived_at: null },
+  );
+
+  return toWireUser(row, await retirementFacts(row));
+}
+
+/**
+ * Refuses every write to an archived account — applied at each mutation entry.
+ *
+ * The dangerous one is `reactivateUser`: it would clear `disabled` and leave an
+ * account that is active, invisible in every list, and able to sign in. Restore
+ * first, so the change lands where someone can see it.
+ */
+function assertNotArchived(row: UserRow): void {
+  if (row.archived_at === null) return;
+  throw new BusinessError(
+    409,
+    'This account is archived. Restore it before editing.',
+    'user_archived',
+  );
 }
 
 /**
@@ -82,6 +325,8 @@ export async function updateUser(
 ): Promise<WireUser> {
   const existing = await usersRepository.findById(id);
   if (!existing) throw new NotFoundError('User not found');
+
+  assertNotArchived(existing);
 
   if (existing.is_root_protected) {
     throw new ForbiddenError(
@@ -665,6 +910,7 @@ export async function logout(token: string, origin: authService.RequestOrigin): 
 export async function suspendUser(actor: RequestActorContext, userId: number): Promise<WireUser> {
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
+  assertNotArchived(user);
   if (user.is_root_protected) {
     throw new ForbiddenError(
       'This account is root-protected and cannot be modified',
@@ -696,6 +942,7 @@ export async function suspendUser(actor: RequestActorContext, userId: number): P
 export async function disableUser(actor: RequestActorContext, userId: number): Promise<WireUser> {
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
+  assertNotArchived(user);
   if (user.is_root_protected) {
     throw new ForbiddenError(
       'This account is root-protected and cannot be modified',
@@ -730,6 +977,10 @@ export async function reactivateUser(
 ): Promise<WireUser> {
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
+  // The most important of the four: without it, reactivating would clear
+  // `disabled` and leave an account that is active, able to sign in, and
+  // present in no list any admin browses.
+  assertNotArchived(user);
   if (user.is_root_protected) {
     throw new ForbiddenError(
       'This account is root-protected and cannot be modified',

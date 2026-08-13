@@ -96,6 +96,26 @@ const PERMISSIONS: SeedPermission[] = [
     is_sensitive: false,
     display: { ar: 'عرض الأدوار', en: 'View Roles' },
   },
+  /**
+   * Retiring a record that HAS history — the harder half of removal.
+   *
+   * Held apart from `branches.manage`/`users.manage`/`roles.edit` on purpose,
+   * and not because archiving is more dangerous than editing: it is that the
+   * everyday manage permissions are handed out to people who run branches and
+   * onboard staff, and deciding that a record with a past should stop being
+   * visible is not part of that job. Whoever holds this can make a branch that
+   * people worked in vanish from every list in the app; the row and the history
+   * survive, but nobody goes looking in an archive they were not told about.
+   *
+   * Deleting a record with NO history needs only the module permission — there
+   * is nothing to weigh when nothing points at the row.
+   */
+  {
+    key: 'records.archive',
+    module: 'records',
+    is_sensitive: true,
+    display: { ar: 'أرشفة السجلات', en: 'Archive Records' },
+  },
   {
     key: 'roles.edit',
     module: 'roles',
@@ -242,6 +262,7 @@ const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
   ownerships: { ar: 'الملكيات', en: 'Ownerships' },
   permissions: { ar: 'الصلاحيات', en: 'Permissions' },
   roles: { ar: 'الأدوار', en: 'Roles' },
+  records: { ar: 'السجلات', en: 'Records' },
   dashboard: { ar: 'لوحة التحكم', en: 'Dashboard' },
   audit_log: { ar: 'سجل التدقيق', en: 'Audit Log' },
   localization: { ar: 'الترجمة', en: 'Localization' },
@@ -254,6 +275,16 @@ const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
 };
 
 const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
+
+/**
+ * The catalog as a bare key list, for `npm run check:permissions`.
+ *
+ * Exported so the check reads the **same array the seed writes** rather than a
+ * second copy of it — a checker comparing against its own transcription of this
+ * list would be one more thing that can drift, which is the exact failure it
+ * exists to catch.
+ */
+export const SEEDED_PERMISSION_KEYS: readonly string[] = ALL_PERMISSION_KEYS;
 
 const ROLES: SeedRole[] = [
   {

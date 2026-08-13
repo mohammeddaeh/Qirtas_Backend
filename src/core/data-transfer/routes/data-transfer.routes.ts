@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../../http/async-handler.js';
 import { requireAuth } from '../../http/require-actor.js';
@@ -49,14 +49,32 @@ dataTransferRouter.get(
   asyncHandler(controller.downloadTemplate),
 );
 
+/**
+ * `express.json()`'s default body limit is **100 KB**, and the app-wide parser
+ * in `app.ts` uses it.
+ *
+ * The edit loop sends the whole grid back — up to `MAX_PREVIEW_ROWS` rows of
+ * text — which passes 100 KB at a few hundred rows. Left alone, re-validating a
+ * medium file fails with express's own 413 before any of this module's code
+ * runs, and the message says nothing about rows.
+ *
+ * 5 MB, matching the upload limit in `middleware/upload.ts`: the two paths carry
+ * the same data and there is no reason for one to accept what the other refuses.
+ * Scoped to this route, so the rest of the API keeps the tighter default.
+ */
+const importJsonBody = express.json({ limit: '5mb' });
+
 dataTransferRouter.post(
   '/:resource/import',
-  // Order matters: authentication, then the path check, then the upload.
-  // Parsing a 5 MB multipart body before deciding the caller is anonymous does
-  // the work an attacker wanted done — `requireAuth` first means an
-  // unauthenticated flood is refused at the header.
+  // Order matters: authentication, then the path check, then the body.
+  // Parsing a 5 MB body before deciding the caller is anonymous does the work
+  // an attacker wanted done — `requireAuth` first means an unauthenticated
+  // flood is refused at the header.
   requireAuth,
   validate(resourceParamsSchema, 'params'),
+  // Both parsers run, and each ignores the other's content type: JSON for the
+  // edit loop, multipart for the first upload.
+  importJsonBody,
   uploadTransferFile,
   asyncHandler(controller.importResource),
 );

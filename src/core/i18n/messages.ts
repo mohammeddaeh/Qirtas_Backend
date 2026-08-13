@@ -272,6 +272,80 @@ export const MESSAGES = {
     en: 'This account is protected and cannot be modified',
     ar: 'هذا الحساب محميّ ولا يمكن تعديله',
   },
+
+  // ── Removal: delete (no history) vs archive (has history) ──────────────────
+  //
+  // Every refusal below names the OTHER exit, because that is the reader's
+  // actual next move. "Cannot be deleted" leaves an admin re-checking a staff
+  // list that was never the obstacle; "it has a past — archive it instead"
+  // ends the task. See docs/rest_api.md §16.
+
+  branch_is_default: {
+    en: 'The default branch cannot be removed — make another branch the default first',
+    ar: 'الفرع الافتراضي لا يُحذف ولا يُؤرشف — اجعل فرعاً آخر الافتراضي أولاً',
+  },
+  branch_has_history: {
+    en: 'This branch appears in the assignment history. Archive it instead — deleting would erase where those people worked.',
+    ar: 'هذا الفرع موجود بسجل التعيينات. أرشفه بدل حذفه — الحذف يمحو المكان الذي عمل فيه أولئك الأشخاص.',
+  },
+  branch_has_active_ownerships: {
+    en: 'This branch still has active ownership records. End them before archiving it.',
+    ar: 'لا يزال لهذا الفرع سجلات ملكية فعّالة. أنهِها قبل أرشفته.',
+  },
+  branch_name_taken: {
+    en: 'This branch name is already in use',
+    ar: 'اسم الفرع هذا مستخدم بالفعل',
+  },
+  // A separate key from the one above, not a nicety: the two lead to different
+  // actions. A live clash means pick another name; an archived clash means the
+  // branch being recreated already exists and can come back with its history
+  // rather than start over as an empty duplicate the reader cannot see.
+  branch_name_taken_by_archived: {
+    en: 'An archived branch already uses this name — restore it instead, or choose another name',
+    ar: 'يوجد فرع مؤرشف بهذا الاسم — استرجعه بدل إنشاء فرع جديد، أو اختر اسماً آخر',
+  },
+  branch_archived: {
+    en: 'This branch is archived. Restore it before editing.',
+    ar: 'هذا الفرع مؤرشف. استرجعه قبل تعديله.',
+  },
+
+  role_system_default_unarchivable: {
+    en: 'A system-default role cannot be archived — re-seeding keeps it in the catalogue',
+    ar: 'الدور الافتراضي بالنظام لا يُؤرشف — إعادة الزرع تُبقيه بالكتالوج',
+  },
+  role_has_active_holders: {
+    en: 'This role is still held. End or transfer those assignments before archiving it.',
+    ar: 'ما زال هذا الدور محمولاً. أنهِ تلك التعيينات أو انقلها قبل أرشفته.',
+  },
+  role_archived: {
+    en: 'This role is archived. Restore it before editing.',
+    ar: 'هذا الدور مؤرشف. استرجعه قبل تعديله.',
+  },
+
+  user_cannot_remove_self: {
+    en: 'You cannot remove your own account',
+    ar: 'لا يمكنك حذف أو أرشفة حسابك أنت',
+  },
+  user_has_audit_history: {
+    en: 'This account has activity recorded in the audit log and cannot be deleted. Archive it instead.',
+    ar: 'لهذا الحساب نشاط مسجَّل بسجل التدقيق فلا يمكن حذفه. أرشفه بدلاً من ذلك.',
+  },
+  user_has_history: {
+    en: 'This account appears in the assignment history. Archive it instead — deleting would erase where this person worked.',
+    ar: 'هذا الحساب موجود بسجل التعيينات. أرشفه بدل حذفه — الحذف يمحو المكان الذي عمل فيه هذا الشخص.',
+  },
+  user_has_active_assignments: {
+    en: 'This person still holds active assignments. End or transfer them before archiving the account.',
+    ar: 'ما زال هذا الشخص يحمل تعيينات فعّالة. أنهِها أو انقلها قبل أرشفة الحساب.',
+  },
+  user_has_active_ownerships: {
+    en: 'This person still holds active ownership records. End them before archiving the account.',
+    ar: 'ما زال لهذا الشخص سجلات ملكية فعّالة. أنهِها قبل أرشفة الحساب.',
+  },
+  user_archived: {
+    en: 'This account is archived. Restore it before editing.',
+    ar: 'هذا الحساب مؤرشف. استرجعه قبل تعديله.',
+  },
   email_taken: {
     en: 'An account with this email already exists',
     ar: 'يوجد حساب بهذا البريد الإلكتروني بالفعل',
@@ -311,6 +385,30 @@ export const MESSAGES = {
   language_code_taken: {
     en: 'A language with this code already exists',
     ar: 'يوجد لغة بهذا الرمز بالفعل',
+  },
+  /**
+   * The staging token behind a two-phase import is gone: spent, or older than
+   * its fifteen minutes. Both wordings name the way out — re-upload — because
+   * the token is consumed before the write, so pressing the same button again
+   * can never succeed.
+   */
+  import_token_gone: {
+    en: 'This import is no longer valid — it was already used or has expired. Upload the file again.',
+    ar: 'هذه العملية لم تعد صالحة — استُخدمت أو انتهت مهلتها. أعد رفع الملف.',
+  },
+  /**
+   * The resource exists but declares no `import` block. The client hides the
+   * screen from its own descriptor, so this is reached by a stale build or a
+   * hand-made request — and the reader is still an admin, not a developer.
+   */
+  transfer_import_unsupported: {
+    en: 'This data type cannot be imported',
+    ar: 'هذا النوع من البيانات لا يقبل الاستيراد',
+  },
+  /** A row lost the race to the unique index between review and write. */
+  import_conflict: {
+    en: 'Some rows collide with records that already exist. Nothing was imported — upload the file again to see which rows.',
+    ar: 'بعض الصفوف تتعارض مع سجلات موجودة. لم يُستورد شيء — أعد رفع الملف لتظهر الصفوف المتعارضة.',
   },
 } as const satisfies Record<string, Record<Lang, string>>;
 

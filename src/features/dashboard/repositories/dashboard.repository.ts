@@ -8,8 +8,28 @@ import type { WireChartPoint } from '../dtos/dashboard-stats.dto.js';
 
 const isActiveAssignmentClause = sql`(${userRoleAssignmentsTable.valid_to} IS NULL OR ${userRoleAssignmentsTable.valid_to} > now())`;
 
+/**
+ * Archived records are out of every figure on this dashboard.
+ *
+ * The dashboard answers "what does the organisation look like right now", and
+ * an archived branch or account is precisely the row an admin has declared is
+ * no longer part of that answer. Counting them would put a headline number here
+ * that disagrees with the list it links to — the reader taps "12 فروع", lands on
+ * a list of 11, and has no way to find the twelfth.
+ *
+ * Only the queries that read these tables DIRECTLY need the clause. Anything
+ * driven from `user_role_assignments` is already safe: archiving requires zero
+ * open assignments, so an archived row contributes none. And anything filtered
+ * to `branches.status = 'active'` or `users.status = 'active'` is safe by the
+ * invariant archiving establishes — it writes `closed`/`disabled` in the same
+ * statement, never leaving a hidden row wearing an operating status.
+ */
+const liveUser = sql`${usersTable.archived_at} IS NULL`;
+const liveBranch = sql`${branchesTable.archived_at} IS NULL`;
+const liveRole = sql`${rolesTable.archived_at} IS NULL`;
+
 export async function countAllUsers(): Promise<number> {
-  const rows = await db.select({ value: count() }).from(usersTable);
+  const rows = await db.select({ value: count() }).from(usersTable).where(liveUser);
   return rows[0]?.value ?? 0;
 }
 
@@ -17,12 +37,12 @@ export async function countUsersByStatus(status: (typeof usersTable.status.enumV
   const rows = await db
     .select({ value: count() })
     .from(usersTable)
-    .where(eq(usersTable.status, status));
+    .where(and(liveUser, eq(usersTable.status, status)));
   return rows[0]?.value ?? 0;
 }
 
 export async function countAllBranches(): Promise<number> {
-  const rows = await db.select({ value: count() }).from(branchesTable);
+  const rows = await db.select({ value: count() }).from(branchesTable).where(liveBranch);
   return rows[0]?.value ?? 0;
 }
 
@@ -30,7 +50,7 @@ export async function countActiveRoles(): Promise<number> {
   const rows = await db
     .select({ value: count() })
     .from(rolesTable)
-    .where(eq(rolesTable.is_active, true));
+    .where(and(liveRole, eq(rolesTable.is_active, true)));
   return rows[0]?.value ?? 0;
 }
 
@@ -56,6 +76,7 @@ export async function usersPerBranch(): Promise<WireChartPoint[]> {
       userRoleAssignmentsTable,
       and(eq(userRoleAssignmentsTable.branch_id, branchesTable.id), isActiveAssignmentClause),
     )
+    .where(liveBranch)
     .groupBy(branchesTable.id, branchesTable.name)
     .orderBy(branchesTable.name);
   return rows;
@@ -70,7 +91,7 @@ export async function usersPerRole(): Promise<WireChartPoint[]> {
       userRoleAssignmentsTable,
       and(eq(userRoleAssignmentsTable.role_id, rolesTable.id), isActiveAssignmentClause),
     )
-    .where(eq(rolesTable.is_active, true))
+    .where(and(liveRole, eq(rolesTable.is_active, true)))
     .groupBy(rolesTable.id, rolesTable.name)
     .orderBy(rolesTable.name);
   return rows;
@@ -137,6 +158,7 @@ export async function branchHeadcounts(): Promise<BranchHeadRow[]> {
       userRoleAssignmentsTable,
       and(eq(userRoleAssignmentsTable.branch_id, branchesTable.id), isActiveAssignmentClause),
     )
+    .where(liveBranch)
     .groupBy(branchesTable.id, branchesTable.name, branchesTable.status)
     .orderBy(branchesTable.name);
 }
@@ -167,7 +189,7 @@ export async function activeRoles(): Promise<{ id: number; name: string }[]> {
   return db
     .select({ id: rolesTable.id, name: rolesTable.name })
     .from(rolesTable)
-    .where(eq(rolesTable.is_active, true))
+    .where(and(liveRole, eq(rolesTable.is_active, true)))
     .orderBy(rolesTable.name);
 }
 
@@ -254,7 +276,7 @@ export async function roleCoverage(): Promise<{ id: number; name: string; branch
         isActiveAssignmentClause,
       ),
     )
-    .where(eq(rolesTable.is_active, true))
+    .where(and(liveRole, eq(rolesTable.is_active, true)))
     .groupBy(rolesTable.id, rolesTable.name);
 }
 

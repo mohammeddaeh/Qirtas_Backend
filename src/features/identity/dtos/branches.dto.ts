@@ -15,8 +15,34 @@ export const branchResponseSchema = z.object({
   contact_info: z.string().nullable(),
   status: z.enum(['active', 'temporarily_closed', 'closed']),
   is_default: z.boolean(),
+  archived_at: z.string().nullable(),
   created_at: z.string(),
+  is_deletable: z.boolean().optional(),
+  is_archivable: z.boolean().optional(),
+  open_assignments_count: z.number().int().optional(),
+  assignments_ever_count: z.number().int().optional(),
+  open_ownerships_count: z.number().int().optional(),
+  ownerships_ever_count: z.number().int().optional(),
 });
+
+/**
+ * What removing a record would cost, in the two numbers that decide it — sent
+ * on `GET /:id` only, never on a list, because each one is an aggregate and a
+ * page of 50 rows would run 200 of them.
+ *
+ * The pair exists because "nothing points here now" and "nothing ever pointed
+ * here" are different facts leading to different actions, and the difference is
+ * invisible on screen: a branch whose last employee left in 2024 and a branch
+ * created by mistake yesterday both show an empty staff list.
+ */
+export interface BranchRetirementFacts {
+  is_deletable: boolean;
+  is_archivable: boolean;
+  open_assignments_count: number;
+  assignments_ever_count: number;
+  open_ownerships_count: number;
+  ownerships_ever_count: number;
+}
 
 export interface WireBranch {
   id: number;
@@ -25,10 +51,27 @@ export interface WireBranch {
   contact_info: string | null;
   status: 'active' | 'temporarily_closed' | 'closed';
   is_default: boolean;
+  /**
+   * When this branch was retired from view, or null if it is in service.
+   *
+   * Sent on every branch, list included, unlike the counts below: it is a plain
+   * column, and a client that receives an archived branch (from the archived
+   * filter, or from a detail link someone kept) has no other way to know it is
+   * looking at one.
+   */
+  archived_at: string | null;
   created_at: string;
+  /** Nothing has EVER pointed here — the row can be destroyed, losing nothing. */
+  is_deletable?: boolean;
+  /** Nothing points here NOW — the row can be hidden while its history keeps resolving. */
+  is_archivable?: boolean;
+  open_assignments_count?: number;
+  assignments_ever_count?: number;
+  open_ownerships_count?: number;
+  ownerships_ever_count?: number;
 }
 
-export function toWireBranch(row: BranchRow): WireBranch {
+export function toWireBranch(row: BranchRow, facts?: BranchRetirementFacts): WireBranch {
   return {
     id: row.id,
     name: row.name,
@@ -36,7 +79,12 @@ export function toWireBranch(row: BranchRow): WireBranch {
     contact_info: row.contact_info,
     status: row.status,
     is_default: row.is_default,
+    archived_at: row.archived_at?.toISOString() ?? null,
     created_at: row.created_at.toISOString(),
+    // Spread whole or omitted, never partially defaulted: a list row that
+    // reported `open_assignments_count: 0` would be claiming an empty branch
+    // when the truth is that nobody asked.
+    ...(facts ?? {}),
   };
 }
 
@@ -106,6 +154,16 @@ export const branchesFilterQuerySchema = z
   .object({
     status: z.enum(['active', 'temporarily_closed', 'closed']).optional(),
     is_default: queryBooleanSchema.optional(),
+    /**
+     * Archived rows are excluded unless this says otherwise — the default is
+     * the point of archiving, not a convenience.
+     *
+     * `true` returns ONLY archived branches (the "المؤرشف" view), not archived
+     * plus live: a screen offering to show the archive means the archive, and
+     * mixing the two back into one list gives the reader no way to tell which
+     * is which without checking every row.
+     */
+    archived: queryBooleanSchema.optional(),
     /** Free-text match across branch name and address. Same contract as `GET /users?search=`. */
     search: z
       .string()

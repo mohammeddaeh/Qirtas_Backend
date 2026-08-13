@@ -69,18 +69,22 @@ export async function listSelfRegisterableRoles(): Promise<WireRole[]> {
 export async function getRoleById(id: number): Promise<WireRole> {
   const row = await rolesRepository.findById(id);
   if (!row) throw new NotFoundError('Role not found');
-  const [permissions, holders, assignmentsEver] = await Promise.all([
+  const [permissions, holders, assignmentsEver, openAssignments] = await Promise.all([
     rolesRepository.findPermissionsByRole(id),
     userRoleAssignmentsRepository.countActiveHoldersOfRole(id),
     rolesRepository.countAllAssignmentsEver(id),
+    userRoleAssignmentsRepository.countOpenForRole(id),
   ]);
-  return toWireRole(
-    row,
-    permissions.map(toWirePermission),
-    holders,
-    !row.is_system_default && assignmentsEver === 0,
-    assignmentsEver,
-  );
+  return toWireRole(row, {
+    permissions: permissions.map(toWirePermission),
+    active_holders_count: holders,
+    is_deletable: !row.is_system_default && assignmentsEver === 0,
+    // Same rule `archiveRole` enforces. An already-archived role reports false
+    // so the client shows "restore" rather than a second archive button.
+    is_archivable: !row.is_system_default && row.archived_at === null && openAssignments === 0,
+    assignments_ever_count: assignmentsEver,
+    open_assignments_count: openAssignments,
+  });
 }
 
 /** The people holding this role right now — one row per active assignment. */
@@ -149,6 +153,109 @@ export async function deleteRole(actor: RequestActorContext, roleId: number): Pr
   );
 
   await rolesRepository.deleteById(roleId);
+}
+
+/**
+ * Retires a role that HAS been held — off every list, out of every picker, and
+ * still resolvable by everything that points at it.
+ *
+ * The exit [deleteRole] structurally cannot give. Its bar is "no assignment has
+ * EVER referenced this", which is true only of a role created and never used;
+ * every job title the organisation actually retired fails it, because those
+ * closed assignment rows are what "أحمد was a cashier until March" is made of.
+ * So the roles list accumulated finished roles permanently, and deactivating
+ * them only moved them to the list's other tab.
+ *
+ * The bar here is "nobody holds it NOW" — open assignment rows, whatever the
+ * holder's account status. A suspended employee still occupies the post, and
+ * archiving under them would leave a live assignment granting permissions
+ * through a role no screen in the app displays.
+ *
+ * `assertActorOutranks` for the same reason `deleteRole` and `reactivateRole`
+ * use it: removing a high-authority role from circulation is an act on that
+ * authority, and answers to the same bar as creating it.
+ */
+export async function archiveRole(actor: RequestActorContext, roleId: number): Promise<WireRole> {
+  const role = await rolesRepository.findById(roleId);
+  if (!role) throw new NotFoundError('Role not found');
+
+  // Idempotent rather than a 409 — the caller's intent already holds.
+  if (role.archived_at !== null) return getRoleById(roleId);
+
+  if (role.is_system_default) {
+    throw new ForbiddenError(
+      'A system-default role cannot be archived — re-seeding keeps it in the catalogue',
+      undefined,
+      'role_system_default_unarchivable',
+    );
+  }
+
+  await assertActorOutranks(actor.userId, role.level);
+
+  const openAssignments = await userRoleAssignmentsRepository.countOpenForRole(roleId);
+  if (openAssignments > 0) {
+    throw new BusinessError(
+      409,
+      `${openAssignments} assignment(s) still hold this role. End or transfer them before archiving it.`,
+      'role_has_active_holders',
+    );
+  }
+
+  const row = await rolesRepository.setArchivedAt(roleId, new Date());
+  if (!row) throw new NotFoundError('Role not found');
+
+  await auditService.record(
+    actor,
+    AUDIT.roleArchive,
+    target.role(roleId),
+    { name: role.name, archived_at: null },
+    { name: row.name, archived_at: row.archived_at?.toISOString() ?? null },
+  );
+
+  return getRoleById(roleId);
+}
+
+/**
+ * Puts an archived role back in the catalogue.
+ *
+ * `is_active` is untouched: archiving never changed it, so restoring must not
+ * either. A role that was deactivated before it was archived comes back
+ * deactivated — which is what it was — and reactivating it stays the separate,
+ * announced decision it already is.
+ */
+export async function unarchiveRole(actor: RequestActorContext, roleId: number): Promise<WireRole> {
+  const role = await rolesRepository.findById(roleId);
+  if (!role) throw new NotFoundError('Role not found');
+  if (role.archived_at === null) return getRoleById(roleId);
+
+  await assertActorOutranks(actor.userId, role.level);
+
+  const row = await rolesRepository.setArchivedAt(roleId, null);
+  if (!row) throw new NotFoundError('Role not found');
+
+  await auditService.record(
+    actor,
+    AUDIT.roleUnarchive,
+    target.role(roleId),
+    { archived_at: role.archived_at.toISOString() },
+    { archived_at: null },
+  );
+
+  return getRoleById(roleId);
+}
+
+/**
+ * Refuses every write to an archived role — one guard, applied at each entry.
+ *
+ * Editing a role the app shows nowhere is not a coherent request: the result
+ * cannot be reviewed, and the most dangerous version of it — reactivating an
+ * archived role, or widening its permissions — would put an invisible role back
+ * into effect. Restore first, then edit, so the change lands somewhere a person
+ * can see it.
+ */
+function assertNotArchived(role: { archived_at: Date | null }): void {
+  if (role.archived_at === null) return;
+  throw new BusinessError(409, 'This role is archived. Restore it before editing.', 'role_archived');
 }
 
 /**
@@ -239,7 +346,17 @@ export async function createRole(
     forced: body.force === true,
   });
 
-  return toWireRole(row, permissions.map(toWirePermission));
+  return toWireRole(row, {
+    permissions: permissions.map(toWirePermission),
+    // A role that was created a line ago: nobody holds it, nothing has ever
+    // referenced it. Stated rather than re-queried, since the four counts are
+    // knowable from the fact of creation itself.
+    active_holders_count: 0,
+    is_deletable: !row.is_system_default,
+    is_archivable: !row.is_system_default,
+    assignments_ever_count: 0,
+    open_assignments_count: 0,
+  });
 }
 
 /**
@@ -268,6 +385,7 @@ export async function updateRole(
   const role = await rolesRepository.findById(roleId);
   if (!role) throw new NotFoundError('Role not found');
 
+  assertNotArchived(role);
   await assertActorOutranks(actor.userId, role.level);
 
   if (body.name !== undefined && body.name !== role.name) {
@@ -298,8 +416,10 @@ export async function updateRole(
     { name: row.name, category: row.category },
   );
 
-  const permissions = await rolesRepository.findPermissionsByRole(roleId);
-  return toWireRole(row, permissions.map(toWirePermission));
+  // Re-read rather than assembled here: the response is what the detail screen
+  // re-renders from, and it carries `is_deletable`/`is_archivable` — verdicts
+  // this function has no business deriving a second time.
+  return getRoleById(roleId);
 }
 
 /** True once the number of active roles exceeds the informational soft cap (never blocks creation). */
@@ -316,6 +436,7 @@ export async function updateRolePermissions(
   const role = await rolesRepository.findById(roleId);
   if (!role) throw new NotFoundError('Role not found');
 
+  assertNotArchived(role);
   await assertActorOutranks(actor.userId, role.level);
   await permissionsService.assertPermissionKeysExist(body.permission_keys);
 
@@ -358,8 +479,9 @@ export async function updateRolePermissions(
   // Notify every currently-assigned user that their effective permissions changed (2026-07-09 decision).
   // Actual notification delivery is out of scope for this module (backlog.md #18) — this is the hook point.
 
-  const permissions = await rolesRepository.findPermissionsByRole(roleId);
-  return toWireRole(role, permissions.map(toWirePermission));
+  // Re-read for the same reason `updateRole` does — and here it also fixes an
+  // existing slip: `role` is the row as it was BEFORE the write.
+  return getRoleById(roleId);
 }
 
 /**
@@ -385,6 +507,8 @@ export async function updateRoleLevel(
   }
   const role = await rolesRepository.findById(roleId);
   if (!role) throw new NotFoundError('Role not found');
+
+  assertNotArchived(role);
 
   const row = await rolesRepository.setLevel(roleId, level);
   if (!row) throw new NotFoundError('Role not found');
@@ -422,6 +546,8 @@ export async function deactivateRole(
 ): Promise<WireRole> {
   const role = await rolesRepository.findById(roleId);
   if (!role) throw new NotFoundError('Role not found');
+
+  assertNotArchived(role);
 
   if (role.name === SUPER_ADMIN_ROLE_NAME) {
     throw new ForbiddenError(
@@ -472,6 +598,8 @@ export async function reactivateRole(
 ): Promise<WireRole> {
   const role = await rolesRepository.findById(roleId);
   if (!role) throw new NotFoundError('Role not found');
+
+  assertNotArchived(role);
 
   if (role.is_active) {
     throw new BusinessError(409, 'This role is already active', 'role_already_active');

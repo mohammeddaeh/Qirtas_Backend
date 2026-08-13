@@ -39,3 +39,22 @@ export async function updateBranch(req: Request, res: Response): Promise<void> {
   const branch = await branchesService.updateBranch(actor, id, body);
   ok(res, branch);
 }
+
+export async function deleteBranch(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  await branchesService.deleteBranch(actor, id);
+  ok(res, null, 'Deleted');
+}
+
+export async function archiveBranch(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  ok(res, await branchesService.archiveBranch(actor, id));
+}
+
+export async function unarchiveBranch(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  ok(res, await branchesService.unarchiveBranch(actor, id));
+}

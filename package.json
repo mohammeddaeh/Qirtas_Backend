@@ -20,7 +20,9 @@
     "db:setup": "npm run db:migrate && tsx src/core/db/seed.ts --admin --demo --reset",
     "smoke": "tsx src/core/db/smoke-test.ts",
     "check:messages": "tsx src/core/i18n/check-message-keys.ts",
-    "test:mail": "tsx tests/email-recipient.test.ts"
+    "test:mail": "tsx tests/email-recipient.test.ts",
+    "test:import": "tsx tests/import-duplicate-detection.test.ts",
+    "check:permissions": "tsx src/core/authz/check-permissions.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.0",

@@ -1,18 +1,16 @@
 import { randomBytes } from 'node:crypto';
 import { and, eq, lt } from 'drizzle-orm';
 import { db } from '../../db/client.js';
-import {
-  BusinessError,
-  NotFoundError,
-  PayloadTooLargeError,
-  ValidationError,
-} from '../../http/api-error.js';
+import { BusinessError, PayloadTooLargeError, ValidationError } from '../../http/api-error.js';
 import { parseCsv, unguardFormula } from '../formats/csv.reader.js';
 import { parseXlsx } from '../formats/xlsx.reader.js';
 import { parseCell } from '../formats/cell.js';
 import { importStagingTable } from '../schemas/import-staging.schema.js';
 import {
+  duplicateKey,
+  isBlankKey,
   MAX_IMPORT_ROWS,
+  MAX_PREVIEW_ROWS,
   MAX_REPORTED_ROW_ERRORS,
   type ColumnDef,
   type ImportRowError,
@@ -52,6 +50,31 @@ export interface ImportValidateReport {
   errors: ImportRowError[];
   /** `true` when [MAX_REPORTED_ROW_ERRORS] trimmed the list — "the first 200 of many", not "200 problems". */
   truncated_errors: boolean;
+
+  /**
+   * The importable column keys found in the file, in the resource's declared
+   * order. These are the grid's headers; the client looks each one up in the
+   * descriptor to show a localized label.
+   */
+  columns: string[];
+
+  /**
+   * **Every row of the file as raw text, valid and invalid alike** — the grid's
+   * body.
+   *
+   * Echoing the user's own data back is what makes the errors actionable: a
+   * list saying "row 12: invalid phone" asks them to go find row 12 in Excel,
+   * whereas the same data on screen with that one cell tinted red is a
+   * correction they make in place and re-check in seconds.
+   *
+   * Raw text, deliberately — not the coerced values. What the user typed is
+   * what they must edit, and a `datetime` shown back as `2026-08-12T00:00:00Z`
+   * when they typed `2026-08-12` looks like the app changed their file.
+   */
+  rows: Array<Record<string, string>>;
+
+  /** `true` when the file exceeded [MAX_PREVIEW_ROWS] and `rows` is empty — the client shows the error list without a grid rather than a grid missing rows. */
+  truncated_rows: boolean;
 }
 
 export interface ImportCommitReport {
@@ -158,6 +181,7 @@ function validateRow(
         code: parsed.code,
         message: `Invalid value for "${column.key}"`,
         value: text.slice(0, 100),
+        severity: 'error',
       });
       return;
     }
@@ -168,6 +192,7 @@ function validateRow(
         code: 'required',
         message: `"${column.key}" is required`,
         value: '',
+        severity: 'error',
       });
       return;
     }
@@ -187,11 +212,69 @@ function validateRow(
         code: issue.code,
         message: issue.message,
         ...(issue.path.length > 0 ? { value: (raw[String(issue.path[0])] ?? '').slice(0, 100) } : {}),
+        severity: 'error',
       });
     }
   }
 
   return { raw, errors };
+}
+
+/**
+ * Flags rows whose natural key repeats **within the file**.
+ *
+ * Needs no database, so it runs with everything else in [analyzeImport] and
+ * catches the mistake people make most: pasting the same block twice, or
+ * exporting, appending, and re-importing the whole thing.
+ *
+ * The error lands on the **second and later** occurrences and names the first,
+ * because that is the one the user will delete. Flagging all of them, first
+ * included, turns one mistake into two red rows and leaves them guessing which
+ * to keep.
+ *
+ * Only rows that are otherwise valid are considered: a row already failing on a
+ * required field does not also need "and it is a duplicate", which would be two
+ * problems reported for one row that has to be fixed once.
+ */
+function flagInFileDuplicates(
+  rows: RawRow[],
+  uniqueBy: string[],
+  invalidRows: Set<number>,
+): ImportRowError[] {
+  const errors: ImportRowError[] = [];
+  const firstSeenAt = new Map<string, number>();
+
+  rows.forEach((raw, index) => {
+    const rowNumber = index + 1;
+    if (invalidRows.has(rowNumber)) return;
+
+    const key = duplicateKey(raw, uniqueBy);
+    // An all-empty key means the identifying columns are blank, which is
+    // already reported as `required` if they are. Treating "" as a duplicate
+    // would flag every such row against the first one.
+    if (isBlankKey(key)) return;
+
+    const first = firstSeenAt.get(key);
+    if (first === undefined) {
+      firstSeenAt.set(key, rowNumber);
+      return;
+    }
+
+    errors.push({
+      row: rowNumber,
+      // Attached to the first key column so the grid has a cell to tint. With
+      // a composite key the whole combination is the problem, but a user
+      // looking for it starts at the name.
+      column: uniqueBy[0] ?? null,
+      code: 'duplicate_in_file',
+      message: `Duplicate of row ${first}`,
+      value: (raw[uniqueBy[0] ?? ''] ?? '').slice(0, 100),
+      severity: 'error',
+      duplicate_of_row: first,
+    });
+  });
+
+  return errors;
 }
 
 /**
@@ -203,10 +286,20 @@ function validateRow(
  * decisions that need infrastructure to test get tested less. Staging is the
  * only part left needing a database, and it stores what this returns.
  */
+export interface ImportAnalysis {
+  /** Column keys present in the file, in the resource's declared order. */
+  columnKeys: string[];
+  /** **Every** row, valid and invalid, in file order. Index + 1 is the row number. */
+  rows: RawRow[];
+  errors: ImportRowError[];
+  /** Row numbers with at least one `severity: 'error'` — the set excluded from the import. */
+  invalidRows: Set<number>;
+}
+
 export function analyzeImport(
   resource: TransferResource,
   matrix: string[][],
-): { accepted: RawRow[]; errors: ImportRowError[]; totalRows: number } {
+): ImportAnalysis {
   if (matrix.length === 0) {
     throw new ValidationError({ file: ['The file is empty'] });
   }
@@ -222,37 +315,197 @@ export function analyzeImport(
     );
   }
 
-  const accepted: RawRow[] = [];
+  const rows: RawRow[] = [];
   const errors: ImportRowError[] = [];
+  const invalidRows = new Set<number>();
 
   dataRows.forEach((cells, index) => {
     // 1-based over **data** rows: the first row under the header is 1. The
     // client adds the header offset when it points at a spreadsheet line.
-    const result = validateRow(resource, columns, cells, index + 1);
-    if (result.errors.length === 0) accepted.push(result.raw);
-    else errors.push(...result.errors);
+    const rowNumber = index + 1;
+    const result = validateRow(resource, columns, cells, rowNumber);
+    // Every row is kept, not only the good ones — the client renders the file
+    // as a grid and needs the rows it is going to paint red.
+    rows.push(result.raw);
+    if (result.errors.length > 0) {
+      errors.push(...result.errors);
+      invalidRows.add(rowNumber);
+    }
   });
 
-  return { accepted, errors, totalRows: dataRows.length };
+  const uniqueBy = resource.import?.uniqueBy;
+  if (uniqueBy && uniqueBy.length > 0) {
+    const duplicates = flagInFileDuplicates(rows, uniqueBy, invalidRows);
+    for (const error of duplicates) {
+      errors.push(error);
+      invalidRows.add(error.row);
+    }
+  }
+
+  return {
+    columnKeys: columns.filter((c): c is ColumnDef => c !== null).map((c) => c.key),
+    rows,
+    errors,
+    invalidRows,
+  };
 }
 
+/**
+ * Marks rows whose natural key already exists in the database.
+ *
+ * Separate from [analyzeImport] because it is the one check that needs a query.
+ * One query for the whole batch — see [TransferImportSpec.findExisting].
+ *
+ * A resource that declares `uniqueBy` but no `findExisting` gets in-file
+ * duplicate detection only, and that is a legitimate configuration: catching
+ * the paste-twice mistake is most of the value, and a unique index will still
+ * refuse the rest at commit time.
+ */
+async function flagDatabaseDuplicates(
+  resource: TransferResource,
+  ctx: TransferContext,
+  analysis: ImportAnalysis,
+): Promise<ImportRowError[]> {
+  const spec = resource.import;
+  const uniqueBy = spec?.uniqueBy;
+  if (!spec?.findExisting || !uniqueBy || uniqueBy.length === 0) return [];
+
+  const candidates = analysis.rows
+    .map((raw, index) => ({ raw, rowNumber: index + 1 }))
+    .filter(({ rowNumber }) => !analysis.invalidRows.has(rowNumber))
+    .map(({ raw, rowNumber }) => ({ rowNumber, raw, key: duplicateKey(raw, uniqueBy) }))
+    .filter(({ key }) => !isBlankKey(key));
+
+  if (candidates.length === 0) return [];
+
+  const existing = await spec.findExisting(ctx, [...new Set(candidates.map((c) => c.key))]);
+  if (existing.size === 0) return [];
+
+  const policy = spec.onDuplicate ?? 'error';
+  // `update` means the resource's `commit` upserts, so an existing record is
+  // not a problem at all and nothing is reported.
+  if (policy === 'update') return [];
+
+  return candidates
+    .filter(({ key }) => existing.has(key))
+    .map(({ rowNumber, raw }) => ({
+      row: rowNumber,
+      column: uniqueBy[0] ?? null,
+      code: 'duplicate_in_database',
+      message:
+        policy === 'skip'
+          ? 'Already exists — this row will be skipped'
+          : 'A record with this value already exists',
+      value: (raw[uniqueBy[0] ?? ''] ?? '').slice(0, 100),
+      // `skip` is the configured policy working as intended, not the user's
+      // mistake. Painting it the same red as a broken phone number would make
+      // a correct import look like it failed.
+      severity: policy === 'skip' ? ('warning' as const) : ('error' as const),
+    }));
+}
+
+/**
+ * Phase one, from an uploaded file.
+ *
+ * `mode=validate` with a multipart body. The file is parsed into a text matrix
+ * and handed to [validateMatrix], which is also what the edit loop uses — so a
+ * row cannot be judged one way on upload and another way after the user touched
+ * a cell.
+ */
 export async function validateImport(
   resource: TransferResource,
   ctx: TransferContext,
   file: { buffer: Buffer; originalname: string },
   format: TransferFormat,
 ): Promise<ImportValidateReport> {
-  if (!resource.import) {
-    throw new BusinessError(400, `"${resource.name}" does not support import`);
-  }
+  requireImportable(resource);
   if (!resource.importFormats.includes(format)) {
     throw new ValidationError({ format: [`"${format}" is not importable for "${resource.name}"`] });
   }
 
   const matrix = await toMatrix(file.buffer, format);
-  const { accepted, errors, totalRows } = analyzeImport(resource, matrix);
+  return validateMatrix(resource, ctx, matrix);
+}
 
-  const truncated = errors.length > MAX_REPORTED_ROW_ERRORS;
+/**
+ * Phase one again, from **rows the user edited in the app**.
+ *
+ * `mode=validate` with a JSON body. This is what closes the loop: upload → see
+ * the red cells → fix them in the grid → re-check → import. Without it the only
+ * way to correct a file is to leave the app, edit in Excel, and upload again —
+ * which for three bad cells in five hundred rows is the reason people give up
+ * on imports.
+ *
+ * It goes through the **same** [validateMatrix] as the upload path, on purpose.
+ * A separate "re-validate" path would be a second copy of the rules, and the
+ * two would drift until the app accepted rows the upload refused.
+ */
+export function validateEditedRows(
+  resource: TransferResource,
+  ctx: TransferContext,
+  columns: string[],
+  rows: Array<Record<string, unknown>>,
+): Promise<ImportValidateReport> {
+  requireImportable(resource);
+
+  if (columns.length === 0) {
+    throw new ValidationError({ columns: ['At least one column is required'] });
+  }
+  if (rows.length > MAX_IMPORT_ROWS) {
+    throw new PayloadTooLargeError(
+      `This import has ${rows.length} rows; the limit is ${MAX_IMPORT_ROWS}`,
+      { row_count: rows.length, max_rows: MAX_IMPORT_ROWS },
+      'import_too_large',
+    );
+  }
+
+  // Rebuilt into the same header-plus-cells matrix a file produces, so there is
+  // exactly one code path from here on. Everything is stringified because the
+  // grid edits text — and because a client that sent `{"count": 5}` and one
+  // that sent `{"count": "5"}` must not get different answers.
+  const matrix: string[][] = [
+    columns,
+    ...rows.map((row) =>
+      columns.map((key) => {
+        const value = row[key];
+        return value === null || value === undefined ? '' : String(value);
+      }),
+    ),
+  ];
+
+  return validateMatrix(resource, ctx, matrix);
+}
+
+/** The single implementation both entry points share. */
+async function validateMatrix(
+  resource: TransferResource,
+  ctx: TransferContext,
+  matrix: string[][],
+): Promise<ImportValidateReport> {
+  const analysis = analyzeImport(resource, matrix);
+
+  // The database check runs after the cheap ones, and only over rows that
+  // survived them — no point asking whether a row with no name already exists.
+  const dbDuplicates = await flagDatabaseDuplicates(resource, ctx, analysis);
+  for (const error of dbDuplicates) {
+    analysis.errors.push(error);
+    if (error.severity === 'error') analysis.invalidRows.add(error.row);
+  }
+
+  // `warning` rows (duplicates under `skip`) are excluded from the write but
+  // are not the user's problem to fix — so they are counted separately rather
+  // than folded into either bucket.
+  const skippedRows = new Set(
+    dbDuplicates.filter((e) => e.severity === 'warning').map((e) => e.row),
+  );
+
+  const accepted = analysis.rows.filter((_, index) => {
+    const rowNumber = index + 1;
+    return !analysis.invalidRows.has(rowNumber) && !skippedRows.has(rowNumber);
+  });
+
+  const truncatedErrors = analysis.errors.length > MAX_REPORTED_ROW_ERRORS;
+  const truncatedRows = analysis.rows.length > MAX_PREVIEW_ROWS;
 
   // A token is issued only when something can actually be written. Handing one
   // back for zero valid rows invites a commit that reports "inserted: 0" as a
@@ -262,11 +515,28 @@ export async function validateImport(
   return {
     token,
     expires_in: TOKEN_TTL_SECONDS,
-    total_rows: totalRows,
+    total_rows: analysis.rows.length,
     valid_rows: accepted.length,
-    errors: truncated ? errors.slice(0, MAX_REPORTED_ROW_ERRORS) : errors,
-    truncated_errors: truncated,
+    errors: truncatedErrors
+      ? analysis.errors.slice(0, MAX_REPORTED_ROW_ERRORS)
+      : analysis.errors,
+    truncated_errors: truncatedErrors,
+    columns: analysis.columnKeys,
+    // Empty rather than partial past the cap: a grid silently missing rows 2001
+    // and up would have the user editing a file they cannot see all of.
+    rows: truncatedRows ? [] : analysis.rows,
+    truncated_rows: truncatedRows,
   };
+}
+
+function requireImportable(resource: TransferResource): void {
+  if (!resource.import) {
+    throw new BusinessError(
+      400,
+      `"${resource.name}" does not support import`,
+      'transfer_import_unsupported',
+    );
+  }
 }
 
 // ─── Staging ─────────────────────────────────────────────────────────────────
@@ -305,7 +575,11 @@ export async function commitImport(
   token: string,
 ): Promise<ImportCommitReport> {
   if (!resource.import) {
-    throw new BusinessError(400, `"${resource.name}" does not support import`);
+    throw new BusinessError(
+      400,
+      `"${resource.name}" does not support import`,
+      'transfer_import_unsupported',
+    );
   }
 
   const staged = await db
@@ -325,11 +599,16 @@ export async function commitImport(
     .limit(1);
 
   const record = staged[0];
-  if (!record) throw new NotFoundError('This import has expired or was already used');
+  // `BusinessError`, not `NotFoundError`, for the one reason that matters to the
+  // person reading it: only the former carries a `messageKey`, and this sentence
+  // is read by an end user rather than redrawn by the client. Without one it
+  // arrived as English text inside an Arabic screen (reported 2026-08-13). The
+  // status stays 404 — the token genuinely is not there.
+  if (!record) throw importGoneError();
 
   if (record.expires_at.getTime() < Date.now()) {
     await db.delete(importStagingTable).where(eq(importStagingTable.token, token));
-    throw new NotFoundError('This import has expired or was already used');
+    throw importGoneError();
   }
 
   const rawRows = record.rows as RawRow[];
@@ -363,7 +642,57 @@ export async function commitImport(
   // effect on the database is now unknown.
   await db.delete(importStagingTable).where(eq(importStagingTable.token, token));
 
-  const counts = await resource.import.commit(ctx, typedRows);
+  try {
+    const counts = await resource.import.commit(ctx, typedRows);
+    return { ...counts, failed };
+  } catch (err: unknown) {
+    // A collision here is **expected**, not exceptional, and it has to read that
+    // way. `findExisting` runs during validate, so between the review and this
+    // write there is a window: another admin can create the same branch, and a
+    // resource that declares no `findExisting` at all relies on the unique index
+    // as its only duplicate check. Either way the row that arrives is one the
+    // database refuses.
+    //
+    // Left to propagate, that is a 500 — "something went wrong" for a situation
+    // the user can act on in one step. The transaction inside `commit` has
+    // already rolled the whole batch back, so what is true is simple: nothing
+    // was written, and the file needs re-uploading to see which rows collide
+    // (validate names them per cell).
+    if (isUniqueViolation(err)) {
+      throw new BusinessError(
+        409,
+        'Some rows collide with records that already exist. Nothing was imported — upload the file again to see which rows.',
+        'import_conflict',
+      );
+    }
+    throw err;
+  }
+}
 
-  return { ...counts, failed };
+/** 404 with a key — see the call site for why this is not `NotFoundError`. */
+function importGoneError(): BusinessError {
+  return new BusinessError(
+    404,
+    'This import has expired or was already used',
+    'import_token_gone',
+  );
+}
+
+/**
+ * A `23505` from anywhere under the resource's `commit`.
+ *
+ * The code is checked on the error **and on its cause**: the pg driver's own
+ * `DatabaseError` carries it directly, while a driver or ORM that wraps its
+ * errors puts the original one layer down. Matching on the message text instead
+ * would break the first time a deployment ran Postgres in another locale.
+ */
+function isUniqueViolation(err: unknown): boolean {
+  const code = (candidate: unknown): unknown =>
+    typeof candidate === 'object' && candidate !== null
+      ? (candidate as { code?: unknown }).code
+      : undefined;
+
+  if (code(err) === '23505') return true;
+  const cause = typeof err === 'object' && err !== null ? (err as { cause?: unknown }).cause : undefined;
+  return code(cause) === '23505';
 }

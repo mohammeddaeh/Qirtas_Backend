@@ -56,3 +56,34 @@ branchesRouter.patch(
   validate(updateBranchBodySchema, 'body'),
   asyncHandler(branchesController.updateBranch),
 );
+
+// Destroys a branch nothing has ever pointed at. Guarded by `branches.manage`
+// alone — there is nothing to weigh when nothing references the row, so it
+// answers to the same permission that created it a minute earlier.
+branchesRouter.delete(
+  '/:id',
+  requirePermission('branches.manage'),
+  validate(branchIdParamsSchema, 'params'),
+  asyncHandler(branchesController.deleteBranch),
+);
+
+// Retiring a branch that HAS a past needs BOTH permissions, and the second is
+// the point: `branches.manage` belongs to whoever runs branches, while deciding
+// that a place people worked in should stop appearing anywhere is a different
+// call. Two middlewares rather than one combined key so the everyday half stays
+// the same everyday key.
+branchesRouter.post(
+  '/:id/archive',
+  requirePermission('branches.manage'),
+  requirePermission('records.archive'),
+  validate(branchIdParamsSchema, 'params'),
+  asyncHandler(branchesController.archiveBranch),
+);
+
+branchesRouter.post(
+  '/:id/unarchive',
+  requirePermission('branches.manage'),
+  requirePermission('records.archive'),
+  validate(branchIdParamsSchema, 'params'),
+  asyncHandler(branchesController.unarchiveBranch),
+);

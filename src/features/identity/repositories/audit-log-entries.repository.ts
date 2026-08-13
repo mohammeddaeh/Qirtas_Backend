@@ -21,6 +21,26 @@ export async function insert(data: NewAuditLogEntryRow): Promise<AuditLogEntryRo
 }
 
 /**
+ * How many entries this person is the actor of — the hard floor under user
+ * deletion.
+ *
+ * `user_id` is `RESTRICT`, and deliberately so: an audit trail whose actor
+ * column could be emptied by deleting the actor is not an audit trail. The
+ * practical consequence is that anyone who has ever performed a recorded action
+ * — including their own sign-in — can never be hard-deleted, no matter how
+ * empty their assignment history looks. `deleteUser` checks this so the refusal
+ * arrives as a sentence naming the reason, and points at archiving instead,
+ * rather than surfacing as a foreign-key error from the driver.
+ */
+export async function countByActor(userId: number): Promise<number> {
+  const rows = await db
+    .select({ value: sql<number>`count(*)` })
+    .from(auditLogEntriesTable)
+    .where(eq(auditLogEntriesTable.user_id, userId));
+  return Number(rows[0]?.value ?? 0);
+}
+
+/**
  * The actor is joined rather than resolved by the caller for the same reason
  * assignments join their role name: "user 3 renamed this" is not a sentence a
  * reader can use, and fetching the user catalogue to label a page of entries

@@ -32,6 +32,9 @@ export const AUDIT = {
   userDisable: 'user.disable',
   userReactivate: 'user.reactivate',
   userRegistrationDecide: 'user.registration.decide',
+  userArchive: 'user.archive',
+  userUnarchive: 'user.unarchive',
+  userDelete: 'user.delete',
 
   // — Assignments (where a person actually sits) —
   assignmentCreate: 'assignment.create',
@@ -41,11 +44,16 @@ export const AUDIT = {
   // — Branches —
   branchCreate: 'branch.create',
   branchUpdate: 'branch.update',
+  branchArchive: 'branch.archive',
+  branchUnarchive: 'branch.unarchive',
+  branchDelete: 'branch.delete',
 
   // — Roles —
   roleCreate: 'role.create',
   roleUpdate: 'role.update',
   roleDelete: 'role.delete',
+  roleArchive: 'role.archive',
+  roleUnarchive: 'role.unarchive',
   roleDeactivate: 'role.deactivate',
   roleReactivate: 'role.reactivate',
   roleLevelUpdate: 'role.level.update',

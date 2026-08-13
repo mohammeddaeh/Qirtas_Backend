@@ -418,8 +418,9 @@ async function seedPendingUsers(actor: RequestActorContext, branchIds: number[])
         requested_branch_id: branchIds[def.branchIndex],
       },
       // Seeding has no HTTP request behind it. `lang` only picks the wording of
-      // a verification email that is never sent here — demo accounts are marked
-      // verified below, and the seed runs with no mail transport configured.
+      // a verification email that never leaves this process: `seed.ts` composes
+      // the auth engine with a transport that reports `no_transport`, and the
+      // accounts are marked verified below anyway.
       { ipAddress: null, deviceInfo: 'seed:demo-arabic-data', lang: 'ar' },
     );
     created++;

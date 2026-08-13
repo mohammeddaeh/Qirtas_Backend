@@ -17,6 +17,15 @@ export function findMany(
   filter: UsersFilterQuery,
 ): Promise<{ rows: UserRow[]; total: number }> {
   const conditions: SQL[] = [];
+  // Always applied: `archived` picks which set is being browsed, and every
+  // other filter narrows inside it. An archived account is `disabled` too, so
+  // without this the "معطَّل" status filter would quietly resurface every
+  // account an admin has retired.
+  conditions.push(
+    filter.archived === true
+      ? sql`${usersTable.archived_at} IS NOT NULL`
+      : sql`${usersTable.archived_at} IS NULL`,
+  );
   if (filter.status !== undefined) conditions.push(eq(usersTable.status, filter.status));
   if (filter.is_admin !== undefined) conditions.push(eq(usersTable.is_admin, filter.is_admin));
   if (filter.requested_role_id !== undefined) {
@@ -86,9 +95,26 @@ export async function existsByEmailExcluding(email: string, excludingId: number)
   return (rows[0]?.value ?? 0) > 0;
 }
 
+/** People on the books — archived accounts excluded, so the dashboard's headcount matches the list it links to. */
 export async function countAll(): Promise<number> {
-  const rows = await db.select({ value: count() }).from(usersTable);
+  const rows = await db
+    .select({ value: count() })
+    .from(usersTable)
+    .where(sql`${usersTable.archived_at} IS NULL`);
   return rows[0]?.value ?? 0;
+}
+
+/**
+ * Destroys the row. Reachable only after the service has established that this
+ * account has no assignment, no ownership and no audit entry to its name.
+ *
+ * `user_role_assignments` and `ownerships` cascade, so the check is what stops
+ * a "delete" from silently taking someone's employment record with it — the
+ * database would not object. `audit_log_entries.user_id` is `RESTRICT` and does
+ * object, which is why it is checked first and named in the refusal.
+ */
+export async function deleteById(id: number): Promise<void> {
+  await db.delete(usersTable).where(eq(usersTable.id, id));
 }
 
 export async function insert(data: NewUserRow): Promise<UserRow> {

@@ -87,6 +87,18 @@ export async function deleteRole(req: Request, res: Response): Promise<void> {
   ok(res, null, 'Deleted');
 }
 
+export async function archiveRole(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  ok(res, await rolesService.archiveRole(actor, id));
+}
+
+export async function unarchiveRole(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  ok(res, await rolesService.unarchiveRole(actor, id));
+}
+
 export async function deactivateRole(req: Request, res: Response): Promise<void> {
   const actor = buildActorContext(req, requireActorId(req));
   const { id } = req.params as unknown as { id: number };

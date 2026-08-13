@@ -142,6 +142,25 @@ export async function reactivateUser(req: Request, res: Response): Promise<void>
   ok(res, user);
 }
 
+export async function deleteUser(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  await usersService.deleteUser(actor, id);
+  ok(res, null, 'Deleted');
+}
+
+export async function archiveUser(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  ok(res, await usersService.archiveUser(actor, id));
+}
+
+export async function unarchiveUser(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  ok(res, await usersService.unarchiveUser(actor, id));
+}
+
 // ── Password reset & change ──────────────────────────────────────────────────
 //
 // MOVED to `features/auth` (2026-08-11). These three are re-exported aliases,

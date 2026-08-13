@@ -1,4 +1,4 @@
-import { eq, asc, desc, and, count, gt, sql, type SQL } from 'drizzle-orm';
+import { eq, asc, desc, and, count, gt, inArray, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findManyPaginated, findOneById } from '../../../core/db/crud-helpers.js';
 import { likeTerm } from '../../../core/db/like-term.js';
@@ -19,6 +19,14 @@ export function findMany(
   filter: BranchesFilterQuery,
 ): Promise<{ rows: BranchRow[]; total: number }> {
   const conditions: SQL[] = [];
+  // Applied before anything else and never absent: every other filter narrows
+  // within a set that has already had the archive taken out of it (or, when
+  // asked, consists only of it).
+  conditions.push(
+    filter.archived === true
+      ? sql`${branchesTable.archived_at} IS NOT NULL`
+      : sql`${branchesTable.archived_at} IS NULL`,
+  );
   if (filter.status !== undefined) conditions.push(eq(branchesTable.status, filter.status));
   if (filter.is_default !== undefined) {
     conditions.push(eq(branchesTable.is_default, filter.is_default));
@@ -42,6 +50,19 @@ export function findMany(
 
 export function findById(id: number): Promise<BranchRow | undefined> {
   return findOneById<BranchRow>(branchesTable, branchesTable.id, id);
+}
+
+/**
+ * Name lookup for the uniqueness guard — searches archived rows too, and must.
+ *
+ * `branches_name_unique_idx` is a plain unique index, not partial on
+ * `archived_at`, so an archived branch still owns its name. Skipping archived
+ * rows here would let the service promise a create that the database then
+ * rejects as a constraint error, over a row the admin cannot see in any list.
+ */
+export async function findByName(name: string): Promise<BranchRow | undefined> {
+  const rows = await db.select().from(branchesTable).where(eq(branchesTable.name, name)).limit(1);
+  return rows[0];
 }
 
 /** One active assignment in a branch, flattened with the person and the role it grants. */
@@ -109,9 +130,33 @@ export async function findStaff(
   return { rows, total: totalRows[0]?.value ?? 0 };
 }
 
+/**
+ * Branches in service — the dashboard's headline count.
+ *
+ * Excludes archived rows for the same reason the list does: the number is read
+ * as "how many branches do we have", and an archive nobody was told about would
+ * silently inflate it.
+ */
 export async function countAll(): Promise<number> {
-  const rows = await db.select({ value: count() }).from(branchesTable);
+  const rows = await db
+    .select({ value: count() })
+    .from(branchesTable)
+    .where(sql`${branchesTable.archived_at} IS NULL`);
   return rows[0]?.value ?? 0;
+}
+
+/**
+ * Destroys the row. Callable only after the service has established that
+ * nothing has ever pointed at it — `user_role_assignments.branch_id` and
+ * `ownerships.branch_scope` are both `RESTRICT`, so a mistake here surfaces as
+ * a driver error rather than a sentence.
+ *
+ * `users.requested_branch_id` and `audit_log_entries.branch_context` are `SET
+ * NULL` and need no check: the first is a request whose branch no longer
+ * exists, the second an entry that keeps its own copy of what changed.
+ */
+export async function deleteById(id: number): Promise<void> {
+  await db.delete(branchesTable).where(eq(branchesTable.id, id));
 }
 
 export async function insert(data: NewBranchRow): Promise<BranchRow> {
@@ -136,10 +181,17 @@ export async function update(
 // filter drifted from the list's would quietly return a different set than the
 // screen the user was looking at.
 
-function transferWhere(search: string | undefined): SQL | undefined {
-  if (search === undefined || search.trim() === '') return undefined;
+function transferWhere(search: string | undefined): SQL {
+  // Archived rows are out of scope for export, matching the list: a spreadsheet
+  // of "our branches" that quietly carries retired ones gets re-imported into
+  // another system as live records.
+  const live = sql`${branchesTable.archived_at} IS NULL`;
+  if (search === undefined || search.trim() === '') return live;
   const term = likeTerm(search.trim());
-  return sql`(${branchesTable.name} ILIKE ${term} OR ${branchesTable.address} ILIKE ${term})`;
+  return and(
+    live,
+    sql`(${branchesTable.name} ILIKE ${term} OR ${branchesTable.address} ILIKE ${term})`,
+  )!;
 }
 
 export async function countForExport(search?: string): Promise<number> {
@@ -174,7 +226,7 @@ export async function* iterateForExport(
     const batch = await db
       .select()
       .from(branchesTable)
-      .where(scope ? and(scope, gt(branchesTable.id, lastId)) : gt(branchesTable.id, lastId))
+      .where(and(scope, gt(branchesTable.id, lastId)))
       .orderBy(asc(branchesTable.id))
       .limit(batchSize);
 
@@ -223,4 +275,41 @@ export async function insertManyFromImport(
   });
 
   return { inserted, updated: 0, skipped: 0 };
+}
+
+/**
+ * Which of these branch names already exist — one query for the whole batch.
+ *
+ * Serves duplicate detection at import time. One query rather than one per row:
+ * a 500-row file would otherwise issue 500 round trips inside a single
+ * validation request.
+ *
+ * The comparison must match `duplicateKey` exactly — trimmed, lower-cased,
+ * whitespace-collapsed — or "الفرع الرئيسي" and "الفرع الرئيسي " are two records
+ * here and one to anybody looking at the list. `lower(regexp_replace(...))` does
+ * on the database side what the engine did on the file side.
+ *
+ * ## `\\s`, not `\s` — the backslash has to survive JavaScript first
+ *
+ * This is a template literal, so `'\s+'` is not the regex `\s+`: JavaScript
+ * drops the backslash of an unrecognised escape and Postgres receives `'s+'`,
+ * a pattern matching the **letter s**. It was written that way, and the effect
+ * was silent in the worst direction — the query still ran, still returned rows,
+ * and still matched every name whose spacing was already canonical. Only a name
+ * the engine had to normalise (double space, stray tab) failed to match, so
+ * "فرع  مركز" was reported as new, passed validation with no error at all, and
+ * died at the unique index during commit — after the staging token had been
+ * spent, with a 500 where the review screen should have shown a red cell
+ * (reported 2026-08-13).
+ */
+export async function findExistingNames(keys: string[]): Promise<Set<string>> {
+  if (keys.length === 0) return new Set();
+
+  const normalised = sql`lower(regexp_replace(btrim(${branchesTable.name}), '\\s+', ' ', 'g'))`;
+  const rows = await db
+    .select({ key: normalised })
+    .from(branchesTable)
+    .where(inArray(normalised, keys));
+
+  return new Set(rows.map((r) => r.key as string));
 }

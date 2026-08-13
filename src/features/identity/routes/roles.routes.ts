@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../../../core/http/async-handler.js';
 import { validate } from '../../../core/validation/validate.js';
 import { requirePermission } from '../../../core/http/require-permission.js';
+import { publicRoute } from '../../../core/http/route-marker.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 import {
   roleIdParamsSchema,
@@ -30,7 +31,11 @@ rolesRouter.get(
 //
 // ⚠️ Must stay ABOVE `/:id`: Express matches in mount order, and `/:id` would
 // otherwise swallow this path and reject it as a non-numeric id.
-rolesRouter.get('/self-registerable', asyncHandler(rolesController.listSelfRegisterableRoles));
+rolesRouter.get(
+  '/self-registerable',
+  publicRoute,
+  asyncHandler(rolesController.listSelfRegisterableRoles),
+);
 
 rolesRouter.get(
   '/:id',
@@ -87,6 +92,25 @@ rolesRouter.delete(
   requirePermission('roles.edit'),
   validate(roleIdParamsSchema, 'params'),
   asyncHandler(rolesController.deleteRole),
+);
+
+// Retiring a role that people have actually held asks for `records.archive` on
+// top of `roles.edit` — see the same pairing on `/branches/:id/archive` for
+// why the everyday permission is not enough on its own.
+rolesRouter.post(
+  '/:id/archive',
+  requirePermission('roles.edit'),
+  requirePermission('records.archive'),
+  validate(roleIdParamsSchema, 'params'),
+  asyncHandler(rolesController.archiveRole),
+);
+
+rolesRouter.post(
+  '/:id/unarchive',
+  requirePermission('roles.edit'),
+  requirePermission('records.archive'),
+  validate(roleIdParamsSchema, 'params'),
+  asyncHandler(rolesController.unarchiveRole),
 );
 
 rolesRouter.post(

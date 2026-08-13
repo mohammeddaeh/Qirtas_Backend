@@ -39,7 +39,11 @@ export async function planTemplate(
   query: unknown,
 ): Promise<TemplatePlan> {
   if (!resource.import) {
-    throw new BusinessError(400, `"${resource.name}" does not support import`);
+    throw new BusinessError(
+      400,
+      `"${resource.name}" does not support import`,
+      'transfer_import_unsupported',
+    );
   }
 
   const parsed = templateQuerySchema.safeParse(query);

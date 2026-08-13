@@ -57,6 +57,13 @@
       "when": 1786535963466,
       "tag": "0007_tranquil_hydra",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786613906522,
+      "tag": "0008_tan_mongoose",
+      "breakpoints": true
     }
   ]
 }

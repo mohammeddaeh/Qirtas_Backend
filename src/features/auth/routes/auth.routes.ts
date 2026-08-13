@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../../../core/http/async-handler.js';
 import { validate } from '../../../core/validation/validate.js';
 import { requireAuth } from '../../../core/http/require-actor.js';
+import { publicRoute } from '../../../core/http/route-marker.js';
 import { passwordResetRateLimit } from '../../../core/middleware/password-reset-rate-limit.js';
 import { verificationRateLimit } from '../../../core/middleware/verification-rate-limit.js';
 import {
@@ -34,7 +35,7 @@ export const authRouter = Router();
  * token from the header and the service decides whether it is still alive —
  * answering 401 itself when it is not.
  */
-authRouter.post('/refresh', asyncHandler(authController.refresh));
+authRouter.post('/refresh', publicRoute, asyncHandler(authController.refresh));
 
 /** The caller's own devices. No permission needed — these are their sessions, not anyone else's. */
 authRouter.get('/sessions', requireAuth, asyncHandler(authController.listSessions));
@@ -89,6 +90,7 @@ authRouter.post(
 /** Always succeeds, registered address or not — see core/auth/services/auth.service.ts for why. */
 authRouter.post(
   '/forgot-password',
+  publicRoute,
   validate(forgotPasswordBodySchema, 'body'),
   passwordResetRateLimit,
   asyncHandler(authController.forgotPassword),
@@ -96,6 +98,7 @@ authRouter.post(
 
 authRouter.post(
   '/reset-password',
+  publicRoute,
   validate(resetPasswordBodySchema, 'body'),
   passwordResetRateLimit,
   asyncHandler(authController.resetPassword),

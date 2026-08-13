@@ -136,6 +136,29 @@ export const usersTable = pgTable('users', {
     onDelete: 'set null',
   }),
 
+  /**
+   * Retired from view without being destroyed — null means "on the books".
+   *
+   * Never set alone: archiving forces `status = 'disabled'` in the same write,
+   * so there is exactly one gate deciding who may sign in and this column is
+   * not it. A hidden row that could still open a session would be the worst of
+   * both — invisible to the admin reviewing accounts, and live.
+   *
+   * The pair is deliberate rather than redundant. `disabled` answers "may this
+   * person work?" and is a normal, browsable state: the users list has a filter
+   * for it because reinstating someone is routine. `archived_at` answers "do I
+   * ever want to see this row again?" and removes it from the default list
+   * altogether. A seasonal worker is disabled; a duplicate account created by
+   * mistake in 2024 is archived.
+   *
+   * Deletion covers only the case where nothing was ever recorded — no
+   * assignment, no ownership, and no audit entry authored by them, since
+   * `audit_log_entries.user_id` is `RESTRICT`. Anyone who has actually done
+   * something in this system is permanently undeletable by construction, which
+   * is the whole reason this column has to exist.
+   */
+  archived_at: timestamp('archived_at', { withTimezone: true }),
+
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

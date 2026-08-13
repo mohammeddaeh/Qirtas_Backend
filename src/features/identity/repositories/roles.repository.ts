@@ -32,6 +32,13 @@ export function findMany(
   actorLevel?: number | null,
 ): Promise<{ rows: RoleRow[]; total: number }> {
   const conditions: SQL[] = [];
+  // Always present: `archived` chooses which of the two catalogues you are
+  // browsing, and every other filter narrows within that choice.
+  conditions.push(
+    filter.archived === true
+      ? sql`${rolesTable.archived_at} IS NOT NULL`
+      : sql`${rolesTable.archived_at} IS NULL`,
+  );
   if (filter.category !== undefined) conditions.push(eq(rolesTable.category, filter.category));
   if (filter.is_active !== undefined) conditions.push(eq(rolesTable.is_active, filter.is_active));
   if (filter.assignable === true && actorLevel !== null && actorLevel !== undefined) {
@@ -76,7 +83,11 @@ export function findById(id: number): Promise<RoleRow | undefined> {
  * endpoint's guard — a catalog the write path does not enforce is decorative.
  */
 export function isSelfRegisterable(row: RoleRow): boolean {
-  return row.is_active && row.category !== 'system';
+  // Archived is checked here rather than only in the query above, because this
+  // predicate is also the register endpoint's write guard: a catalogue that
+  // hides a role while the write path still accepts its id lets a crafted body
+  // request the one role an admin has declared finished.
+  return row.archived_at === null && row.is_active && row.category !== 'system';
 }
 
 /**
@@ -89,7 +100,13 @@ export function findSelfRegisterable(): Promise<RoleRow[]> {
   return db
     .select()
     .from(rolesTable)
-    .where(and(eq(rolesTable.is_active, true), ne(rolesTable.category, 'system')))
+    .where(
+      and(
+        sql`${rolesTable.archived_at} IS NULL`,
+        eq(rolesTable.is_active, true),
+        ne(rolesTable.category, 'system'),
+      ),
+    )
     .orderBy(asc(rolesTable.name));
 }
 
@@ -111,8 +128,18 @@ export async function countActive(): Promise<number> {
   const result = await db
     .select({ value: count() })
     .from(rolesTable)
-    .where(eq(rolesTable.is_active, true));
+    .where(and(sql`${rolesTable.archived_at} IS NULL`, eq(rolesTable.is_active, true)));
   return result[0]?.value ?? 0;
+}
+
+/** Sets or clears `archived_at`. Split from [update] so no ordinary role edit can touch it by spreading a body. */
+export async function setArchivedAt(id: number, at: Date | null): Promise<RoleRow | undefined> {
+  const rows = await db
+    .update(rolesTable)
+    .set({ archived_at: at })
+    .where(eq(rolesTable.id, id))
+    .returning();
+  return rows[0];
 }
 
 export async function insert(data: NewRoleRow): Promise<RoleRow> {
@@ -174,10 +201,12 @@ export async function findActiveRoleIdWithExactPermissionSet(
    */
   excludeRoleId?: number,
 ): Promise<number | undefined> {
+  // Archived roles are excluded alongside inactive ones: the warning asks
+  // "does an equivalent role already exist to use instead?", and pointing the
+  // reader at a role that appears in no list is an answer they cannot act on.
+  const inService = and(sql`${rolesTable.archived_at} IS NULL`, eq(rolesTable.is_active, true));
   const activeAndNotSelf =
-    excludeRoleId === undefined
-      ? eq(rolesTable.is_active, true)
-      : and(eq(rolesTable.is_active, true), ne(rolesTable.id, excludeRoleId));
+    excludeRoleId === undefined ? inService : and(inService, ne(rolesTable.id, excludeRoleId));
 
   if (permissionKeys.length === 0) {
     const rows = await db

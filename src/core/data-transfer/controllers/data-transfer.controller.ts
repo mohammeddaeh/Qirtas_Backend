@@ -7,7 +7,11 @@ import type { TransferAction, TransferResource } from '../types.js';
 import { toWireResource } from '../descriptor.js';
 import { planExport } from '../services/export.service.js';
 import { planTemplate } from '../services/template.service.js';
-import { commitImport, validateImport } from '../services/import.service.js';
+import {
+  commitImport,
+  validateEditedRows,
+  validateImport,
+} from '../services/import.service.js';
 import { requireUploadedFile } from '../middleware/upload.js';
 
 /**
@@ -159,6 +163,32 @@ export async function importResource(req: Request, res: Response): Promise<void>
   await resource.authorize?.({ userId }, 'import');
 
   if (mode === 'validate') {
+    // Two bodies, one phase. A multipart body is the first upload; a JSON body
+    // is the same file after the user fixed cells in the app's grid. Both run
+    // the identical rules — a separate "re-validate" endpoint would be a second
+    // copy of them, and the copies would drift until the grid accepted rows the
+    // upload refused.
+    const body = req.body as { columns?: unknown; rows?: unknown } | undefined;
+
+    if (Array.isArray(body?.rows)) {
+      if (!Array.isArray(body.columns) || !body.columns.every((c) => typeof c === 'string')) {
+        throw new ValidationError({ columns: ['`columns` must be an array of column keys'] });
+      }
+      if (!body.rows.every((r) => r !== null && typeof r === 'object' && !Array.isArray(r))) {
+        throw new ValidationError({ rows: ['`rows` must be an array of objects'] });
+      }
+      ok(
+        res,
+        await validateEditedRows(
+          resource,
+          { userId },
+          body.columns as string[],
+          body.rows as Array<Record<string, unknown>>,
+        ),
+      );
+      return;
+    }
+
     const { file, format } = requireUploadedFile(req);
     ok(res, await validateImport(resource, { userId }, file, format));
     return;

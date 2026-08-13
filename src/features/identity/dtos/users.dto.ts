@@ -41,7 +41,13 @@ export const userResponseSchema = z.object({
   submitted_at: z.string(),
   decided_at: z.string().nullable(),
   decided_by_user_id: z.number().int().nullable(),
+  archived_at: z.string().nullable(),
   created_at: z.string(),
+  is_deletable: z.boolean().optional(),
+  is_archivable: z.boolean().optional(),
+  open_assignments_count: z.number().int().optional(),
+  assignments_ever_count: z.number().int().optional(),
+  audit_entries_count: z.number().int().optional(),
   /** List responses only — see `WireUser.current_posts`. */
   current_posts: z
     .array(
@@ -92,7 +98,51 @@ export interface WireUser {
   submitted_at: string;
   decided_at: string | null;
   decided_by_user_id: number | null;
+  /**
+   * When this account was retired from view, or null while it is on the books.
+   *
+   * Sent on every user, list included, because it is a plain column and a
+   * client holding an archived record from any route has no other way to know
+   * it. Always accompanied by `status: 'disabled'` — archiving writes both, so
+   * sign-in has exactly one gate and this is not it.
+   */
+  archived_at: string | null;
   created_at: string;
+
+  /**
+   * Whether this account can be destroyed — nothing has EVER been recorded
+   * against it: no assignment, no ownership, and no audit entry it authored.
+   *
+   * The last condition is the one that decides most cases, and it is invisible
+   * on screen: `audit_log_entries.user_id` is `RESTRICT`, so a person who ever
+   * signed in has an entry to their name and can never be hard-deleted. What
+   * this really identifies is an account created by mistake and never used.
+   * `GET /:id` only — each field below is an aggregate.
+   */
+  is_deletable?: boolean;
+
+  /**
+   * Whether this account can be archived — holds no open assignment and no open
+   * ownership, is not root-protected.
+   *
+   * The exit for everyone [is_deletable] excludes, which is nearly everybody.
+   */
+  is_archivable?: boolean;
+
+  /** Open assignments — what archiving is blocked by. End or transfer them first. */
+  open_assignments_count?: number;
+  /** Assignment rows ever, open and closed — what deletion is blocked by. */
+  assignments_ever_count?: number;
+  /**
+   * Audit entries this person performed.
+   *
+   * Sent so the refusal can name the real reason. An account with zero
+   * assignments looks obviously deletable to a reader, and is not if it once
+   * signed in — without this number the screen could only say "cannot delete"
+   * and leave them re-checking a staff list that was never the obstacle.
+   */
+  audit_entries_count?: number;
+
   /**
    * Where this person currently works — role plus branch, one entry per active
    * assignment. **List responses only** (`GET /users`); absent elsewhere.
@@ -119,8 +169,17 @@ export interface WireUserPost {
   branch_name: string | null;
 }
 
+/** The `GET /:id`-only verdicts and counts — see the fields on [WireUser] for what each decides. */
+export interface UserRetirementFacts {
+  is_deletable: boolean;
+  is_archivable: boolean;
+  open_assignments_count: number;
+  assignments_ever_count: number;
+  audit_entries_count: number;
+}
+
 /** Row -> wire. Never includes password_hash/reset tokens. */
-export function toWireUser(row: UserRow): WireUser {
+export function toWireUser(row: UserRow, facts?: UserRetirementFacts): WireUser {
   return {
     id: row.id,
     first_name: row.first_name,
@@ -146,7 +205,11 @@ export function toWireUser(row: UserRow): WireUser {
     submitted_at: row.submitted_at.toISOString(),
     decided_at: row.decided_at ? row.decided_at.toISOString() : null,
     decided_by_user_id: row.decided_by_user_id,
+    archived_at: row.archived_at?.toISOString() ?? null,
     created_at: row.created_at.toISOString(),
+    // Spread whole or omitted: a list row reporting `open_assignments_count: 0`
+    // would be asserting an unstaffed person when nobody asked the question.
+    ...(facts ?? {}),
   };
 }
 
@@ -318,6 +381,15 @@ export const usersFilterQuerySchema = z
     'pending_verification',
   ]).optional(),
     is_admin: queryBooleanSchema.optional(),
+    /**
+     * Archived accounts are excluded unless this asks for them, and `true`
+     * returns ONLY archived accounts.
+     *
+     * Not covered by `status`: archiving forces `disabled`, so without this
+     * every retired account would reappear the moment someone filtered by
+     * "معطَّل" — the one filter an admin uses to review who is off the books.
+     */
+    archived: queryBooleanSchema.optional(),
     requested_role_id: z.coerce.number().int().positive().optional(),
     /**
      * `true` → only users holding NO active assignment; `false` → only users

@@ -136,6 +136,55 @@ export async function countActiveForBranch(branchId: number): Promise<number> {
   return Number(rows[0]?.value ?? 0);
 }
 
+// ─── Retirement counts ───────────────────────────────────────────────────────
+//
+// What deleting or archiving a branch / role / user would run into. Each pair
+// answers the same two questions about a different owner column, and the
+// difference between them is the whole distinction the feature rests on:
+//
+//   …Ever  — has ANYTHING ever pointed here? Zero means the row is genuinely
+//            unused and can be deleted outright, because nothing is lost.
+//   …Open  — is anything pointing here RIGHT NOW? Zero means it can be
+//            archived: closed rows stay, and they keep resolving to a real
+//            branch/role/person, so nobody's history develops a hole.
+//
+// These count assignment ROWS and ignore user status on purpose, unlike
+// `countActiveHoldersOfRole` below. A suspended employee still occupies the
+// post; retiring the branch or role under them would leave an open assignment
+// pointing at something the app no longer shows anywhere.
+
+export async function countAssignmentsEverForBranch(branchId: number): Promise<number> {
+  const rows = await db
+    .select({ value: sql<number>`count(*)` })
+    .from(userRoleAssignmentsTable)
+    .where(eq(userRoleAssignmentsTable.branch_id, branchId));
+  return Number(rows[0]?.value ?? 0);
+}
+
+export async function countAssignmentsEverForUser(userId: number): Promise<number> {
+  const rows = await db
+    .select({ value: sql<number>`count(*)` })
+    .from(userRoleAssignmentsTable)
+    .where(eq(userRoleAssignmentsTable.user_id, userId));
+  return Number(rows[0]?.value ?? 0);
+}
+
+export async function countOpenForUser(userId: number): Promise<number> {
+  const rows = await db
+    .select({ value: sql<number>`count(*)` })
+    .from(userRoleAssignmentsTable)
+    .where(and(eq(userRoleAssignmentsTable.user_id, userId), isActiveClause));
+  return Number(rows[0]?.value ?? 0);
+}
+
+export async function countOpenForRole(roleId: number): Promise<number> {
+  const rows = await db
+    .select({ value: sql<number>`count(*)` })
+    .from(userRoleAssignmentsTable)
+    .where(and(eq(userRoleAssignmentsTable.role_id, roleId), isActiveClause));
+  return Number(rows[0]?.value ?? 0);
+}
+
 /**
  * How many **distinct active people** currently hold this role, anywhere.
  *

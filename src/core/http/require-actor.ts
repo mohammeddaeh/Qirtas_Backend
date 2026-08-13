@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { UnauthorizedError } from './api-error.js';
+import { markAccess } from './route-marker.js';
 
 /**
  * Reads the authenticated actor from req.user (populated by
@@ -24,6 +25,11 @@ export function requireAuth(req: Request, _res: Response, next: NextFunction): v
   requireActorId(req);
   next();
 }
+
+// Classifies every route it guards as "any signed-in account", so
+// `npm run check:permissions` can tell a route deliberately left open to all
+// members from one whose guard was forgotten. See `route-marker.ts`.
+markAccess(requireAuth, { kind: 'authenticated' });
 
 /** Shape shared by every service call that needs to write an AuditLogEntry. */
 export interface RequestActorContext {
