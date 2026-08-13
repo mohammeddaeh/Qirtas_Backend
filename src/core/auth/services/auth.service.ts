@@ -1,7 +1,7 @@
 import { BusinessError, ForbiddenError, UnauthorizedError } from '../../http/api-error.js';
 import type { Lang } from '../../i18n/messages.js';
 import { accountStore, type AuthAccount } from '../ports/account-store.js';
-import { emailSender } from '../ports/email-sender.js';
+import { emailSender, type EmailDeliveryFailure } from '../ports/email-sender.js';
 import { getAuthProvider } from '../ports/auth-provider.js';
 import { AUTH_EVENT, recordSecurityEvent } from '../ports/security-event-sink.js';
 import { authConfig, isEmailVerificationEnabled } from '../config/auth-config.js';
@@ -196,11 +196,30 @@ export async function refresh(token: string, origin: RequestOrigin): Promise<Ref
  * The mail is sent after the code is stored, never before: a code that reaches
  * the user but not the database is unverifiable, and the reverse is merely a
  * resend away.
+ *
+ * ## Why the return value distinguishes three refusals
+ *
+ * `sent: false` alone cannot be acted on. "Verification is off", "wait 40
+ * seconds" and "the mail server rejected it" are three different situations,
+ * and the authenticated resend endpoint owes the caller a different answer for
+ * each. Collapsing them is how `POST /auth/resend-verification` came to answer
+ * "code sent" for messages the provider had refused outright.
+ *
+ * The failure code stays internal — it names transports, not user problems.
+ * Callers translate it into their own vocabulary; none of them forward it.
  */
+export interface VerificationSendResult {
+  sent: boolean;
+  /** Set when the refusal was the resend cooldown, so an authenticated caller can say how long. */
+  retryAfterSeconds?: number;
+  /** Set when a code was issued but the transport refused it. Diagnostic only — never returned to a client. */
+  deliveryFailure?: EmailDeliveryFailure;
+}
+
 export async function sendEmailVerification(
   account: AuthAccount,
   origin: RequestOrigin,
-): Promise<{ sent: boolean; retryAfterSeconds?: number }> {
+): Promise<VerificationSendResult> {
   if (!isEmailVerificationEnabled()) return { sent: false };
   if (account.emailVerifiedAt !== null) return { sent: false };
 
@@ -208,15 +227,20 @@ export async function sendEmailVerification(
   if (wait > 0) return { sent: false, retryAfterSeconds: wait };
 
   const { code } = await verificationService.issueCode(account.id, 'email_verify');
-  await emailSender().send(buildVerifyEmail(account.email, origin.lang, code));
+  const delivery = await emailSender().send(buildVerifyEmail(account.email, origin.lang, code));
 
+  // Recorded from the delivery result, not from having reached this line. The
+  // audit log is read to answer "did we send it?" — an entry written whatever
+  // happened answers that question wrongly, and confidently.
   await recordSecurityEvent({
-    event: AUTH_EVENT.emailVerificationSent,
+    event: delivery.ok ? AUTH_EVENT.emailVerificationSent : AUTH_EVENT.emailVerificationSendFailed,
     accountId: account.id,
     email: account.email,
     ipAddress: origin.ipAddress,
+    ...(delivery.ok ? {} : { details: { reason: delivery.errorCode } }),
   });
 
+  if (!delivery.ok) return { sent: false, deliveryFailure: delivery.errorCode };
   return { sent: true };
 }
 
@@ -299,13 +323,22 @@ export async function requestPasswordReset(email: string, origin: RequestOrigin)
   if (wait > 0) return;
 
   const { code } = await verificationService.issueCode(account.id, 'password_reset');
-  await emailSender().send(buildPasswordResetEmail(account.email, origin.lang, code));
+  const delivery = await emailSender().send(
+    buildPasswordResetEmail(account.email, origin.lang, code),
+  );
 
+  // The event tells the truth; the response does not change either way, and
+  // must not. Every early `return` above is silent for the same reason this
+  // branch is invisible to the caller: an endpoint that behaves differently for
+  // a real address is a membership oracle regardless of *which* difference it
+  // is. So the operator learns the mail failed, and the requester learns
+  // exactly what an unregistered address learns.
   await recordSecurityEvent({
-    event: AUTH_EVENT.passwordResetRequested,
+    event: delivery.ok ? AUTH_EVENT.passwordResetRequested : AUTH_EVENT.passwordResetSendFailed,
     accountId: account.id,
     email: account.email,
     ipAddress: origin.ipAddress,
+    ...(delivery.ok ? {} : { details: { reason: delivery.errorCode } }),
   });
 }
 

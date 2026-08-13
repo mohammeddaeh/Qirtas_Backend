@@ -10,6 +10,7 @@ import { isEmailVerificationEnabled } from '../../../core/auth/config/auth-confi
 import { qirtasAccountStore } from '../repositories/account-store.impl.js';
 import * as usersRepository from '../repositories/users.repository.js';
 import * as rolesRepository from '../repositories/roles.repository.js';
+import type { RoleRow } from '../schemas/roles.schema.js';
 import * as assignmentsRepository from '../repositories/user-role-assignments.repository.js';
 import * as ownershipsRepository from '../repositories/ownerships.repository.js';
 import * as branchesRepository from '../repositories/branches.repository.js';
@@ -37,12 +38,30 @@ const MAX_OWNERSHIP_PERCENTAGE = 100;
 /** Renameable afterwards — this is a starting point, not a fixed identity. */
 const DEFAULT_BRANCH_NAME = 'الفرع الرئيسي';
 
+/**
+ * Every row carries `current_posts` — where that person works right now.
+ *
+ * Costs exactly one extra query per page (never per row), and it is what turns
+ * a list of names into a list of decisions: picking someone to fill a post
+ * means knowing whether you are placing an unassigned person or pulling a
+ * cashier out of another branch.
+ */
 export async function listUsers(
   params: PaginationParams,
   filter: UsersFilterQuery,
 ): Promise<Paginated<WireUser>> {
   const { rows, total } = await usersRepository.findMany(params, filter);
-  return paginated(rows.map(toWireUser), total, params);
+  const postsByUser = await assignmentsRepository.findActivePostsForUsers(rows.map((r) => r.id));
+
+  return paginated(
+    // `?? []` and never `undefined`: an empty array says "belongs nowhere",
+    // which the picker renders as «بلا منصب». Omitting the field would say
+    // "this response does not carry posts" — a different claim the client
+    // cannot draw anything from.
+    rows.map((row) => ({ ...toWireUser(row), current_posts: postsByUser.get(row.id) ?? [] })),
+    total,
+    params,
+  );
 }
 
 export async function getUserById(id: number): Promise<WireUser> {
@@ -110,16 +129,40 @@ export async function updateUser(
 }
 
 /**
+ * Refuses a requested role that is not in the self-registration catalog
+ * (`GET /roles/self-registerable`) — same predicate, so the write path enforces
+ * exactly what the public list offers.
+ *
+ * The list is the only place a visitor picks from, but nothing stops a crafted
+ * body naming any id at all. Without this, a stranger could file a request for
+ * Super Admin: harmless in itself (an admin still decides, and the account
+ * holds no assignment until then), but it puts a line into the review queue
+ * that exists only to be rejected.
+ */
+function assertSelfRegisterable(role: RoleRow): void {
+  if (rolesRepository.isSelfRegisterable(role)) return;
+  throw new BusinessError(
+    422,
+    'This role cannot be requested at registration',
+    'role_not_self_registerable',
+  );
+}
+
+/**
  * Single self-registration entry point for every internal account (staff,
- * and optionally partner in the same request). Always lands in
- * pending_approval with zero active UserRoleAssignment — the account exists
- * but can reach nothing protected until an admin decides.
+ * and optionally partner in the same request). Lands in pending_verification
+ * (or pending_approval where verification is off) with zero active
+ * UserRoleAssignment — the account exists but can reach nothing protected
+ * until an admin decides.
  * (users_roles.md — Feature: Internal Self-Registration & Approval, 2026-07-09)
+ *
+ * Returns the same shape as `login()`, session included — see the block above
+ * the return statement for why.
  */
 export async function registerStaff(
   body: RegisterStaffBody,
   origin: authService.RequestOrigin,
-): Promise<WireUser> {
+): Promise<LoginResult> {
   const existing = await usersRepository.findByEmail(body.email);
   if (existing) {
     throw new BusinessError(409, 'An account with this email already exists', 'email_taken');
@@ -127,6 +170,7 @@ export async function registerStaff(
 
   const role = await rolesRepository.findById(body.requested_role_id);
   if (!role) throw new NotFoundError('Requested role not found');
+  assertSelfRegisterable(role);
 
   // ## Where a new registration lands, and why
   //
@@ -163,9 +207,22 @@ export async function registerStaff(
   // the database is unverifiable, while the reverse costs one resend.
   await authService.sendEmailVerification(account, origin);
 
-  const row = await usersRepository.findById(account.id);
-  if (!row) throw new NotFoundError('User not found');
-  return toWireUser(row);
+  // ## Why registration hands back a session
+  //
+  // The code screen is inside the app, and `POST /auth/verify-email` is
+  // `requireAuth` — so without a session here, the one thing this response asks
+  // the user to do is the one thing they cannot do. The client used to bridge
+  // the gap by sending them to the sign-in screen to type the credentials they
+  // had just typed, which is the same round trip with an extra form.
+  //
+  // It grants nothing new: this account could call `POST /users/login` a second
+  // later and be handed exactly this token — an unverified/unapproved account
+  // holds no active assignment, so `permission_keys` is empty and the session
+  // unlocks only the code screen. Issuing it through `login()` rather than
+  // creating a session directly is deliberate: the sign-in refusals
+  // (`AccountStore.canSignIn`), the security event, and the permission lookup
+  // stay in one place, so this path can never drift from the real one.
+  return login({ email: body.email, password: body.password }, origin);
 }
 
 /**
@@ -193,6 +250,7 @@ export async function resubmitRegistration(
 
   const role = await rolesRepository.findById(body.requested_role_id);
   if (!role) throw new NotFoundError('Requested role not found');
+  assertSelfRegisterable(role);
 
   const row = await usersRepository.update(userId, {
     status: 'pending_approval',

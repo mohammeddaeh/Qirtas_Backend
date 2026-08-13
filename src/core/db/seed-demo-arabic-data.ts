@@ -405,7 +405,9 @@ async function seedPendingUsers(actor: RequestActorContext, branchIds: number[])
       continue;
     }
 
-    const row = await usersService.registerStaff(
+    // Registration hands back a full sign-in result now; the seed wants the row
+    // only — the session it issued is never used and expires unnoticed.
+    const { user: row } = await usersService.registerStaff(
       {
         first_name: def.first_name,
         last_name: def.last_name,

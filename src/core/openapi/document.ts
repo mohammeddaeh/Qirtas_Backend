@@ -3,6 +3,7 @@ import { registry } from './registry.js';
 
 // Side-effect imports — each file calls registry.registerPath(...) on load.
 // Add a new line here whenever a new feature's *.openapi.ts file is created.
+import '../data-transfer/data-transfer.openapi.js';
 import '../../features/auth/auth.openapi.js';
 import '../../features/identity/users.openapi.js';
 import '../../features/identity/roles.openapi.js';

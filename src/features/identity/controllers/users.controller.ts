@@ -67,15 +67,17 @@ function originOf(req: Request): authService.RequestOrigin {
 
 export async function registerStaff(req: Request, res: Response): Promise<void> {
   const body = req.body as RegisterStaffBody;
-  const user = await usersService.registerStaff(body, originOf(req));
+  // Carries a session, so the client can go straight to the step this message
+  // names instead of asking for the credentials it was just given.
+  const result = await usersService.registerStaff(body, originOf(req));
   // The message names the NEXT step, and which step that is depends on whether
   // this deployment verifies addresses — telling someone to await approval when
   // the review queue has not seen their request yet is the kind of
   // accurate-sounding wrong that produces a support ticket a week later.
   created(
     res,
-    user,
-    user.status === 'pending_verification'
+    result,
+    result.user.status === 'pending_verification'
       ? 'Registration received — confirm your email address to continue'
       : 'Registration submitted — pending admin approval',
   );

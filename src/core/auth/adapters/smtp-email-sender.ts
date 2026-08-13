@@ -1,7 +1,13 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import { env } from '../../config/env.js';
 import { logger } from '../../logger/logger.js';
-import type { EmailMessage, EmailSender } from '../ports/email-sender.js';
+import {
+  recipientDomain,
+  type EmailDeliveryFailure,
+  type EmailDeliveryResult,
+  type EmailMessage,
+  type EmailSender,
+} from '../ports/email-sender.js';
 
 /**
  * SMTP transport — the one adapter that touches a network.
@@ -56,31 +62,103 @@ export class SmtpEmailSender implements EmailSender {
   /**
    * Sends [message], never throwing.
    *
-   * The swallowed failure is the port's contract, not laziness: the
+   * The contained failure is the port's contract, not laziness: the
    * password-reset endpoint answers 200 for every address precisely so it
    * cannot be used to discover who is registered. If a delivery failure became
    * an exception it would become a *different response* for real addresses, and
    * the oracle would return through the error path.
    *
-   * The failure is logged with the recipient and the SMTP error, and never with
-   * the body — bodies carry verification and reset codes.
+   * Contained is not hidden — the outcome comes back as a value, so the caller
+   * decides what it means. Before that existed, a provider that rejected every
+   * message to an unlisted address produced a green audit trail and a user
+   * staring at a code that was never sent.
+   *
+   * ## What is logged, and what is not
+   *
+   * Both the success and the failure line carry the recipient **domain**, the
+   * message kind and the transport — enough to see "every gmail.com
+   * verification is being rejected" without putting a person's address into
+   * every backup of the log. Never the body: bodies carry verification and
+   * reset codes.
    */
-  async send(message: EmailMessage): Promise<void> {
+  async send(message: EmailMessage): Promise<EmailDeliveryResult> {
     const from = env.MAIL_FROM.length > 0 ? env.MAIL_FROM : env.SMTP_USER;
+    const context = {
+      provider: 'smtp' as const,
+      host: env.SMTP_HOST,
+      kind: message.kind,
+      recipientDomain: recipientDomain(message.to),
+    };
 
     try {
-      await this.transport().sendMail({
+      const info: unknown = await this.transport().sendMail({
         from,
         to: message.to,
         subject: message.subject,
         text: message.text,
         ...(message.html !== undefined ? { html: message.html } : {}),
       });
+
+      const messageId = readMessageId(info);
+      logger.info({ ...context, ...(messageId !== undefined ? { messageId } : {}) }, 'Email accepted by the mail server.');
+      return messageId !== undefined ? { ok: true, messageId } : { ok: true };
     } catch (err) {
+      const errorCode = classify(err);
+      // `err` is logged whole because an SMTP error carries the server's own
+      // refusal text, which is the only thing that names *why* — "sending to
+      // this recipient is not allowed on your plan" is a configuration problem
+      // no error code of ours could describe. It carries no credential:
+      // nodemailer's error exposes the response and the command, never the
+      // password it authenticated with.
       logger.error(
-        { err, to: message.to, subject: message.subject },
+        { ...context, errorCode, err },
         'SMTP delivery failed — the recipient did not receive this message.',
       );
+      return { ok: false, errorCode };
     }
   }
+}
+
+/**
+ * Maps a nodemailer error onto the port's four buckets.
+ *
+ * Reads `code` first — nodemailer's own classification, set for the transport
+ * failures that never reach an SMTP conversation — then falls back to the
+ * server's reply code, where 5xx is a permanent refusal of the envelope. That
+ * ordering matters: an auth failure carries both `EAUTH` and a 5xx reply, and
+ * "your credentials are wrong" is the more actionable of the two.
+ *
+ * This is the only function in the codebase that knows what an SMTP error looks
+ * like, which is the point — `auth.service.ts` sees `'rejected'` and nothing
+ * about mail servers.
+ */
+function classify(err: unknown): EmailDeliveryFailure {
+  const e = err as { code?: unknown; responseCode?: unknown };
+  const code = typeof e.code === 'string' ? e.code : '';
+
+  switch (code) {
+    case 'EAUTH':
+      return 'auth';
+    case 'EENVELOPE':
+    case 'EMESSAGE':
+      return 'rejected';
+    case 'ECONNECTION':
+    case 'ESOCKET':
+    case 'ETIMEDOUT':
+    case 'EDNS':
+      return 'connection';
+    default:
+      break;
+  }
+
+  const responseCode = typeof e.responseCode === 'number' ? e.responseCode : 0;
+  if (responseCode >= 500) return 'rejected';
+  if (responseCode >= 400) return 'connection'; // 4xx is "try again later"
+  return 'unknown';
+}
+
+/** Nodemailer's `SentMessageInfo` is transport-dependent and typed `any`; this narrows it without trusting it. */
+function readMessageId(info: unknown): string | undefined {
+  const id = (info as { messageId?: unknown } | null | undefined)?.messageId;
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
 }

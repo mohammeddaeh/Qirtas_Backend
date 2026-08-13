@@ -132,11 +132,21 @@ export async function createAssignment(
  * documented closure flow (§Flow.2 and the "4 employees" success scenario):
  * closing for good requires every assignment resolved, and each branch's last
  * holder of a role could never be resolved.
+ *
+ * **[force] overrides it** (2026-08-12). Leaving a branch without its manager
+ * is a staffing decision, and the admin taking it can see the consequence
+ * better than this function can; refusing outright meant "I am dismissing this
+ * person" had no answer at all except inventing a replacement first. What
+ * `force` does NOT open is [assertNotLastAdministrator] — that one is a
+ * lockout, not a staffing call.
  */
-async function assertReplacementAvailableIfLast(assignmentId: number): Promise<void> {
+async function assertReplacementAvailableIfLast(
+  assignmentId: number,
+  force = false,
+): Promise<void> {
   const assignment = await assignmentsRepository.findById(assignmentId);
   if (!assignment) throw new NotFoundError('Assignment not found');
-  await assertAssignmentIsReplaceable(assignment);
+  await assertAssignmentIsReplaceable(assignment, force);
 }
 
 /**
@@ -148,43 +158,136 @@ async function assertReplacementAvailableIfLast(assignmentId: number): Promise<v
  * disabling the whole person — which ends *all* of them at once — went
  * through silently. A guard with an open door beside it is worse than no
  * guard, because it reads as protection.
+ *
+ * **No `force` here** (2026-08-12), and the refusal says so in its own words.
+ * Ending one post is a decision about one post and the admin can see exactly
+ * what it costs; taking an account out of service closes every post at once,
+ * and "yes, all of them" is not an informed answer to a warning that named one.
+ * The way through is to resolve the assignment first, which is the screen that
+ * shows what is being given up.
  */
 export async function assertUserIsReleasable(userId: number): Promise<void> {
   const assignments = await assignmentsRepository.findActiveForUser(userId);
   for (const assignment of assignments) {
-    await assertAssignmentIsReplaceable(assignment);
+    await assertAssignmentIsReplaceable(assignment, false, true);
   }
 }
 
 /**
- * Role categories whose last holder cannot be released without a replacement.
+ * Role categories whose last holder is worth stopping to ask about.
  *
  * - `management` — the branch's responsible person. A branch that operates with
- *   nobody in charge has no one to decide anything in it, which is why this is
- *   the one post that must not simply disappear (2026-08-04 decision).
- * - `system` — org-wide authority (المدير العام / مدقق). Not a branch concern
- *   at all; included so releasing the last holder cannot lock every
- *   administrator out of the system. This is a safety property, not a staffing
- *   rule, and it is why the set is a list rather than `=== 'management'`.
+ *   nobody in charge has no one to decide anything in it (2026-08-04 decision).
+ * - `system` — org-wide authority (المدير العام / مدقق).
  *
  * Everything else — `operational`, `financial`, `external` — is deliberately
  * free: those posts can be changed, moved between branches, or ended outright,
  * because nothing is lost when they are (the assignment row is closed, never
  * deleted, so the history survives intact).
+ *
+ * ⚠️ Since 2026-08-12 this set decides **what gets warned about**, not what
+ * gets forbidden — `force` clears all of it. The one thing `force` cannot
+ * clear lives in [assertNotLastAdministrator], which is keyed on a permission
+ * rather than a category, because that is where the two axes stopped agreeing:
+ * `مدقق` is `system` and locks nobody out when they leave, while a custom role
+ * carrying `users.manage` was never in this set and locks out everyone.
  */
 const GUARDED_ROLE_CATEGORIES = new Set(['management', 'system']);
 
-async function assertAssignmentIsReplaceable(assignment: UserRoleAssignmentRow): Promise<void> {
-  // Category first: it decides whether the rule applies at all, and skipping
+/**
+ * The permission whose holder count must never reach zero.
+ *
+ * `users.manage` and not, say, `roles.manage`, because it is the one that can
+ * put the others back: whoever holds it can assign any role to anyone,
+ * including the role that grants everything else. Lose it and the only repair
+ * left is a direct write to the database.
+ */
+const ADMINISTRATION_PERMISSION = 'users.manage';
+
+/**
+ * The one refusal `force` does not open.
+ *
+ * Checked before the staffing warning, and separately from it, because it is a
+ * different kind of statement: not "this branch would be short a manager" —
+ * which is the admin's call — but "nobody would be able to undo this from
+ * inside the app", which is nobody's call to make by accident.
+ *
+ * Only fires when the person actually loses the permission; someone holding
+ * `users.manage` through two posts is not losing it by giving up one — but see
+ * [wholeUser], where that escape is exactly wrong.
+ *
+ * @param wholeUser The account itself is being suspended/disabled, which closes
+ *   EVERY post at once. Their other posts are no refuge then, and consulting
+ *   them would clear this check twice over for the same person: post A excused
+ *   by post B, post B excused by post A, and the last administrator gone with
+ *   both.
+ */
+async function assertNotLastAdministrator(
+  assignment: UserRoleAssignmentRow,
+  wholeUser: boolean,
+): Promise<void> {
+  const role = await rolesRepository.findById(assignment.role_id);
+  if (role === undefined || !role.is_active) return;
+
+  const grantsAdministration = await rolesRepository.findPermissionKeys(role.id);
+  if (!grantsAdministration.includes(ADMINISTRATION_PERMISSION)) return;
+
+  if (!wholeUser) {
+    // Their OTHER live posts. If any of those still grants it, this closure
+    // changes nothing about who can administer.
+    const otherOwnAssignments = (
+      await assignmentsRepository.findActiveForUser(assignment.user_id)
+    ).filter((a) => a.id !== assignment.id);
+    for (const other of otherOwnAssignments) {
+      const keys = await rolesRepository.findPermissionKeys(other.role_id);
+      if (keys.includes(ADMINISTRATION_PERMISSION)) return;
+    }
+  }
+
+  const otherAdministrators = await assignmentsRepository.countOtherActiveUsersWithPermission({
+    permissionKey: ADMINISTRATION_PERMISSION,
+    excludingUserId: assignment.user_id,
+  });
+  if (otherAdministrators > 0) return;
+
+  throw new BusinessError(
+    409,
+    'This is the last active person who can manage users. Assign the role to someone else before releasing them.',
+    'last_system_role_holder',
+    { overridable: false, role_id: role.id, role_name: role.name, branch_id: assignment.branch_id },
+  );
+}
+
+/**
+ * @param force Proceed despite the "last holder" warning. Never clears
+ *   [assertNotLastAdministrator], which runs regardless.
+ * @param wholeUser The caller is taking the entire account out of service, not
+ *   releasing this one post. Changes which refusal is raised: that path has no
+ *   `force`, so it must not be worded as though it does — a message offering
+ *   "end it anyway" to a screen with no such button is worse than a plain no.
+ */
+async function assertAssignmentIsReplaceable(
+  assignment: UserRoleAssignmentRow,
+  force = false,
+  wholeUser = false,
+): Promise<void> {
+  // Runs before the `force` check and cannot be skipped by it.
+  await assertNotLastAdministrator(assignment, wholeUser);
+
+  if (force) return;
+
+  // Category next: it decides whether the warning applies at all, and skipping
   // the branch/holder lookups for the common (operational) case keeps ordinary
   // staff moves at a single query.
   const role = await rolesRepository.findById(assignment.role_id);
   if (role === undefined || !GUARDED_ROLE_CATEGORIES.has(role.category)) return;
 
+  let branchName: string | null = null;
   if (assignment.branch_id !== null) {
     const branch = await branchesRepository.findById(assignment.branch_id);
     // A missing branch cannot be operating either — guard only what is active.
     if (branch?.status !== 'active') return;
+    branchName = branch.name;
   }
 
   const otherHolders = await assignmentsRepository.countOtherActiveHolders({
@@ -193,15 +296,42 @@ async function assertAssignmentIsReplaceable(assignment: UserRoleAssignmentRow):
     excludingUserId: assignment.user_id,
   });
 
-  if (otherHolders === 0) {
+  if (otherHolders !== 0) return;
+
+  // The gap the client is being asked to fill, named. Without these the app can
+  // only offer an empty picker and make the reader re-derive which (role,
+  // branch) the refusal was even about.
+  //
+  // `overridable` is the field the screen branches on: it decides whether an
+  // "end it anyway" button appears at all.
+  const gap = {
+    role_id: assignment.role_id,
+    role_name: role.name,
+    branch_id: assignment.branch_id,
+    branch_name: branchName,
+  };
+
+  // Two throws rather than one with ternary arguments: `check:messages` reads
+  // the literal last argument of each throw site, and a conditional key is
+  // invisible to it — the throw would pass the check while being able to emit
+  // an unregistered key, which is the exact failure the check exists to catch.
+  // An admin reads these mid-task, so both follow req.lang; the English strings
+  // stay as the fallback and for logs.
+  if (wholeUser) {
     throw new BusinessError(
       409,
-      'This is the last active staff member holding this role in this branch. Assign a qualified replacement before transferring or removing them.',
-      // An admin reads this mid-task, so it follows req.lang; the English
-      // string above stays as the fallback and for logs.
-      'last_qualified_staff',
+      'This person is the last active holder of a role in an operating branch. End or transfer that assignment first, then take the account out of service.',
+      'user_release_last_qualified_staff',
+      { overridable: false, ...gap },
     );
   }
+
+  throw new BusinessError(
+    409,
+    'This is the last active staff member holding this role in this branch. Re-send with force=true to end the assignment anyway, or assign the role to someone else first.',
+    'last_qualified_staff',
+    { overridable: true, ...gap },
+  );
 }
 
 /**
@@ -218,7 +348,7 @@ export async function transferAssignment(
   const current = await assignmentsRepository.findById(assignmentId);
   if (!current) throw new NotFoundError('Assignment not found');
 
-  await assertReplacementAvailableIfLast(assignmentId);
+  await assertReplacementAvailableIfLast(assignmentId, body.force === true);
   await assertActorOutranksRole(actor.userId, body.new_role_id);
 
   const effectiveAt = body.effective_at ?? new Date();
@@ -239,18 +369,30 @@ export async function transferAssignment(
     AUDIT.assignmentTransfer,
     target.assignment(assignmentId),
     { role_id: current.role_id, branch_id: current.branch_id },
-    { role_id: row.role_id, branch_id: row.branch_id, new_assignment_id: row.id },
+    {
+      role_id: row.role_id,
+      branch_id: row.branch_id,
+      new_assignment_id: row.id,
+      // Recorded only when it happened, so an ordinary transfer's diff stays
+      // clean: this is the field that answers "who decided the branch could
+      // run without one" months later.
+      ...(body.force === true ? { forced_last_holder: true } : {}),
+    },
   );
   return toWireUserRoleAssignment(row);
 }
 
-/** Offboarding path: closes the assignment with no replacement opened. Same last-qualified-staff guard applies. */
+/**
+ * Offboarding path: closes the assignment with no replacement opened. Same
+ * last-qualified-staff warning applies, and the same [force] clears it.
+ */
 export async function endAssignment(
   actor: RequestActorContext,
   assignmentId: number,
   effectiveAt: Date = new Date(),
+  force = false,
 ): Promise<WireUserRoleAssignment> {
-  await assertReplacementAvailableIfLast(assignmentId);
+  await assertReplacementAvailableIfLast(assignmentId, force);
   const row = await assignmentsRepository.closeAssignment(assignmentId, effectiveAt);
   if (!row) throw new NotFoundError('Assignment not found');
   await auditService.record(
@@ -258,7 +400,7 @@ export async function endAssignment(
     AUDIT.assignmentEnd,
     target.assignment(assignmentId),
     { user_id: row.user_id, role_id: row.role_id, branch_id: row.branch_id, valid_to: null },
-    { valid_to: row.valid_to },
+    { valid_to: row.valid_to, ...(force ? { forced_last_holder: true } : {}) },
   );
   return toWireUserRoleAssignment(row);
 }

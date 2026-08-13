@@ -128,12 +128,12 @@ registry.registerPath({
   tags,
   summary: 'Self-registration — the single entry point for every internal (staff/partner) account',
   description:
-    'Creates a User with status=pending_approval and zero active role assignment. An admin must decide (approve/edit/reject) via /users/{id}/decide-registration before the account can do anything. See docs/reference/users_roles.md — Internal Self-Registration & Approval.',
+    'Creates a User with status=pending_verification (or pending_approval where email verification is off) and zero active role assignment. An admin must decide (approve/edit/reject) via /users/{id}/decide-registration before the account can do anything. See docs/reference/users_roles.md — Internal Self-Registration & Approval.\n\nResponds with the same body as POST /users/login, session included: POST /auth/verify-email is requireAuth, so without a token here the client cannot perform the step this response asks for. The session grants nothing extra — the account holds no active assignment, so permission_keys is empty.',
   request: { body: jsonBody(registerStaffBodySchema) },
   responses: {
     201: {
-      description: 'Registration submitted, pending admin approval',
-      ...jsonBody(successEnvelope(userResponseSchema)),
+      description: 'Registration accepted — body carries the new account and a session for it',
+      ...jsonBody(successEnvelope(loginResponseSchema)),
     },
     ...commonErrorResponses,
     409: {

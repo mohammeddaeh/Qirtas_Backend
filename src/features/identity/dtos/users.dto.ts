@@ -42,6 +42,17 @@ export const userResponseSchema = z.object({
   decided_at: z.string().nullable(),
   decided_by_user_id: z.number().int().nullable(),
   created_at: z.string(),
+  /** List responses only — see `WireUser.current_posts`. */
+  current_posts: z
+    .array(
+      z.object({
+        role_id: z.number().int(),
+        role_name: z.string(),
+        branch_id: z.number().int().nullable(),
+        branch_name: z.string().nullable(),
+      }),
+    )
+    .optional(),
 });
 
 export interface WireUser {
@@ -82,6 +93,30 @@ export interface WireUser {
   decided_at: string | null;
   decided_by_user_id: number | null;
   created_at: string;
+  /**
+   * Where this person currently works — role plus branch, one entry per active
+   * assignment. **List responses only** (`GET /users`); absent elsewhere.
+   *
+   * Exists because a name alone cannot answer the question every "pick a
+   * person" screen actually asks. Choosing "أحمد" to fill a post is a different
+   * decision depending on whether he holds nothing, or is the cashier in
+   * another branch you are about to pull him out of — and the picker had no way
+   * to tell the two apart.
+   *
+   * An empty array is a real answer (belongs nowhere), which is why it is sent
+   * as `[]` rather than omitted: `undefined` would mean "this response does not
+   * carry posts", and a client cannot render "بلا منصب" from that.
+   */
+  current_posts?: WireUserPost[];
+}
+
+/** A compact assignment: only what a picker row needs to be readable. */
+export interface WireUserPost {
+  role_id: number;
+  role_name: string;
+  /** `null` = unrestricted — every branch, not "unknown". */
+  branch_id: number | null;
+  branch_name: string | null;
 }
 
 /** Row -> wire. Never includes password_hash/reset tokens. */
@@ -214,8 +249,8 @@ export type LoginBody = z.infer<typeof loginBodySchema>;
 // same shapes the `/auth/*` routes do.
 //
 // One deliberate contract change came with the move: reset-password's field is
-// now `code`, not `token`. It was never a token — it is an eight-character
-// string a person reads off a screen and types, and calling it a token invited
+// now `code`, not `token`. It was never a token — it is a six-digit string a
+// person reads off a screen and types, and calling it a token invited
 // clients to treat it as opaque and long. The deprecated route accepts both
 // spellings (see auth.routes.ts / users.routes.ts) so no shipped client breaks.
 
@@ -292,6 +327,30 @@ export const usersFilterQuerySchema = z
      * `user_unassigned` signal, which had no way to be listed before this.
      */
     unassigned: queryBooleanSchema.optional(),
+    /**
+     * Excludes whoever already holds this exact post — role
+     * [excluding_role_id] in branch [excluding_branch_id].
+     *
+     * The pair, never either half alone. "Who can fill this post" must not
+     * exclude everyone who holds the role *somewhere else* (they are precisely
+     * the qualified transfers), nor everyone in the branch (they can take a
+     * second, different role there). Only the people for whom the assignment
+     * would be a duplicate — which the backend answers with `409
+     * assignment_duplicate` — are the ones with nothing to offer.
+     *
+     * Replaces `unassigned=true` as the picker's filter. That one showed only
+     * people who belong nowhere, which in a staffed organisation is a nearly
+     * empty list, and it hid every legitimate transfer candidate.
+     */
+    excluding_role_id: z.coerce.number().int().positive().optional(),
+    /**
+     * The branch half of the pair. **Absent means the unrestricted post**
+     * (`branch_id IS NULL`), not "any branch" — an unrestricted assignment is a
+     * real post that a person can duplicate like any other. Ignored unless
+     * [excluding_role_id] is present, so it can never silently widen a filter
+     * on its own.
+     */
+    excluding_branch_id: z.coerce.number().int().positive().optional(),
     /**
      * Free-text match across full name, email and phone.
      *

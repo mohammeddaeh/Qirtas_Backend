@@ -155,6 +155,25 @@ export async function resendVerification(req: Request, res: Response): Promise<v
     );
   }
 
+  // A delivery failure is a real answer on this endpoint, for the same reason
+  // the cooldown is: the caller holds a session for the account, so "we could
+  // not send your code" tells them nothing about anyone else. Answering
+  // "Verification code sent" instead — which is what this did until 2026-08-12
+  // — sends someone to wait for mail that was refused, and the only signal is a
+  // log line they cannot see.
+  //
+  // `result.deliveryFailure` is deliberately NOT forwarded: `rejected` / `auth`
+  // / `connection` describe the mail server, and a user cannot act on any of
+  // them. They are already in the log and the audit row, which is where an
+  // operator looks.
+  if (!result.sent && result.deliveryFailure !== undefined) {
+    throw new BusinessError(
+      502,
+      'We could not send the verification email just now — please try again shortly',
+      'verification_send_failed',
+    );
+  }
+
   noContentOk(res, 'Verification code sent');
 }
 

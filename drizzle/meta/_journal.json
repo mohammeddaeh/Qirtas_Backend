@@ -50,6 +50,13 @@
       "when": 1786432176328,
       "tag": "0006_auth_engine",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786535963466,
+      "tag": "0007_tranquil_hydra",
+      "breakpoints": true
     }
   ]
 }

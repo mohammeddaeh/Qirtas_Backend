@@ -30,8 +30,9 @@ export const verificationPurposeEnum = pgEnum('verification_purpose', [
  *
  * 1. **A per-code attempt counter.** Without it the only guessing limit is the
  *    per-IP rate limiter, which an attacker with a pool of addresses never
- *    fills — so the 8-character code was defended by nothing that survives IP
- *    rotation. `attempts` binds the limit to the code itself.
+ *    fills — so the code was defended by nothing that survives IP rotation.
+ *    `attempts` binds the limit to the code itself, which is what lets the code
+ *    be six digits rather than long enough to survive unlimited guessing.
  * 2. **A second purpose.** Email verification would have needed two more
  *    columns on `users`, and a third purpose two more again.
  * 3. **A consumed-but-retained row.** Deleting on use erases the evidence that

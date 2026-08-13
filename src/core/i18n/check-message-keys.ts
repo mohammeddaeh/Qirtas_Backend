@@ -59,6 +59,36 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/**
+ * Removes a trailing `data` object argument, so the key can still be found by
+ * the "last argument" rule.
+ *
+ * `BusinessError`/`ForbiddenError` take an optional machine-readable `data`
+ * payload after the key — e.g. the (role, branch) a "last holder" refusal
+ * names, so the client can offer to fill that exact post. Without this, adding
+ * that payload silently turns a compliant throw into an offence, and the fix
+ * that suggests itself is deleting the payload rather than keeping both.
+ *
+ * Deliberately narrow: only an argument that is literally a brace-balanced
+ * object at the very end is dropped. Anything else still has to end with the
+ * key.
+ */
+function stripTrailingDataObject(body: string): string {
+  const trimmed = body.trimEnd().replace(/,$/, '').trimEnd();
+  if (!trimmed.endsWith('}')) return body;
+
+  let depth = 0;
+  for (let i = trimmed.length - 1; i >= 0; i--) {
+    const c = trimmed[i];
+    if (c === '}') depth++;
+    else if (c === '{') {
+      depth--;
+      if (depth === 0) return trimmed.slice(0, i).trimEnd().replace(/,$/, '');
+    }
+  }
+  return body;
+}
+
 const registered = new Set(Object.keys(MESSAGES));
 const offences: string[] = [];
 
@@ -88,7 +118,7 @@ for (const file of walk(SRC)) {
     }
 
     const body = source.slice(match.index + match[0].length, i - 1);
-    const lastArg = body.trimEnd().match(/'([a-z_]+)',?$/);
+    const lastArg = stripTrailingDataObject(body).trimEnd().match(/'([a-z_]+)',?$/);
     if (lastArg && registered.has(lastArg[1] ?? '')) continue;
 
     const line = source.slice(0, match.index).split('\n').length;

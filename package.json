@@ -19,15 +19,18 @@
     "db:seed": "tsx src/core/db/seed.ts",
     "db:setup": "npm run db:migrate && tsx src/core/db/seed.ts --admin --demo --reset",
     "smoke": "tsx src/core/db/smoke-test.ts",
-    "check:messages": "tsx src/core/i18n/check-message-keys.ts"
+    "check:messages": "tsx src/core/i18n/check-message-keys.ts",
+    "test:mail": "tsx tests/email-recipient.test.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.4",
+    "exceljs": "^4.4.0",
     "express": "^4.21.1",
     "helmet": "^8.3.0",
+    "multer": "^2.2.0",
     "nodemailer": "^7.0.13",
     "pg": "^8.13.1",
     "pino": "^9.5.0",
@@ -38,6 +41,7 @@
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
+    "@types/multer": "^2.2.0",
     "@types/node": "^22.9.0",
     "@types/nodemailer": "^8.0.1",
     "@types/pg": "^8.11.10",

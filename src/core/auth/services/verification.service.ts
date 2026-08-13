@@ -10,11 +10,11 @@ import type { VerificationPurpose } from '../schemas/verification-tokens.schema.
  * (issue, hash, expire, count attempts, consume once) and only the effect of
  * succeeding differs, which is the caller's business.
  *
- * ## The four bounds that make a 40-bit code safe
+ * ## The four bounds that make a six-digit code safe
  *
  * A code short enough to read off a screen and type is, on its own, trivially
- * guessable by a machine. What makes it safe is that a machine never gets to
- * try:
+ * guessable by a machine — a million values is seconds of work. What makes it
+ * safe is that a machine never gets to try:
  *
  * 1. **Lifetime** — fifteen minutes by default.
  * 2. **Attempts per code** — a hard ceiling bound to the code itself, so it
@@ -144,10 +144,12 @@ export async function verifyCode(
     return { ok: false, reason: 'attempts_exhausted' };
   }
 
-  // Normalised before hashing because the code is typed by a person: the
-  // alphabet is upper-case only, and a lower-case entry is the right code
-  // entered correctly. Whitespace comes from copy-paste out of a mail client.
-  const normalized = code.trim().toUpperCase();
+  // Normalised before hashing because the code is typed by a person. Whitespace
+  // anywhere — not only at the ends — because a copy out of a mail client brings
+  // leading spaces and six digits are commonly typed in groups. The upper-casing
+  // outlived the letter alphabet on purpose: codes issued before the format
+  // changed stay valid for the rest of their fifteen minutes.
+  const normalized = code.replace(/\s+/g, '').toUpperCase();
 
   if (!tokenHashEquals(pending.token_hash, hashToken(normalized))) {
     const attempts = await tokensRepository.incrementAttempts(pending.id);

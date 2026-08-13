@@ -15,6 +15,7 @@
 | **DB schema / migration** جديدة                                        | `src/core/CLAUDE.md` §DB                                                  |
 | **Scripts / tooling** جديدة                                            | `docs/scripts.md`                                                         |
 | البنية العامة / شجرة المجلدات                                          | `docs/architecture.md`                                                    |
+| **إرسال بريد** (تحقّق/استعادة كلمة مرور · SMTP · تغيير المزوّد · الإنتاج) | `docs/mail.md` — **لا يوجد متغيّر مستقبِل، ولا يجوز إضافة واحد** |
 
 ---
 
@@ -56,11 +57,14 @@ features/identity/  ← أدوار/فروع/ملكية/موافقة — ويُن
 
 **دورة حياة الحساب صارت**: `pending_verification` → (رمز) → `pending_approval` → (قرار أدمن) → `active`/`rejected`. الترتيب هو الضمانة ضد إغراق طابور المراجعة.
 
+**و`POST /users/register` يُرجع جلسة** (نفس جسم `POST /users/login` بالضبط — تغيّر بالعقد 2026-08-12، `data.user` بدل `data`): الخطوة التي يُسمّيها الرد نفسه (`POST /auth/verify-email`) محمية بـ`requireAuth`، فبلا توكن هنا يطلب الخادم من العميل شيئاً منعه من فعله. **ولا يمنح امتيازاً**: نفس الحساب يستدعي `/login` بعد ثانية فيأخذ التوكن ذاته — حساب بلا تعيين فعّال، `permission_keys` فارغة. وصادرة **عبر `login()` داخلياً** لا بإنشاء جلسة مباشرة، فرفضات `canSignIn` وحدث الأمن وحساب الصلاحيات تبقى بمكان واحد ولا ينحرف هذا المسار عن المسار الحقيقي.
+
 ## ✅ Auth حقيقي + RBAC فعلي + TTL مفعّلون (2026-07-23)
 
 - `src/core/middleware/auth.ts` (حل محل `auth.stub.ts` القديم) يتحقق فعلياً من `Authorization: Bearer <token>` مقابل جدول `sessions.token` (opaque token عشوائي، 256-bit، يُولَّد ويُخزَّن عند `POST /login` — `core/security/token.ts`). `POST /logout` ينهي الجلسة الحالية فقط (بقية الجلسات المتزامنة لنفس اليوزر تبقى فعّالة).
 - **TTL/خمول**: جلسة بدون طلب لمدة `SESSION_IDLE_TIMEOUT_MINUTES` (env، افتراضي 7 أيام — placeholder، `users_roles.md` لا يفرض رقماً) تُحذف تلقائياً عند أول طلب تالٍ بتوكنها وتُعامَل كتوكن غير موجود.
 - **RBAC فعلي**: `src/core/http/require-permission.ts` (`requirePermission('<key>')`) يتحقق من اتحاد صلاحيات كل تعيينات اليوزر الفعّالة (`findAllEffectivePermissionKeys`، branch-agnostic لعمليات identity نفسها) — مطبَّق على كل route كتابة حساس بالموديول. `requireAuth` (`require-actor.ts`) للعمليات اللي تحتاج فقط "توكن صالح" بدون صلاحية محددة (معظم عمليات القراءة). صلاحيات identity الجديدة بالكتالوج: `users.manage`, `branches.manage`, `ownerships.manage`, `permissions.manage` (+ `roles.view`/`roles.edit`/`audit_log.view` الموجودة أصلاً) — التفاصيل الكاملة والجدول الكامل لكل endpoint بـ[docs/rest_api.md](docs/rest_api.md) §7.2.
+- **`GET /roles/self-registerable` — أول endpoint قراءة عام (2026-08-11)**: كل ما سبقه من مسارات بلا مصادقة كان **كتابةً** (دخول/تسجيل/استعادة كلمة مرور/bootstrap). هذا يقرأ كتالوج الأدوار المسموح طلبها عند التسجيل الذاتي — لأن `POST /users/register` يشترط `requested_role_id` ومن يملأ النموذج لا يملك جلسة يقرأ بها `GET /roles` (`roles.view`)، فكان منتقي الدور بالفرونت فارغاً دائماً. مسجَّل **قبل `/:id`** بالراوتر وإلا ابتلعه. **والقراءة العامة تُطابَق بحارس كتابة**: `assertSelfRegisterable` (`users.service.ts`) يفرض نفس الشرط على التسجيل وإعادة الإرسال بـ`422 role_not_self_registerable` — كتالوج لا يفرضه مسار الكتابة يوحي بحدٍّ غير موجود.
 - **Rate limiting على `/login`**: `src/core/middleware/login-rate-limit.ts` — 5 محاولات فاشلة/15 دقيقة لكل إيميل **و**لكل IP معاً (كلاهما يجب أن يمر)، نجاح الدخول يصفّر العداد فوراً. تخزين in-memory (`core/security/rate-limiter.ts`) — كافٍ لعملية Node واحدة، **يُعاد ضبطه بالكامل عند إعادة تشغيل السيرفر أو عند تشغيل أكثر من instance بدون shared store** (Redis أو مشابه) — تفصيل يُحسم عند الحاجة الفعلية للـ scale الأفقي، ليس فجوة تصميم بالسياق الحالي (عملية واحدة).
 
 ## ⚠️ ما لم يُبنَ بعد (بقصد)
@@ -101,6 +105,7 @@ features → other features                              ❌ NEVER (مطابق �
 | Feature module جديد                              | جدول Modules أعلاه + `docs/architecture.md`                                |
 | جدول DB جديد                                     | `src/core/db/schema.ts` (barrel) + migration جديدة (`npm run db:generate`) |
 | Script جديد بـ`package.json`                     | `docs/scripts.md`                                                          |
+| أي تغيير على `core/auth/ports/email-sender.ts` أو المحوّلَين أو مسار المستقبِل | `docs/mail.md` + `tests/email-recipient.test.ts`                          |
 
 ---
 

@@ -50,12 +50,27 @@ export const AUTH_EVENT = {
   sessionRevokedAll: 'auth.session.revoked_all',
 
   accountRegistered: 'auth.account.registered',
+  /** A code was issued AND the transport accepted the message. Never recorded for a send that failed. */
   emailVerificationSent: 'auth.email.verification_sent',
+  /**
+   * A code was issued but the mail never left — the address is stranded with a
+   * live code it cannot receive.
+   *
+   * Recorded as its own event rather than as a detail on the "sent" one because
+   * the two demand opposite responses: nothing, versus look at the mail
+   * configuration. `details.reason` carries an `EmailDeliveryFailure` code —
+   * `rejected`, `auth`, `connection` — never the provider's own text, which can
+   * name hosts and accounts.
+   */
+  emailVerificationSendFailed: 'auth.email.verification_send_failed',
   emailVerified: 'auth.email.verified',
   emailVerificationFailed: 'auth.email.verification_failed',
 
   passwordChanged: 'auth.password.changed',
+  /** The reset code was issued AND the transport accepted the message. */
   passwordResetRequested: 'auth.password.reset_requested',
+  /** Same distinction as `emailVerificationSendFailed`, for the reset flow. */
+  passwordResetSendFailed: 'auth.password.reset_send_failed',
   passwordResetCompleted: 'auth.password.reset_completed',
   passwordResetFailed: 'auth.password.reset_failed',
 } as const;

@@ -10,10 +10,26 @@ import {
   assignmentIdParamsSchema,
   createAssignmentBodySchema,
   transferAssignmentBodySchema,
+  endAssignmentBodySchema,
   userRoleAssignmentResponseSchema,
 } from './dtos/user-role-assignments.dto.js';
 
 const tags = ['Role Assignments'];
+
+/**
+ * Both release paths answer 409 the same two ways, and the pair is only useful
+ * read together — the whole point of the two keys is that one is overridable
+ * and the other is not.
+ */
+const LAST_HOLDER_409 =
+  'Answers 409 `last_qualified_staff` when this is the last active holder of a ' +
+  '`management`/`system` role in an operating branch — a WARNING: re-send with ' +
+  '`force: true` to proceed. `data` carries `overridable: true` plus the ' +
+  '(role_id, role_name, branch_id, branch_name) of the gap, so the client can ' +
+  'offer to fill that exact post instead of an empty picker. Answers 409 ' +
+  '`last_system_role_holder` (`data.overridable: false`) when releasing them ' +
+  'would leave nobody holding `users.manage` — `force` does NOT clear that one, ' +
+  'because no one inside the app could grant it back.';
 const jsonBody = <T extends z.ZodTypeAny>(schema: T) => ({
   content: { 'application/json': { schema } },
 });
@@ -68,7 +84,8 @@ registry.registerPath({
   tags,
   summary: 'Transfer a user to a new role/branch',
   description:
-    'Closes the current assignment and opens a new one atomically — never mutates branch_id in place, preserving history. Blocked (409) if this is the last active staff member holding this role in this branch, with no qualified replacement.',
+    'Closes the current assignment and opens a new one atomically — never mutates branch_id in place, preserving history. ' +
+    LAST_HOLDER_409,
   request: { params: assignmentIdParamsSchema, body: jsonBody(transferAssignmentBodySchema) },
   responses: {
     200: {
@@ -76,10 +93,7 @@ registry.registerPath({
       ...jsonBody(successEnvelope(userRoleAssignmentResponseSchema)),
     },
     ...unauthorizedResponse,
-    409: {
-      description: 'Last qualified staff for this role/branch — assign a replacement first',
-      ...businessError(409),
-    },
+    409: { description: LAST_HOLDER_409, ...businessError(409) },
     ...commonErrorResponses,
   },
 });
@@ -89,17 +103,14 @@ registry.registerPath({
   path: '/api/v1/role-assignments/{assignmentId}/end',
   tags,
   summary: 'End a role assignment (offboarding)',
-  description: 'Same last-qualified-staff guard as transfer.',
-  request: { params: assignmentIdParamsSchema },
+  description: 'Same last-holder warning as transfer. ' + LAST_HOLDER_409,
+  request: { params: assignmentIdParamsSchema, body: jsonBody(endAssignmentBodySchema) },
   responses: {
     200: {
       description: 'Assignment ended',
       ...jsonBody(successEnvelope(userRoleAssignmentResponseSchema)),
     },
-    409: {
-      description: 'Last qualified staff for this role/branch — assign a replacement first',
-      ...businessError(409),
-    },
+    409: { description: LAST_HOLDER_409, ...businessError(409) },
     ...commonErrorResponses,
   },
 });

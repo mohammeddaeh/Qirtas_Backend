@@ -46,6 +46,7 @@ type Localized = Record<Lang, (p: CodeEmailParams) => EmailMessage>;
 export const verifyEmailMessage: Localized = {
   ar: ({ code, expiresInMinutes }) => ({
     to: '',
+    kind: 'email_verification',
     subject: 'رمز تأكيد بريدك الإلكتروني',
     text: [
       'مرحباً،',
@@ -63,6 +64,7 @@ export const verifyEmailMessage: Localized = {
   }),
   en: ({ code, expiresInMinutes }) => ({
     to: '',
+    kind: 'email_verification',
     subject: 'Your email verification code',
     text: [
       'Hello,',
@@ -83,6 +85,7 @@ export const verifyEmailMessage: Localized = {
 export const passwordResetMessage: Localized = {
   ar: ({ code, expiresInMinutes }) => ({
     to: '',
+    kind: 'password_reset',
     subject: 'رمز استعادة كلمة المرور',
     text: [
       'مرحباً،',
@@ -100,6 +103,7 @@ export const passwordResetMessage: Localized = {
   }),
   en: ({ code, expiresInMinutes }) => ({
     to: '',
+    kind: 'password_reset',
     subject: 'Your password reset code',
     text: [
       'Hello,',

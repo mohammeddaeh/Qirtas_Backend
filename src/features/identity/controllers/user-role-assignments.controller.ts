@@ -5,6 +5,7 @@ import * as assignmentsService from '../services/user-role-assignments.service.j
 import type {
   CreateAssignmentBody,
   TransferAssignmentBody,
+  EndAssignmentBody,
 } from '../dtos/user-role-assignments.dto.js';
 
 export async function listForUser(req: Request, res: Response): Promise<void> {
@@ -38,6 +39,12 @@ export async function transferAssignment(req: Request, res: Response): Promise<v
 export async function endAssignment(req: Request, res: Response): Promise<void> {
   const actor = buildActorContext(req, requireActorId(req));
   const { assignmentId } = req.params as unknown as { assignmentId: number };
-  const assignment = await assignmentsService.endAssignment(actor, assignmentId);
+  const body = (req.body ?? {}) as EndAssignmentBody;
+  const assignment = await assignmentsService.endAssignment(
+    actor,
+    assignmentId,
+    body.effective_at ?? new Date(),
+    body.force === true,
+  );
   ok(res, assignment);
 }

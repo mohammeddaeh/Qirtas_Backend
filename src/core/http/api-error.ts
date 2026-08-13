@@ -81,9 +81,34 @@ export class RateLimitError extends ApiError {
   }
 }
 
+/**
+ * 413 — the request, or what it would produce, is larger than this endpoint
+ * serves.
+ *
+ * Used by data-transfer exports, which answer it **before reading a single
+ * row** rather than streaming until something times out. `data` carries
+ * `row_count` and `max_rows` so the client can say "42 000 rows — narrow the
+ * filter to under 50 000" instead of a bare refusal the user cannot act on.
+ */
+export class PayloadTooLargeError extends ApiError {
+  constructor(message: string, data?: Record<string, unknown>, messageKey?: string) {
+    super(413, message, undefined, undefined, data, messageKey);
+  }
+}
+
 /** Generic 4xx business-rule failure that isn't one of the above. */
 export class BusinessError extends ApiError {
-  constructor(httpStatus: number, message: string, messageKey?: string) {
-    super(httpStatus, message, undefined, undefined, undefined, messageKey);
+  constructor(
+    httpStatus: number,
+    message: string,
+    messageKey?: string,
+    /**
+     * Facts the client needs to turn the refusal into a next step rather than a
+     * dead end — e.g. the (role, branch) a "last holder" block names, so the
+     * app can offer to fill that exact gap instead of an empty picker.
+     */
+    data?: Record<string, unknown>,
+  ) {
+    super(httpStatus, message, undefined, undefined, data, messageKey);
   }
 }

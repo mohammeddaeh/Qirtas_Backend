@@ -102,13 +102,35 @@ export const createAssignmentBodySchema = z.object({
 });
 export type CreateAssignmentBody = z.infer<typeof createAssignmentBodySchema>;
 
+/**
+ * Acknowledges the `last_qualified_staff` warning and proceeds.
+ *
+ * Deliberately absent by default rather than something the client can set once
+ * and forget: the warning is the only moment anyone is told the branch is about
+ * to lose its last manager, so it has to be answered per request. It does NOT
+ * clear `last_system_role_holder` — see the service.
+ *
+ * Strict `z.boolean()`, matching `roles.dto.ts` — `z.coerce.boolean()` would
+ * read the string `"false"` as `true`, which on this flag means silently
+ * overriding a warning the caller was trying to respect.
+ */
+const forceFlag = z.boolean().default(false);
+
 /** Transfer closes the current assignment and opens a new one atomically (never mutates branch_id in place). */
 export const transferAssignmentBodySchema = z.object({
   new_role_id: z.coerce.number().int().positive(),
   new_branch_id: z.coerce.number().int().positive().nullable(),
   effective_at: z.coerce.date().optional(),
+  force: forceFlag,
 });
 export type TransferAssignmentBody = z.infer<typeof transferAssignmentBodySchema>;
+
+/** `POST /role-assignments/:id/end` — a body at all only so `force` has somewhere to go. */
+export const endAssignmentBodySchema = z.object({
+  effective_at: z.coerce.date().optional(),
+  force: forceFlag,
+});
+export type EndAssignmentBody = z.infer<typeof endAssignmentBodySchema>;
 
 export const assignmentIdParamsSchema = z.object({
   assignmentId: z.coerce.number().int().positive(),

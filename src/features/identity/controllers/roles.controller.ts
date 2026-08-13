@@ -20,6 +20,12 @@ export async function listRoles(req: Request, res: Response): Promise<void> {
   ok(res, result);
 }
 
+/** Public — no actor is read, because there is none during registration. */
+export async function listSelfRegisterableRoles(_req: Request, res: Response): Promise<void> {
+  const roles = await rolesService.listSelfRegisterableRoles();
+  ok(res, roles);
+}
+
 export async function getRoleById(req: Request, res: Response): Promise<void> {
   const { id } = req.params as unknown as { id: number };
   const role = await rolesService.getRoleById(id);

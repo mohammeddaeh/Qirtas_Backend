@@ -16,8 +16,8 @@ const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
  * compromised and the person is still harassed, which is enough.
  *
  * `POST /users/reset-password` is the one that protects the account. The code is
- * 8 characters from a 32-symbol alphabet, so guessing is hopeless at human speed
- * and trivial at machine speed — the limit is what keeps the difference. It is
+ * six digits, so guessing is hopeless at human speed and trivial at machine
+ * speed — the limit is what keeps the difference. It is
  * also why the code expires in fifteen minutes: the two together bound the
  * attempts per code to single digits.
  *

@@ -32,6 +32,20 @@ export function findMany(
     )`;
     conditions.push(filter.unassigned ? sql`NOT ${holdsActiveAssignment}` : holdsActiveAssignment);
   }
+  if (filter.excluding_role_id !== undefined) {
+    // The (role, branch) pair, matched exactly. `IS NOT DISTINCT FROM` rather
+    // than `=` because the unrestricted post is `branch_id IS NULL`, and `=
+    // NULL` is never true in SQL — so an unrestricted post would exclude nobody
+    // and the picker would keep offering a duplicate the server then refuses.
+    const branchId = filter.excluding_branch_id ?? null;
+    conditions.push(sql`NOT EXISTS (
+      SELECT 1 FROM ${userRoleAssignmentsTable} a
+      WHERE a.user_id = ${usersTable.id}
+        AND a.role_id = ${filter.excluding_role_id}
+        AND a.branch_id IS NOT DISTINCT FROM ${branchId}
+        AND (a.valid_to IS NULL OR a.valid_to > now())
+    )`);
+  }
   if (filter.search !== undefined && filter.search.length > 0) {
     // Matched against the CONCATENATED name, so "أحمد العبدالله" finds the
     // person whose first and last names are stored separately — searching the

@@ -30,12 +30,24 @@ async function call(m, p, body, token) {
   return { status: r.status, json: j };
 }
 
-function latestCode(email) {
+function readCode(email) {
   const log = readFileSync(LOG, 'utf8').replace(/\x1b\[[0-9;]*m/g, '');
   const blocks = [...log.matchAll(/to: "([^"]+)"[\s\S]{0,400}?body: "([\s\S]*?)"\n/g)].filter((m) => m[1] === email);
   if (!blocks.length) return null;
-  const m = blocks[blocks.length - 1][2].match(/ {4}([A-Z2-9]{8})/);
+  // Alphabet-agnostic — see the same note in auth-verification.e2e.mjs.
+  const m = blocks[blocks.length - 1][2].match(/ {4}([A-Z0-9]{4,12})\\n/);
   return m ? m[1] : null;
+}
+
+/** Polls instead of reading once — see the same note in auth-verification.e2e.mjs. */
+async function latestCode(email, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const code = readCode(email);
+    if (code !== null) return code;
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 const admin = await call('POST', '/users/login', { email: 'super_admin@admin.com', password: 'P@ssw0rd@123' });
@@ -75,7 +87,7 @@ chk('...and the victim is still signed in', victimStillIn.status === 200, `statu
 
 // ── 3. Can the attacker spend the victim's verification code? ───────────────
 await new Promise((r) => setTimeout(r, 300));
-const victimCode = latestCode(victim.email);
+const victimCode = await latestCode(victim.email);
 chk('captured the victim\'s code', !!victimCode, String(victimCode));
 const cross = await call('POST', '/auth/verify-email', { code: victimCode }, attacker.token);
 chk('a code cannot be spent by another account', cross.status === 422, `status ${cross.status}`);
@@ -95,11 +107,17 @@ const escalate = await call('POST', '/users/register', {
   // so zod strips them silently — and the store no longer reads them either.
   is_admin: true, status: 'active', email_verified: true, id: 1,
 });
+// The response carries a sign-in result now ({user, token, permission_keys}),
+// so every claim below reads through `.user` — and the session it hands out is
+// checked here too: a registration that could inject privilege AND arrive
+// holding a token is the escalation this section exists to rule out.
+const escUser = escalate.json?.data?.user;
 chk('registration with injected privileged fields still succeeds', escalate.status === 201, `status ${escalate.status}`);
-chk('...but is_admin was NOT granted', escalate.json?.data?.is_admin === false, String(escalate.json?.data?.is_admin));
-chk('...and status was NOT forced to active', escalate.json?.data?.status === 'pending_verification', escalate.json?.data?.status);
-chk('...and email_verified was NOT forced', escalate.json?.data?.email_verified === false, String(escalate.json?.data?.email_verified));
-chk('...and the id was NOT overridden', escalate.json?.data?.id !== 1, String(escalate.json?.data?.id));
+chk('...but is_admin was NOT granted', escUser?.is_admin === false, String(escUser?.is_admin));
+chk('...and status was NOT forced to active', escUser?.status === 'pending_verification', escUser?.status);
+chk('...and email_verified was NOT forced', escUser?.email_verified === false, String(escUser?.email_verified));
+chk('...and the id was NOT overridden', escUser?.id !== 1, String(escUser?.id));
+chk('...and the session it hands back opens nothing', escalate.json?.data?.permission_keys?.length === 0, JSON.stringify(escalate.json?.data?.permission_keys));
 
 // ── 5. Can a revoked session be revived by refresh? ─────────────────────────
 const doomed = await call('POST', '/users/login', { email: victim.email, password: 'Testpass123' });
@@ -113,7 +131,7 @@ const living = await call('POST', '/users/login', { email: victim.email, passwor
 const LT = living.json?.data?.token;
 await call('POST', '/auth/forgot-password', { email: victim.email });
 await new Promise((r) => setTimeout(r, 300));
-const resetCode = latestCode(victim.email);
+const resetCode = await latestCode(victim.email);
 const reset = await call('POST', '/auth/reset-password', {
   email: victim.email, code: resetCode, new_password: 'Newpass456',
 });

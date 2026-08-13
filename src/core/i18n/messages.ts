@@ -96,6 +96,19 @@ export const MESSAGES = {
     en: 'Email verification is not enabled on this server',
     ar: 'تأكيد البريد الإلكتروني غير مفعَّل على هذا الخادم',
   },
+  /**
+   * The code was issued but the mail server refused the message.
+   *
+   * Says "just now" and "try again" because from the user's side that is the
+   * whole truth and the whole remedy — whether the cause was credentials, a
+   * sender-domain policy or a dead socket is an operator's problem, and naming
+   * it here would describe our infrastructure to whoever asked. The real reason
+   * is in the server log and the audit row.
+   */
+  verification_send_failed: {
+    en: 'We could not send the verification email just now — please try again shortly',
+    ar: 'تعذّر إرسال رسالة التأكيد الآن — حاول مرة أخرى بعد قليل',
+  },
   auth_provider_missing: {
     en: 'Sign-in is not configured on this server',
     ar: 'تسجيل الدخول غير مُهيّأ على هذا الخادم',
@@ -118,9 +131,26 @@ export const MESSAGES = {
   // These are read by an admin mid-task (staffing a branch, moving someone),
   // not by a developer, so they must follow the device language like any
   // other user-facing string.
+  // A WARNING, not a wall: staffing is the admin's call, and "this post must
+  // always be filled" is not a rule the system gets to invent. Pass `force` to
+  // proceed. Distinguished from `last_system_role_holder` below by key, because
+  // only one of the two is overridable and both are 409.
   last_qualified_staff: {
-    en: 'This is the last active staff member holding this role in this branch. Assign a qualified replacement before transferring or removing them.',
-    ar: 'هذا آخر موظف فعّال يحمل هذا الدور في هذا الفرع. عيّن بديلاً مؤهلاً قبل نقله أو إنهاء تعيينه.',
+    en: 'This is the last active staff member holding this role in this branch. End the assignment anyway, or assign the role to someone else first.',
+    ar: 'هذا آخر موظف فعّال يحمل هذا الدور في هذا الفرع. يمكنك إنهاء التعيين على أي حال، أو إسناد الدور لموظف آخر أولاً.',
+  },
+  // Same rule, different caller: suspending/disabling closes EVERY post at
+  // once, so it has no `force` and must not borrow wording that offers one.
+  user_release_last_qualified_staff: {
+    en: 'This person is the last active holder of a role in an operating branch. End or transfer that assignment first, then take the account out of service.',
+    ar: 'هذا الشخص آخر من يشغل دوراً في فرع عامل. أنهِ ذلك التعيين أو انقله أولاً، ثم أوقف الحساب.',
+  },
+  // The one refusal `force` does not open, because the state it prevents cannot
+  // be undone from inside the app: nobody left who can manage users means
+  // nobody left who can hand the permission back.
+  last_system_role_holder: {
+    en: 'This is the last active person who can manage users. Releasing them would leave nobody able to administer the system — assign the role to someone else first.',
+    ar: 'هذا آخر شخص فعّال يستطيع إدارة المستخدمين. إنهاء تعيينه يترك النظام بلا من يديره — أسنِد الدور لموظف آخر أولاً.',
   },
   role_above_actor_level: {
     en: 'Cannot assign a role at or above your own authority level',
@@ -249,6 +279,10 @@ export const MESSAGES = {
   registration_not_rejected: {
     en: 'Only a rejected registration can be resubmitted',
     ar: 'إعادة الإرسال متاحة للطلب المرفوض وحده',
+  },
+  role_not_self_registerable: {
+    en: 'This role cannot be requested at registration — an administrator grants it directly',
+    ar: 'هذا الدور لا يُطلب عند التسجيل — يمنحه الأدمن مباشرة',
   },
   role_inactive_unassignable: {
     en: 'An inactive role cannot be assigned',

@@ -1,4 +1,4 @@
-import { eq, and, sql, desc } from 'drizzle-orm';
+import { eq, and, sql, desc, inArray } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findOneById } from '../../../core/db/crud-helpers.js';
 import {
@@ -188,6 +188,92 @@ export async function countOtherActiveHolders(params: {
       and(
         eq(userRoleAssignmentsTable.role_id, params.roleId),
         branchClause,
+        isActiveClause,
+        eq(usersTable.status, 'active'),
+        sql`${userRoleAssignmentsTable.user_id} != ${params.excludingUserId}`,
+      ),
+    );
+  return Number(rows[0]?.value ?? 0);
+}
+
+/**
+ * Active posts for a whole page of users at once, keyed by user id.
+ *
+ * **One query for the page, not one per row.** The obvious shape — loop the
+ * page and call `findActiveForUserWithNames` — is a 50-query N+1 hidden behind
+ * a `Promise.all`, which looks fast locally and falls over on a real dataset.
+ *
+ * Returns a Map so the caller can render `[]` for a user with no posts without
+ * having to tell "no posts" apart from "not in the result set".
+ */
+export async function findActivePostsForUsers(
+  userIds: number[],
+): Promise<Map<number, { role_id: number; role_name: string; branch_id: number | null; branch_name: string | null }[]>> {
+  const byUser = new Map<
+    number,
+    { role_id: number; role_name: string; branch_id: number | null; branch_name: string | null }[]
+  >();
+  for (const id of userIds) byUser.set(id, []);
+  if (userIds.length === 0) return byUser;
+
+  const rows = await db
+    .select({
+      user_id: userRoleAssignmentsTable.user_id,
+      role_id: userRoleAssignmentsTable.role_id,
+      role_name: rolesTable.name,
+      branch_id: userRoleAssignmentsTable.branch_id,
+      branch_name: branchesTable.name,
+    })
+    .from(userRoleAssignmentsTable)
+    .innerJoin(rolesTable, eq(rolesTable.id, userRoleAssignmentsTable.role_id))
+    .leftJoin(branchesTable, eq(branchesTable.id, userRoleAssignmentsTable.branch_id))
+    .where(
+      and(inArray(userRoleAssignmentsTable.user_id, userIds), isActiveClause),
+    )
+    .orderBy(userRoleAssignmentsTable.valid_from);
+
+  for (const row of rows) {
+    byUser.get(row.user_id)?.push({
+      role_id: row.role_id,
+      role_name: row.role_name,
+      branch_id: row.branch_id,
+      branch_name: row.branch_name,
+    });
+  }
+  return byUser;
+}
+
+/**
+ * How many **other** active people can still exercise [permissionKey] anywhere.
+ *
+ * The lockout check, and deliberately phrased as a permission rather than a
+ * role or a category: `system` covered مدقق too, whose departure locks nobody
+ * out of anything, while a custom role carrying `users.manage` was not covered
+ * at all. What actually cannot be allowed to reach zero is the ability to hand
+ * the ability back.
+ *
+ * Distinct users, and only `active` ones — a suspended account cannot
+ * administer anything, so counting it would let the last real administrator
+ * leave behind a door nobody can open.
+ */
+export async function countOtherActiveUsersWithPermission(params: {
+  permissionKey: string;
+  excludingUserId: number;
+}): Promise<number> {
+  const rows = await db
+    .select({ value: sql<number>`count(distinct ${userRoleAssignmentsTable.user_id})` })
+    .from(userRoleAssignmentsTable)
+    .innerJoin(usersTable, eq(usersTable.id, userRoleAssignmentsTable.user_id))
+    .innerJoin(rolesTable, eq(rolesTable.id, userRoleAssignmentsTable.role_id))
+    .innerJoin(rolePermissionsTable, eq(rolePermissionsTable.role_id, rolesTable.id))
+    // Same joins as findEffectivePermissionKeys, so this counts exactly the
+    // people `requirePermission` would let through — a counter that disagreed
+    // with the gate it protects would guard the wrong number.
+    .innerJoin(permissionsTable, eq(permissionsTable.key, rolePermissionsTable.permission_key))
+    .where(
+      and(
+        eq(rolePermissionsTable.permission_key, params.permissionKey),
+        eq(rolesTable.is_active, true),
         isActiveClause,
         eq(usersTable.status, 'active'),
         sql`${userRoleAssignmentsTable.user_id} != ${params.excludingUserId}`,

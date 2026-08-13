@@ -19,19 +19,26 @@ import type { SessionRow } from '../../../core/auth/schemas/sessions.schema.js';
 const emailSchema = z.string().trim().toLowerCase().email().max(255);
 
 /**
- * A short, human-typed code.
+ * A short, human-typed code — six digits.
  *
- * Case and surrounding whitespace are normalised here rather than rejected: the
- * alphabet is upper-case only, so a lower-case entry is the right code typed
- * correctly, and leading spaces are what copying out of a mail client produces.
- * Refusing either would be refusing a correct answer on a formatting technicality.
+ * Whitespace and case are normalised here rather than rejected: copying out of a
+ * mail client brings spaces, six digits are commonly typed in groups, and a
+ * lower-case entry of a pre-change letter code is that code typed correctly.
+ * Refusing any of them would be refusing a correct answer on a formatting
+ * technicality.
+ *
+ * The length bounds stay wide deliberately. This schema screens out obvious
+ * junk; the real check is the hash comparison in verification.service.ts.
+ * Narrowing it to exactly six would reject the letter codes still inside their
+ * fifteen-minute life at the moment the format changed — a self-inflicted
+ * outage for the few users mid-flow, in exchange for nothing.
  */
 const codeSchema = z
   .string()
   .trim()
   .min(4)
   .max(64)
-  .transform((v) => v.toUpperCase());
+  .transform((v) => v.replace(/\s+/g, '').toUpperCase());
 
 export const loginBodySchema = z.object({
   email: emailSchema,

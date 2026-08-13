@@ -20,14 +20,37 @@ async function call(m, p, body, token) {
 }
 
 /** Pulls the newest code the LogEmailSender wrote for [email]. pino-pretty colours its keys, so ANSI is stripped first. */
-function latestCode(email) {
+function readCode(email) {
   const log = readFileSync(LOG, 'utf8').replace(/\x1b\[[0-9;]*m/g, '');
   const blocks = [...log.matchAll(/to: "([^"]+)"[\s\S]{0,400}?body: "([\s\S]*?)"\n/g)].filter((m) => m[1] === email);
   if (!blocks.length) return null;
   // The template indents the code by four spaces on its own line; that is the
   // only such run in the body, so it is anchor enough.
-  const m = blocks[blocks.length - 1][2].match(/ {4}([A-Z2-9]{8})/);
+  // Alphabet-agnostic on purpose. This was `[A-Z2-9]{8}` and stopped matching
+  // the day the code became six digits — every assertion downstream then failed
+  // with "null", which reads as a broken verification flow rather than a broken
+  // parser. The length range covers both formats and the next one.
+  const m = blocks[blocks.length - 1][2].match(/ {4}([A-Z0-9]{4,12})\\n/);
   return m ? m[1] : null;
+}
+
+/**
+ * Waits for the code to appear, rather than assuming it already has.
+ *
+ * The HTTP response returning does not mean the log line has been written:
+ * pino-pretty runs as a transport in a worker thread, so the line lands a beat
+ * after the request completes. Reading once, immediately, lost that race often
+ * enough to look like a broken verification flow — the same `null` a genuinely
+ * missing code produces, and eight cascading failures below it.
+ */
+async function latestCode(email, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const code = readCode(email);
+    if (code !== null) return code;
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, 100));
+  }
 }
 
 /**
@@ -69,9 +92,18 @@ const reg = await call('POST', '/users/register', {
   password: 'Testpass123', requested_role_id: roleId,
 });
 chk('registration accepted', reg.status === 201, `status ${reg.status}`);
-chk('lands at pending_verification, NOT pending_approval', reg.json?.data?.status === 'pending_verification', reg.json?.data?.status);
-chk('email_verified is false', reg.json?.data?.email_verified === false);
+chk('lands at pending_verification, NOT pending_approval', reg.json?.data?.user?.status === 'pending_verification', reg.json?.data?.user?.status);
+chk('email_verified is false', reg.json?.data?.user?.email_verified === false);
 chk('message names the verification step', /confirm your email/i.test(reg.json?.message || ''), reg.json?.message);
+
+// The session ships with the registration, because the step the message names
+// (POST /auth/verify-email) is requireAuth. Without this the client has to send
+// the user to the sign-in screen to retype credentials it was just handed.
+const RT = reg.json?.data?.token;
+chk('registration hands back a session', !!RT, String(RT));
+chk('...that holds zero permissions', reg.json?.data?.permission_keys?.length === 0, JSON.stringify(reg.json?.data?.permission_keys));
+const regMe = await call('GET', '/users/me', null, RT);
+chk('...and the token actually works', regMe.status === 200 && regMe.json?.data?.user?.email === email, `status ${regMe.status}`);
 
 // The anti-flood guarantee: an unproven address never reaches the admin's queue.
 const q1 = await allPendingApproval(AT);
@@ -83,7 +115,7 @@ const UT = li.json?.data?.token;
 chk('but holds zero permissions', li.json?.data?.permission_keys?.length === 0, JSON.stringify(li.json?.data?.permission_keys));
 
 await new Promise((r) => setTimeout(r, 400));
-const code = latestCode(email);
+const code = await latestCode(email);
 chk('a verification code was issued', !!code, String(code));
 
 const wrong = await call('POST', '/auth/verify-email', { code: 'AAAAAAAA' }, UT);
@@ -114,7 +146,7 @@ await call('POST', '/users/register', {
 const li2 = await call('POST', '/users/login', { email: email2, password: 'Testpass123' });
 const UT2 = li2.json?.data?.token;
 await new Promise((r) => setTimeout(r, 400));
-const realCode = latestCode(email2);
+const realCode = await latestCode(email2);
 chk('second account got its own code', !!realCode && realCode !== code, String(realCode));
 
 for (let i = 0; i < 5; i += 1) await call('POST', '/auth/verify-email', { code: 'BBBBBBBB' }, UT2);

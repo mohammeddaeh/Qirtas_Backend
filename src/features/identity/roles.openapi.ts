@@ -46,6 +46,26 @@ registry.registerPath({
 
 registry.registerPath({
   method: 'get',
+  path: '/api/v1/roles/self-registerable',
+  tags,
+  summary: 'List the roles a visitor may request at self-registration (PUBLIC — no auth)',
+  description:
+    'The only unauthenticated roles endpoint. `POST /users/register` requires ' +
+    '`requested_role_id`, and the visitor filling that form has no session to ' +
+    'read `GET /roles` with. Returns active roles outside the `system` ' +
+    'category, unpaginated, without `permissions`. The register endpoint ' +
+    'enforces the same predicate, so an id outside this list is refused with ' +
+    '422 `role_not_self_registerable`.',
+  responses: {
+    200: {
+      description: 'The self-registration role catalog',
+      ...jsonBody(successEnvelope(z.array(roleResponseSchema))),
+    },
+  },
+});
+
+registry.registerPath({
+  method: 'get',
   path: '/api/v1/roles/{id}',
   tags,
   summary: 'Get a single role with its full permission list',

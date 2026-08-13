@@ -47,6 +47,25 @@ export async function listRoles(
   );
 }
 
+/**
+ * The role catalog a self-registering visitor picks from — the ONLY roles
+ * endpoint reachable without a session.
+ *
+ * Registration needs this list and has no session to read `GET /roles` with:
+ * the form is filled in before an account exists, and `requested_role_id` is
+ * required. Without a public catalog the picker on the register screen was
+ * permanently empty, so the form could never be completed at all.
+ *
+ * Sends the same `WireRole` shape as every other roles endpoint rather than a
+ * trimmed one — one wire shape, one client model, one picker. What the roles
+ * can DO stays private either way: `permissions` is omitted here exactly as it
+ * is on `GET /roles`, and `GET /permissions` remains gated.
+ */
+export async function listSelfRegisterableRoles(): Promise<WireRole[]> {
+  const rows = await rolesRepository.findSelfRegisterable();
+  return rows.map((r) => toWireRole(r));
+}
+
 export async function getRoleById(id: number): Promise<WireRole> {
   const row = await rolesRepository.findById(id);
   if (!row) throw new NotFoundError('Role not found');

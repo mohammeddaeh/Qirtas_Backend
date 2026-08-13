@@ -11,8 +11,9 @@
  * deployments is the *transport*, not the *message*, so the transport is what
  * gets abstracted.
  *
- * `PasswordResetDelivery` is kept and reimplemented on top of this, so no
- * existing caller changes (core/notifications/password-reset-delivery.ts).
+ * `PasswordResetDelivery` (core/notifications/password-reset-delivery.ts) is the
+ * one-method interface this replaced. It has no callers left and is kept only
+ * so an application built on an older copy of the template still compiles.
  *
  * ## What an implementation must guarantee
  *
@@ -21,13 +22,40 @@
  *   cannot be used to test who has an account here. If a send failure became an
  *   exception, that flow would answer differently for real addresses and the
  *   oracle would be back — through the error path instead of the success path.
- *   Log the failure; do not surface it.
+ *   Report the failure in the return value; do not raise it.
  * - **Never log the message body.** Bodies carry verification codes and reset
  *   codes, which are temporary passwords.
+ *
+ * ## Why `send` reports a result instead of returning `void`
+ *
+ * The no-throw rule above is a rule about the *HTTP response*, not about
+ * *knowledge*. The first version conflated the two and returned `void`, so a
+ * rejected send was indistinguishable from a delivered one at every call site:
+ * `sendEmailVerification` recorded `auth.email.verification_sent` into the audit
+ * log after a send that never left the building, and `POST
+ * /auth/resend-verification` answered "code sent" for a code nobody could
+ * receive. That was not hypothetical — a provider restriction silently dropped
+ * every message to an address other than one (2026-08-12).
+ *
+ * So the outcome comes back as a value. Callers that must not vary their
+ * response (password reset) ignore it beyond logging; callers that may
+ * (the authenticated resend) act on it. Either way the *reason* stays inside
+ * the server: `EmailDeliveryFailure` is a diagnostic code for logs and audit
+ * rows, never a string handed to a client.
  */
+
+/**
+ * Which message this is — for logs and metrics, not for rendering.
+ *
+ * Carried on the message rather than passed beside it so a transport cannot be
+ * called without it, and so `subject` (localized, and therefore useless as a
+ * grouping key) never becomes the thing dashboards filter on.
+ */
+export type EmailKind = 'email_verification' | 'password_reset';
 
 export interface EmailMessage {
   to: string;
+  kind: EmailKind;
   subject: string;
   /** Plain-text body. Always present — some clients and most mail-security scanners only read this. */
   text: string;
@@ -35,8 +63,46 @@ export interface EmailMessage {
   html?: string;
 }
 
+/**
+ * Why a message did not go out — deliberately coarse.
+ *
+ * These four buckets are the ones that lead to *different actions*: fix the
+ * sender/recipient policy, fix the credentials, fix the network, or read the
+ * log. A finer taxonomy would mean mapping every provider's error catalogue
+ * here, which is exactly the provider-specific knowledge this port exists to
+ * keep out of `core/auth`.
+ */
+export type EmailDeliveryFailure =
+  /** No transport is configured at all — the message was never handed to anything. */
+  | 'no_transport'
+  /** The provider refused the envelope: unverified sender domain, recipient not permitted, mailbox unknown. */
+  | 'rejected'
+  /** The provider refused the credentials. */
+  | 'auth'
+  /** The provider could not be reached: DNS, TCP, TLS, timeout. */
+  | 'connection'
+  | 'unknown';
+
+export type EmailDeliveryResult =
+  | { ok: true; messageId?: string }
+  | { ok: false; errorCode: EmailDeliveryFailure };
+
 export interface EmailSender {
-  send(message: EmailMessage): Promise<void>;
+  send(message: EmailMessage): Promise<EmailDeliveryResult>;
+}
+
+/**
+ * The part of an address that is safe to log.
+ *
+ * A full address in a log line is personal data in every backup that log ends
+ * up in, and it buys nothing the domain does not: "every message to gmail.com
+ * is being rejected" is the finding, and the local part never changes it. The
+ * account id, recorded beside it, is how a specific user is traced when that is
+ * genuinely needed.
+ */
+export function recipientDomain(address: string): string {
+  const at = address.lastIndexOf('@');
+  return at >= 0 && at < address.length - 1 ? address.slice(at + 1).toLowerCase() : 'unknown';
 }
 
 /**

@@ -61,6 +61,38 @@ export function findById(id: number): Promise<RoleRow | undefined> {
   return findOneById<RoleRow>(rolesTable, rolesTable.id, id);
 }
 
+/**
+ * Whether a visitor may name this role in a self-registration request.
+ *
+ * Two conditions, each for its own reason:
+ * - `is_active` — a retired role is refused at assignment time
+ *   (`role_inactive_unassignable`), so requesting one is a guaranteed dead end.
+ * - not `system` — that category is the internal provisioning group (Super
+ *   Admin, auditor). Those are granted by an admin, never applied for; letting
+ *   a stranger file a request for Super Admin puts a line an admin has to read
+ *   and reject into a queue that is their working tool.
+ *
+ * The single definition behind BOTH the public catalog and the register
+ * endpoint's guard — a catalog the write path does not enforce is decorative.
+ */
+export function isSelfRegisterable(row: RoleRow): boolean {
+  return row.is_active && row.category !== 'system';
+}
+
+/**
+ * The self-registration catalog — every role [isSelfRegisterable] accepts.
+ *
+ * Unpaginated on purpose: this is a bounded catalog (the soft cap is 25 active
+ * roles) read by an anonymous form that has nowhere to put a "load more".
+ */
+export function findSelfRegisterable(): Promise<RoleRow[]> {
+  return db
+    .select()
+    .from(rolesTable)
+    .where(and(eq(rolesTable.is_active, true), ne(rolesTable.category, 'system')))
+    .orderBy(asc(rolesTable.name));
+}
+
 export async function findByName(name: string): Promise<RoleRow | undefined> {
   const rows = await db.select().from(rolesTable).where(eq(rolesTable.name, name)).limit(1);
   return rows[0];

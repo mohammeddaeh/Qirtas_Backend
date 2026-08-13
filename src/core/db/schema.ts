@@ -24,3 +24,7 @@ export * from '../auth/schemas/sessions.schema.js';
 export * from '../auth/schemas/verification-tokens.schema.js';
 export * from '../../features/localization/schemas/languages.schema.js';
 export * from '../../features/localization/schemas/translation-entries.schema.js';
+
+// Staging for two-phase imports. Owned by core/data-transfer/ and shared by
+// every resource — see its own doc for why a table rather than a Map.
+export * from '../data-transfer/schemas/import-staging.schema.js';

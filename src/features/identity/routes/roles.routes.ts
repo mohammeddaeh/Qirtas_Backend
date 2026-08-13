@@ -24,6 +24,14 @@ rolesRouter.get(
   asyncHandler(rolesController.listRoles),
 );
 
+// Public — the ONLY unauthenticated route on this router. Registration happens
+// before an account exists, so the visitor has no session to read `GET /`
+// with, yet `requested_role_id` is required to submit the form.
+//
+// ⚠️ Must stay ABOVE `/:id`: Express matches in mount order, and `/:id` would
+// otherwise swallow this path and reject it as a non-numeric id.
+rolesRouter.get('/self-registerable', asyncHandler(rolesController.listSelfRegisterableRoles));
+
 rolesRouter.get(
   '/:id',
   requirePermission('roles.view'),

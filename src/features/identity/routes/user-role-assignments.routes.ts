@@ -7,6 +7,7 @@ import {
   assignmentIdParamsSchema,
   createAssignmentBodySchema,
   transferAssignmentBodySchema,
+  endAssignmentBodySchema,
 } from '../dtos/user-role-assignments.dto.js';
 import * as assignmentsController from '../controllers/user-role-assignments.controller.js';
 
@@ -63,5 +64,6 @@ roleAssignmentsRouter.post(
   '/:assignmentId/end',
   requirePermission('users.manage'),
   validate(assignmentIdParamsSchema, 'params'),
+  validate(endAssignmentBodySchema, 'body'),
   asyncHandler(assignmentsController.endAssignment),
 );

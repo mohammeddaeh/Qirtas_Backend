@@ -12,6 +12,8 @@ import { notFound } from './core/middleware/not-found.js';
 import { errorHandler } from './core/middleware/error-handler.js';
 import { buildOpenApiDocument } from './core/openapi/document.js';
 import { configureAuth } from './core/auth/composition.js';
+import { configureDataTransfer } from './core/data-transfer/composition.js';
+import { dataTransferRouter } from './core/data-transfer/routes/data-transfer.routes.js';
 import { qirtasAccountStore } from './features/identity/repositories/account-store.impl.js';
 import { auditLogSecurityEventSink } from './features/identity/repositories/security-event-sink.impl.js';
 import { authRouter } from './features/auth/routes/auth.routes.js';
@@ -24,6 +26,7 @@ import { ownershipsRouter } from './features/identity/routes/ownerships.routes.j
 import { roleAssignmentsRouter } from './features/identity/routes/user-role-assignments.routes.js';
 import { auditLogRouter } from './features/identity/routes/audit-log.routes.js';
 import { languagesRouter } from './features/localization/routes/languages.routes.js';
+import { branchesTransferResource } from './features/identity/branches.transfer.js';
 
 /**
  * Browser origins allowed to call this API, from `ALLOWED_ORIGINS`.
@@ -69,6 +72,21 @@ export function buildApp(): Express {
     accountStore: qirtasAccountStore,
     securityEventSink: auditLogSecurityEventSink,
   });
+
+  // ── What this application can import and export ───────────────────────────
+  //
+  // One line per transferable resource. The generic engine in
+  // `core/data-transfer/` turns each declaration into a CSV export, an XLSX
+  // export, an import template and a two-phase validating importer, and the
+  // Flutter client renders screens for all of it from
+  // `GET /api/v1/data-transfer/resources` with no per-feature code.
+  //
+  // ⚠️ A resource whose rows are **not** scoped to the caller must declare an
+  // `authorize` hook mirroring its own routes' guards. The transfer routes
+  // carry `requireAuth` and nothing more, so without one an import would bypass
+  // the permission that resource's own POST route enforces — see
+  // `features/identity/branches.transfer.ts`.
+  configureDataTransfer([branchesTransferResource]);
 
   app.use(helmet());
   app.use(cors(corsOptions()));
@@ -122,6 +140,10 @@ app.get('/', (_req, res) => {
   app.use('/api/v1/role-assignments', roleAssignmentsRouter);
   app.use('/api/v1/audit-log', auditLogRouter);
   app.use('/api/v1/languages', languagesRouter);
+
+  // Generic import/export. Mounted once, serves every resource passed to
+  // `configureDataTransfer()` above — a new transferable feature adds no route.
+  app.use('/api/v1/data-transfer', dataTransferRouter);
 
   // Must be registered last, in this order.
   app.use(notFound);

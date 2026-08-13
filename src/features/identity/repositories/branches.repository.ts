@@ -1,4 +1,4 @@
-import { eq, asc, desc, and, count, sql, type SQL } from 'drizzle-orm';
+import { eq, asc, desc, and, count, gt, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findManyPaginated, findOneById } from '../../../core/db/crud-helpers.js';
 import { likeTerm } from '../../../core/db/like-term.js';
@@ -7,7 +7,7 @@ import { usersTable, type UserRow } from '../schemas/users.schema.js';
 import { rolesTable } from '../schemas/roles.schema.js';
 import { userRoleAssignmentsTable } from '../schemas/user-role-assignments.schema.js';
 import type { PaginationParams } from '../../../core/pagination/pagination.js';
-import type { BranchesFilterQuery } from '../dtos/branches.dto.js';
+import type { BranchesFilterQuery, CreateBranchBody } from '../dtos/branches.dto.js';
 
 const sortColumns = {
   created_at: branchesTable.created_at,
@@ -127,4 +127,100 @@ export async function update(
 ): Promise<BranchRow | undefined> {
   const rows = await db.update(branchesTable).set(data).where(eq(branchesTable.id, id)).returning();
   return rows[0];
+}
+
+// ─── Data transfer (export / import) ─────────────────────────────────────────
+//
+// Serve `branches.transfer.ts`. Kept here with every other query so the search
+// predicate below stays identical to the one `findMany` uses — an export whose
+// filter drifted from the list's would quietly return a different set than the
+// screen the user was looking at.
+
+function transferWhere(search: string | undefined): SQL | undefined {
+  if (search === undefined || search.trim() === '') return undefined;
+  const term = likeTerm(search.trim());
+  return sql`(${branchesTable.name} ILIKE ${term} OR ${branchesTable.address} ILIKE ${term})`;
+}
+
+export async function countForExport(search?: string): Promise<number> {
+  const rows = await db
+    .select({ value: count() })
+    .from(branchesTable)
+    .where(transferWhere(search));
+  return rows[0]?.value ?? 0;
+}
+
+/**
+ * Yields every matching branch, one batch at a time.
+ *
+ * **Keyset on `id`, not OFFSET.** `OFFSET n` makes Postgres walk and discard n
+ * rows per page, so the cost grows quadratically and the last pages are the
+ * slowest — an export that appears to hang exactly as it finishes. `WHERE id >
+ * lastId ORDER BY id` uses the primary key for every batch and costs the same
+ * at row 5 000 as at row 1.
+ *
+ * `id ASC` rather than the list's `created_at DESC` because a keyset cursor
+ * needs a unique, monotonic column; `created_at` is neither, and two branches
+ * sharing a timestamp would skip or repeat across a batch boundary.
+ */
+export async function* iterateForExport(
+  search: string | undefined,
+  batchSize = 500,
+): AsyncGenerator<BranchRow> {
+  let lastId = 0;
+
+  for (;;) {
+    const scope = transferWhere(search);
+    const batch = await db
+      .select()
+      .from(branchesTable)
+      .where(scope ? and(scope, gt(branchesTable.id, lastId)) : gt(branchesTable.id, lastId))
+      .orderBy(asc(branchesTable.id))
+      .limit(batchSize);
+
+    if (batch.length === 0) return;
+    for (const row of batch) yield row;
+
+    lastId = batch[batch.length - 1]!.id;
+    if (batch.length < batchSize) return;
+  }
+}
+
+/**
+ * Writes an imported batch — **the whole batch or none of it.**
+ *
+ * The transaction is the promise the two-phase import makes: the user saw a
+ * report saying N rows are valid and pressed confirm. A partial write leaves
+ * them unable to tell which landed, and re-importing to find out duplicates
+ * whatever did.
+ *
+ * `is_default` and `status` are never taken from the file — they are absent
+ * from `createBranchBodySchema` for the same reason. A spreadsheet that could
+ * set `is_default` would let an import silently move the default branch, which
+ * is an organisational decision, not a data entry one.
+ */
+export async function insertManyFromImport(
+  rows: CreateBranchBody[],
+): Promise<{ inserted: number; updated: number; skipped: number }> {
+  if (rows.length === 0) return { inserted: 0, updated: 0, skipped: 0 };
+
+  const CHUNK = 500;
+  let inserted = 0;
+
+  await db.transaction(async (tx) => {
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const chunk = rows.slice(i, i + CHUNK).map((r) => ({
+        name: r.name,
+        address: r.address ?? null,
+        contact_info: r.contact_info ?? null,
+      }));
+      const written = await tx
+        .insert(branchesTable)
+        .values(chunk)
+        .returning({ id: branchesTable.id });
+      inserted += written.length;
+    }
+  });
+
+  return { inserted, updated: 0, skipped: 0 };
 }
