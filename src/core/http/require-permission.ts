@@ -2,7 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { ForbiddenError } from './api-error.js';
 import { requireActorId } from './require-actor.js';
 import { markAccess } from './route-marker.js';
-import { registerPermission } from '../authz/registry.js';
+import { registerPermission, type PermissionMeta } from '../authz/registry.js';
 import * as userRoleAssignmentsRepository from '../../features/identity/repositories/user-role-assignments.repository.js';
 
 /**
@@ -29,8 +29,8 @@ import * as userRoleAssignmentsRepository from '../../features/identity/reposito
  *
  * The middleware body below is byte-for-byte the behaviour it always had.
  */
-export function requirePermission(permissionKey: string) {
-  registerPermission(permissionKey);
+export function requirePermission(permissionKey: string, meta: PermissionMeta = {}) {
+  registerPermission(permissionKey, meta);
 
   const guard = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
     try {

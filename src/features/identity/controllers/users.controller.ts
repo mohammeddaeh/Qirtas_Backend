@@ -32,7 +32,8 @@ export async function getUserById(req: Request, res: Response): Promise<void> {
 /** Returns the calling user's own data + current effective permission keys — same shape as login()'s data, minus token/session_id. */
 export async function getCurrentUser(req: Request, res: Response): Promise<void> {
   const actorUserId = requireActorId(req);
-  const result = await usersService.getCurrentUser(actorUserId);
+  const { include_declared } = req.query as unknown as { include_declared?: boolean };
+  const result = await usersService.getCurrentUser(actorUserId, include_declared === true);
   ok(res, result);
 }
 

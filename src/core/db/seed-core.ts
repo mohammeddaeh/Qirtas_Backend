@@ -35,10 +35,15 @@
  * `permission.*` keys from for those two codes. They must never be used as a
  * source for regular UI text.
  */
-import { eq } from 'drizzle-orm';
+import { count, eq, inArray } from 'drizzle-orm';
 import { db } from './client.js';
 import { ensureBundledLanguagesExist, BUNDLED_LANGUAGES } from './seed-shared.js';
 import { rolesTable } from '../../features/identity/schemas/roles.schema.js';
+// Side-effect import: loading the routers is what makes every
+// `requirePermission()` call register its key. Without it the registry is
+// empty and this seed would consider the whole catalogue unenforced.
+import '../../app.js';
+import { isEnforced, listEnforcedPermissions } from '../authz/registry.js';
 import { permissionsTable } from '../../features/identity/schemas/permissions.schema.js';
 import { rolePermissionsTable } from '../../features/identity/schemas/role-permissions.schema.js';
 import * as languagesRepository from '../../features/localization/repositories/languages.repository.js';
@@ -277,6 +282,61 @@ const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
 const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
 
 /**
+ * **A permission is seeded only once a route enforces it.**
+ *
+ * [PERMISSIONS] above is a *plan*: it was written ahead of the modules, so that
+ * the day `orders` ships, the roles that need it already exist and already list
+ * it. Seeding the whole plan produced a catalogue that lied — on 2026-08-13,
+ * **17 of 27 keys gated nothing**, and every one of them appeared in the roles
+ * screen for an administrator to tick, grant, and believe in.
+ *
+ * So the plan stays here and the database gets only what is real. The registry
+ * (`core/authz/registry.ts`) is the arbiter: it holds the keys the running
+ * server actually checks, collected from the `requirePermission()` calls
+ * themselves.
+ *
+ * The consequence worth understanding: **nothing is lost by waiting.** Write
+ * `requirePermission('orders.create')` on its route, run `npm run db:seed`, and
+ * the key is created and granted to every role below that planned for it — with
+ * no list to remember and no second edit. That is the whole point.
+ */
+function isLive(key: string): boolean {
+  return isEnforced(key);
+}
+
+/** The plan, minus what no route enforces yet. Logged so the gap is never silent. */
+function livePermissions(): SeedPermission[] {
+  const planned = new Map(PERMISSIONS.map((p) => [p.key, p]));
+
+  return listEnforcedPermissions().map((enforced) => {
+    const fromPlan = planned.get(enforced.key);
+    const display = enforced.display ?? fromPlan?.display;
+
+    // Neither the route nor the plan named it. Refused here, at seed time, with
+    // the key in the message — the alternative is a roles screen rendering
+    // `orders.create` as a label, which nobody notices until a user asks what
+    // it means.
+    if (!display) {
+      throw new Error(
+        `Permission "${enforced.key}" is enforced by a route but has no display name. ` +
+          `Add it where the route declares it:\n\n` +
+          `  requirePermission('${enforced.key}', {\n` +
+          `    display: { ar: '…', en: '…' },\n` +
+          `  })\n`,
+      );
+    }
+
+    return {
+      key: enforced.key,
+      module: enforced.module,
+      // The route wins when it says so; otherwise the plan's value, then false.
+      is_sensitive: enforced.sensitive || (fromPlan?.is_sensitive ?? false),
+      display,
+    };
+  });
+}
+
+/**
  * The catalog as a bare key list, for `npm run check:permissions`.
  *
  * Exported so the check reads the **same array the seed writes** rather than a
@@ -379,7 +439,9 @@ const ROLES: SeedRole[] = [
 ];
 
 async function seedPermissions(): Promise<void> {
-  for (const permission of PERMISSIONS) {
+  const live = livePermissions();
+
+  for (const permission of live) {
     await db
       .insert(permissionsTable)
       .values({
@@ -389,7 +451,48 @@ async function seedPermissions(): Promise<void> {
       })
       .onConflictDoNothing({ target: permissionsTable.key });
   }
-  logger.info(`Seeded ${PERMISSIONS.length} permissions (upsert, existing rows untouched)`);
+
+  await prunePermissionsNoRouteEnforces();
+
+  const planned = PERMISSIONS.length - live.length;
+  logger.info(
+    `Seeded ${live.length} enforced permissions` +
+      (planned > 0
+        ? ` — ${planned} planned key(s) held back until a route declares them`
+        : ''),
+  );
+}
+
+/**
+ * Removes catalogue rows no route enforces any more.
+ *
+ * Safe **because the plan lives in this file, not in the table**: a pruned key
+ * and its role grants are recreated in full by the next seed, the moment its
+ * route starts declaring it. Deleting is therefore reversible in the only sense
+ * that matters — nothing a person authored is destroyed, only a row that was
+ * promising something the server could not deliver.
+ *
+ * `role_permissions.permission_key` is `ON DELETE CASCADE`, so the inert grants
+ * go with it. They are counted first and logged by name, because "17 grants
+ * disappeared" is not something a seed should do quietly.
+ */
+async function prunePermissionsNoRouteEnforces(): Promise<void> {
+  const rows = await db.select({ key: permissionsTable.key }).from(permissionsTable);
+  const stale = rows.map((r) => r.key).filter((key) => !isLive(key));
+  if (stale.length === 0) return;
+
+  const grantRows = await db
+    .select({ value: count() })
+    .from(rolePermissionsTable)
+    .where(inArray(rolePermissionsTable.permission_key, stale));
+  const grants = grantRows[0]?.value ?? 0;
+
+  await db.delete(permissionsTable).where(inArray(permissionsTable.key, stale));
+
+  logger.warn(
+    { keys: stale, grants_removed: grants },
+    `Removed ${stale.length} permission(s) no route enforces (and ${grants} inert grant(s)). They return automatically once their routes declare them.`,
+  );
 }
 
 async function seedRoles(): Promise<void> {
@@ -420,7 +523,11 @@ async function seedRoles(): Promise<void> {
       throw new Error(`Failed to seed or find role "${role.name}"`);
     }
 
-    for (const permissionKey of role.permissionKeys) {
+    // Filtered, not asserted: a role legitimately plans for permissions whose
+    // module has not been built. Granting one would violate the foreign key —
+    // and, worse, would be a grant on a key nothing checks. It lands here the
+    // moment its route declares it, on the next seed run.
+    for (const permissionKey of role.permissionKeys.filter(isLive)) {
       await db
         .insert(rolePermissionsTable)
         .values({ role_id: roleRow.id, permission_key: permissionKey })
@@ -448,7 +555,8 @@ async function seedRoles(): Promise<void> {
 async function seedPermissionDisplayNames(): Promise<void> {
   await ensureBundledLanguagesExist('permission display names');
 
-  const modules = [...new Set(PERMISSIONS.map((p) => p.module))].sort();
+  const live = livePermissions();
+  const modules = [...new Set(live.map((p) => p.module))].sort();
   const untranslated = modules.filter((m) => MODULE_DISPLAY[m] === undefined);
   if (untranslated.length > 0) {
     throw new Error(
@@ -461,7 +569,7 @@ async function seedPermissionDisplayNames(): Promise<void> {
   for (const language of BUNDLED_LANGUAGES) {
     const code = language.code as keyof SeedPermission['display'];
     const entries: Record<string, string> = {};
-    for (const permission of PERMISSIONS) {
+    for (const permission of live) {
       entries[`permission.${permission.key}`] = permission.display[code];
     }
     for (const module of modules) {
@@ -472,7 +580,7 @@ async function seedPermissionDisplayNames(): Promise<void> {
   }
 
   logger.info(
-    `Seeded ${PERMISSIONS.length} permission.* + ${modules.length} permission.module.* translation entries for ${BUNDLED_LANGUAGES.map((l) => l.code).join(' + ')}`,
+    `Seeded ${live.length} permission.* + ${modules.length} permission.module.* translation entries for ${BUNDLED_LANGUAGES.map((l) => l.code).join(' + ')}`,
   );
 }
 

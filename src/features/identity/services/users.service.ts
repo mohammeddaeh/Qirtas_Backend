@@ -18,6 +18,7 @@ import * as ownershipsRepository from '../repositories/ownerships.repository.js'
 import * as branchesRepository from '../repositories/branches.repository.js';
 import { SUPER_ADMIN_ROLE_NAME } from './roles.service.js';
 import * as rolesService from './roles.service.js';
+import { listEnforcedPermissions } from '../../../core/authz/registry.js';
 import * as assignmentsService from './user-role-assignments.service.js';
 import * as auditService from './audit.service.js';
 import { AUDIT, target } from './audit-actions.js';
@@ -810,6 +811,29 @@ export interface CurrentUserResult {
    * of its own and cannot drift from the server's answer.
    */
   is_super_admin: boolean;
+
+  /**
+   * Every key this server enforces — present **only** when the caller asks
+   * (`GET /users/me?include_declared=true`), which only a debug build does.
+   *
+   * ## What it is for
+   *
+   * The app gates controls on string keys: `Can(permission: 'records.archive')`.
+   * A typo — `record.archive`, `records.archived` — produces a control hidden
+   * from **everyone, forever**, with no error anywhere. It is indistinguishable
+   * from a permission nobody was granted, and a gate that is always shut reads
+   * in code exactly like a gate that works.
+   *
+   * With this list the app shouts about such a key the moment it renders, in
+   * development, instead of after a user reports a missing button. Sent only on
+   * request because a production client has no use for it — the list is the
+   * application's own vocabulary, already present in its binary.
+   *
+   * Read from `core/authz/registry.ts`, so it is **what the routes enforce**
+   * rather than what the catalog table happens to hold. The two are compared by
+   * `npm run check:permissions`; this field never has to guess which is right.
+   */
+  declared_keys?: string[];
 }
 
 /**
@@ -866,7 +890,10 @@ export async function login(body: LoginBody, origin: authService.RequestOrigin):
  * valid session this should never trigger, but the user row could in theory
  * vanish between session creation and this call.
  */
-export async function getCurrentUser(userId: number): Promise<CurrentUserResult> {
+export async function getCurrentUser(
+  userId: number,
+  includeDeclared = false,
+): Promise<CurrentUserResult> {
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
 
@@ -875,6 +902,9 @@ export async function getCurrentUser(userId: number): Promise<CurrentUserResult>
     user: toWireUser(user),
     permission_keys: permissionKeys,
     is_super_admin: await rolesService.actorHoldsSuperAdmin(user.id),
+    ...(includeDeclared
+      ? { declared_keys: listEnforcedPermissions().map((p) => p.key) }
+      : {}),
   };
 }
 

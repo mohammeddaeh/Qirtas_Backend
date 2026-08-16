@@ -131,15 +131,17 @@ function main(): void {
     );
   }
 
-  // ── 3. Orphan keys (warning) ─────────────────────────────────────────────
+  // ── 3. Planned keys (informational) ──────────────────────────────────────
   const orphans = seeded.filter((key) => !enforced.includes(key));
   if (orphans.length > 0) {
-    console.warn(`\n⚠️  ${orphans.length} seeded key(s) are enforced by no route:\n`);
-    for (const key of orphans) console.warn(`   ${key}`);
-    console.warn(
-      '\n   They appear in the roles screen and an administrator can grant them,',
-      '\n   but they gate nothing. Expected while a module is still being built;',
-      '\n   a permanent entry here is a promise the application does not keep.',
+    console.log(`\nℹ️  ${orphans.length} planned key(s) — declared by no route, so NOT seeded:\n`);
+    for (const key of orphans) console.log(`   ${key}`);
+    console.log(
+      '\n   These live in PERMISSIONS as a plan for modules not yet built. They are',
+      '\n   held out of the database, so no administrator sees a permission that',
+      '\n   gates nothing. Write `requirePermission(<key>)` on its route and the',
+      '\n   next `npm run db:seed` creates it AND grants it to every role that',
+      '\n   already planned for it — no second edit, nothing to remember.',
     );
   }
 
@@ -148,8 +150,8 @@ function main(): void {
   }
 
   console.log(
-    `\n✅ ${routes.length} routes classified · ${enforced.length} keys enforced · ` +
-      `${seeded.length} seeded${orphans.length > 0 ? ` (${orphans.length} not yet enforced)` : ''}`,
+    `\n✅ ${routes.length} routes classified · ${enforced.length} keys enforced and seeded` +
+      (orphans.length > 0 ? ` · ${orphans.length} planned, held back` : ''),
   );
 }
 

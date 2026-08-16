@@ -21,6 +21,7 @@ import {
   updateUserBodySchema,
   createUserByAdminBodySchema,
   usersFilterQuerySchema,
+  currentUserQuerySchema,
 } from '../dtos/users.dto.js';
 import * as usersController from '../controllers/users.controller.js';
 import { userRoleAssignmentsRouter } from './user-role-assignments.routes.js';
@@ -44,7 +45,12 @@ usersRouter.get(
 );
 
 /** Any authenticated user reads their own data + current effective permissions — no specific permission required. Registered before /:id so it isn't swallowed by the param route. */
-usersRouter.get('/me', requireAuth, asyncHandler(usersController.getCurrentUser));
+usersRouter.get(
+  '/me',
+  requireAuth,
+  validate(currentUserQuerySchema, 'query'),
+  asyncHandler(usersController.getCurrentUser),
+);
 
 /** Self-service resubmit after a rejection — only the calling user's own (rejected) account, identified by session, never by :id. Registered before /:id for the same reason as /me above. */
 usersRouter.post(

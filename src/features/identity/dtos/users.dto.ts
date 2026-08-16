@@ -442,3 +442,14 @@ export const usersFilterQuerySchema = z
   })
   .strict();
 export type UsersFilterQuery = z.infer<typeof usersFilterQuerySchema>;
+
+/**
+ * `GET /users/me?include_declared=true` adds every key this server enforces.
+ *
+ * Requested only by debug builds — see [CurrentUserResult.declared_keys] for
+ * what it protects against (a mistyped key in the app produces a control hidden
+ * from everyone, forever, with no error anywhere).
+ */
+export const currentUserQuerySchema = z.object({
+  include_declared: queryBooleanSchema.optional(),
+});

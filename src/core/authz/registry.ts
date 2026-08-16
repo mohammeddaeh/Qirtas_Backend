@@ -33,17 +33,49 @@ import { parseKey, isValidKey } from './key-grammar.js';
  *
  * ## What it deliberately does NOT do
  *
- * It does not replace the `permissions` table. That table carries `module`,
- * `is_sensitive` and the bilingual display names the roles screen renders, and
- * it is the right home for them. The registry answers one narrower question the
- * table cannot: *which keys does the code enforce right now?*
+ * It does not replace the `permissions` **table** — the table is what the roles
+ * screen reads, and it still holds `module`, `is_sensitive` and the display
+ * names. What changed is where those values come from: the route declares them
+ * (below), and `seed-core.ts` writes them. The hand-written list stopped being
+ * the source and became a fallback for keys declared before this existed.
  */
 
-/** One registered key, with where it was declared. */
+/** Bilingual name. Both languages, always — a label with one is a label half the users cannot read. */
+export interface PermissionDisplay {
+  ar: string;
+  en: string;
+}
+
+/** What a route may say about the permission it enforces, beyond its name. */
+export interface PermissionMeta {
+  /**
+   * The name an administrator reads in the roles screen.
+   *
+   * **Supplying it is what makes a new permission need no second edit.** Without
+   * it the key must appear in `PERMISSIONS` in `seed-core.ts` for its display
+   * name, which is exactly the hand-maintained list this module exists to
+   * remove. The seed refuses a key that has neither, naming it — so the gap is
+   * a boot-time message, not a permission that renders as a raw string.
+   */
+  display?: PermissionDisplay;
+
+  /**
+   * Marks a permission whose grant deserves a second look — the roles screen
+   * flags it. Defaults to `false`.
+   *
+   * `users.manage`, `branches.manage` and `records.archive` are the existing
+   * examples: each one lets its holder reshape something other people depend on.
+   */
+  sensitive?: boolean;
+}
+
+/** One registered key, with everything the catalogue needs to exist. */
 export interface RegisteredPermission {
   key: string;
   module: string;
   action: string;
+  display?: PermissionDisplay;
+  sensitive: boolean;
 }
 
 const permissions = new Map<string, RegisteredPermission>();
@@ -52,24 +84,69 @@ const permissions = new Map<string, RegisteredPermission>();
  * Called by `requirePermission()` at module load — and, in the normal course of
  * building a feature, by nothing else.
  *
+ * ## The whole point, in one example
+ *
+ * ```ts
+ * ordersRouter.post(
+ *   '/',
+ *   requirePermission('orders.create', { display: { ar: 'إنشاء طلب', en: 'Create Order' } }),
+ *   …
+ * );
+ * ```
+ *
+ * That line **is** the permission. It guards the route, and `npm run db:seed`
+ * creates the catalogue row, its ar/en names, and every grant the roles in
+ * `seed-core.ts` already planned for it. No list to edit, nothing to remember,
+ * and no way for the catalogue to describe a permission the server does not
+ * check — because the catalogue is now written from the guards themselves.
+ *
+ * ## Duplicates
+ *
  * Registering the same key twice is the normal case (`roles.edit` guards six
- * routes), so it is idempotent. A malformed key throws **at boot**, before a
- * request can observe it: the `module.action` shape is what `check-permissions`
- * and the roles screen's grouping both read.
+ * routes), so it is idempotent, and metadata may be declared on **any one** of
+ * them. Two routes disagreeing about the same key's name throws at boot rather
+ * than letting import order decide which one ships.
  */
-export function registerPermission(key: string): string {
+export function registerPermission(key: string, meta: PermissionMeta = {}): string {
   if (!isValidKey(key)) {
     throw new Error(
       `Invalid permission key "${key}" — expected "module.action" in lower snake case (module plural), e.g. "orders.create". See docs/reference/users_roles.md.`,
     );
   }
 
-  if (!permissions.has(key)) {
+  const existing = permissions.get(key);
+
+  if (!existing) {
     const { module, action } = parseKey(key);
-    permissions.set(key, { key, module, action });
+    permissions.set(key, {
+      key,
+      module,
+      action,
+      display: meta.display,
+      sensitive: meta.sensitive ?? false,
+    });
+    return key;
   }
 
+  if (meta.display) {
+    if (existing.display && !sameDisplay(existing.display, meta.display)) {
+      throw new Error(
+        `Permission "${key}" is declared with two different display names ("${existing.display.en}" and "${meta.display.en}"). Declare it on one route; the others inherit it.`,
+      );
+    }
+    existing.display = meta.display;
+  }
+
+  // `sensitive` only ever tightens: one route treating a key as sensitive is
+  // enough, and the looser declaration must not be able to undo it depending on
+  // which file happened to load first.
+  if (meta.sensitive) existing.sensitive = true;
+
   return key;
+}
+
+function sameDisplay(a: PermissionDisplay, b: PermissionDisplay): boolean {
+  return a.ar === b.ar && a.en === b.en;
 }
 
 /** Every key this process enforces, sorted. */
