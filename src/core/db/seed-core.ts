@@ -43,7 +43,7 @@ import { rolesTable } from '../../features/identity/schemas/roles.schema.js';
 // `requirePermission()` call register its key. Without it the registry is
 // empty and this seed would consider the whole catalogue unenforced.
 import '../../app.js';
-import { isEnforced, listEnforcedPermissions } from '../authz/registry.js';
+import { isGrantable, listEnforcedPermissions, listUmbrellaKeys } from '../authz/registry.js';
 import { permissionsTable } from '../../features/identity/schemas/permissions.schema.js';
 import { rolePermissionsTable } from '../../features/identity/schemas/role-permissions.schema.js';
 import * as languagesRepository from '../../features/localization/repositories/languages.repository.js';
@@ -301,14 +301,35 @@ const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
  * no list to remember and no second edit. That is the whole point.
  */
 function isLive(key: string): boolean {
-  return isEnforced(key);
+  // `isGrantable`, not `isEnforced`: an umbrella (`users.manage`) is declared by
+  // no route, and treating it as dead would delete every role grant that names
+  // it the next time this ran.
+  return isGrantable(key);
 }
 
 /** The plan, minus what no route enforces yet. Logged so the gap is never silent. */
 function livePermissions(): SeedPermission[] {
   const planned = new Map(PERMISSIONS.map((p) => [p.key, p]));
 
-  return listEnforcedPermissions().map((enforced) => {
+  // The umbrellas first. No route declares them — they exist so a role can say
+  // "owns users" once and keep owning it when `users.export` is added next
+  // year. Their display names come from the plan below, which is where the
+  // coarse `users.manage` already lived before it was split.
+  const umbrellas: SeedPermission[] = listUmbrellaKeys().map((key) => {
+    const module = key.slice(0, key.indexOf('.'));
+    const fromPlan = planned.get(key);
+    return {
+      key,
+      module,
+      is_sensitive: fromPlan?.is_sensitive ?? true,
+      display: fromPlan?.display ?? {
+        ar: 'إدارة كاملة',
+        en: 'Full management',
+      },
+    };
+  });
+
+  const enforced = listEnforcedPermissions().map((enforced) => {
     const fromPlan = planned.get(enforced.key);
     const display = enforced.display ?? fromPlan?.display;
 
@@ -334,6 +355,8 @@ function livePermissions(): SeedPermission[] {
       display,
     };
   });
+
+  return [...enforced, ...umbrellas];
 }
 
 /**

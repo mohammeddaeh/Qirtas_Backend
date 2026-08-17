@@ -158,6 +158,58 @@ export function isEnforced(key: string): boolean {
   return permissions.has(key);
 }
 
+/** Every module that has at least one enforced key. */
+export function listModules(): string[] {
+  return [...new Set([...permissions.values()].map((p) => p.module))].sort();
+}
+
+/**
+ * The **grant-only umbrella**: `users.manage` means "every `users.*` key,
+ * including ones added later".
+ *
+ * ## Why it exists, and why no route may declare it
+ *
+ * Splitting `users.manage` into `users.view`/`users.edit`/… would have broken
+ * every role that already held the coarse key. Keeping it as an umbrella means
+ * those roles keep working **untouched** while new roles can be given a slice —
+ * the split cost zero migration.
+ *
+ * It is also the answer to the problem a checkbox matrix always develops: a
+ * role meant to own users stops owning them the moment somebody adds
+ * `users.export`, and nobody notices until it is needed. An umbrella grant
+ * survives the application growing.
+ *
+ * A route declaring it would freeze that meaning to the actions that existed
+ * the day it was written, which is why [registerPermission] refuses the
+ * `manage` action.
+ */
+export const UMBRELLA_ACTION = 'manage';
+
+export function isUmbrellaKey(key: string): boolean {
+  const dot = key.indexOf('.');
+  if (dot === -1) return false;
+  return (
+    key.slice(dot + 1) === UMBRELLA_ACTION && listModules().includes(key.slice(0, dot))
+  );
+}
+
+/** Every module's umbrella, as grantable keys. */
+export function listUmbrellaKeys(): string[] {
+  return listModules().map((module) => `${module}.${UMBRELLA_ACTION}`);
+}
+
+/**
+ * Whether a role or an override may store this key.
+ *
+ * Wider than [isEnforced] by exactly the umbrellas — the two must not be
+ * confused: a request is checked against enforced keys, a *grant* may also name
+ * an umbrella. Using `isEnforced` where this belongs would silently delete
+ * every `users.manage` grant the next time the seed ran.
+ */
+export function isGrantable(key: string): boolean {
+  return isEnforced(key) || isUmbrellaKey(key);
+}
+
 /** Test/tooling only. Registration is boot-time and one-way in a running process. */
 export function clearPermissions(): void {
   permissions.clear();

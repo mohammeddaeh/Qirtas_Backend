@@ -21,7 +21,7 @@ export const userRoleAssignmentsRouter = Router({ mergeParams: true });
  */
 userRoleAssignmentsRouter.get(
   '/',
-  requirePermission('users.manage'),
+  requirePermission('users.access'),
   validate(userIdParamsSchema, 'params'),
   asyncHandler(assignmentsController.listForUser),
 );
@@ -36,14 +36,14 @@ userRoleAssignmentsRouter.get(
  */
 userRoleAssignmentsRouter.get(
   '/ended',
-  requirePermission('users.manage'),
+  requirePermission('users.access'),
   validate(userIdParamsSchema, 'params'),
   asyncHandler(assignmentsController.listEndedForUser),
 );
 
 userRoleAssignmentsRouter.post(
   '/',
-  requirePermission('users.manage'),
+  requirePermission('users.access'),
   validate(userIdParamsSchema, 'params'),
   validate(createAssignmentBodySchema, 'body'),
   asyncHandler(assignmentsController.createAssignment),
@@ -54,7 +54,7 @@ export const roleAssignmentsRouter = Router();
 
 roleAssignmentsRouter.post(
   '/:assignmentId/transfer',
-  requirePermission('users.manage'),
+  requirePermission('users.access'),
   validate(assignmentIdParamsSchema, 'params'),
   validate(transferAssignmentBodySchema, 'body'),
   asyncHandler(assignmentsController.transferAssignment),
@@ -62,7 +62,7 @@ roleAssignmentsRouter.post(
 
 roleAssignmentsRouter.post(
   '/:assignmentId/end',
-  requirePermission('users.manage'),
+  requirePermission('users.access'),
   validate(assignmentIdParamsSchema, 'params'),
   validate(endAssignmentBodySchema, 'body'),
   asyncHandler(assignmentsController.endAssignment),

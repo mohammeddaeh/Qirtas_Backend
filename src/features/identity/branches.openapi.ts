@@ -38,6 +38,30 @@ registry.registerPath({
 
 registry.registerPath({
   method: 'get',
+  path: '/api/v1/branches/self-registerable',
+  tags,
+  summary: 'List the branches a visitor may request at self-registration (PUBLIC — no auth)',
+  description:
+    'The only unauthenticated branches endpoint, and the twin of ' +
+    '`GET /roles/self-registerable`. `POST /users/register` accepts an optional ' +
+    '`requested_branch_id`, and the visitor filling that form has no session to ' +
+    'read `GET /branches` with. Returns every branch that is neither archived ' +
+    'nor permanently `closed`, unpaginated, without the retirement counts. ' +
+    '`temporarily_closed` is included on purpose — the branch is expected back, ' +
+    'and the picker shows the state beside the name. The register and resubmit ' +
+    'endpoints enforce the same predicate, so an id outside this list is ' +
+    'refused with 422 `branch_not_self_registerable`.',
+  responses: {
+    200: {
+      description: 'Branches requestable at registration',
+      ...jsonBody(successEnvelope(z.array(branchResponseSchema))),
+    },
+    ...commonErrorResponses,
+  },
+});
+
+registry.registerPath({
+  method: 'get',
   path: '/api/v1/branches/{id}',
   tags,
   summary: 'Get a single branch',

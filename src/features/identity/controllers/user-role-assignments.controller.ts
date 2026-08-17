@@ -14,6 +14,29 @@ export async function listForUser(req: Request, res: Response): Promise<void> {
   ok(res, result);
 }
 
+/**
+ * The caller's **own** posts — where they work and under which role.
+ *
+ * A separate route from `/users/:userId/role-assignments`, needing no
+ * permission, for exactly the reason `GET /users/me` needs none: reading your
+ * own record is not an administrative act. Reading *somebody else's* is, and
+ * that is what `users.access` guards.
+ *
+ * Without it, the profile screen — which every account opens — called the
+ * administrative route for its own user id and was answered **403 to anyone
+ * without `users.access`**. A person was refused sight of their own job.
+ */
+export async function listForMe(req: Request, res: Response): Promise<void> {
+  const result = await assignmentsService.listActiveForUser(requireActorId(req));
+  ok(res, result);
+}
+
+/** The caller's own closed postings. Same principle as [listForMe]. */
+export async function listEndedForMe(req: Request, res: Response): Promise<void> {
+  const result = await assignmentsService.listEndedForUser(requireActorId(req));
+  ok(res, result);
+}
+
 export async function listEndedForUser(req: Request, res: Response): Promise<void> {
   const { userId } = req.params as unknown as { userId: number };
   const result = await assignmentsService.listEndedForUser(userId);

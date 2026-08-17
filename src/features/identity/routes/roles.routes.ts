@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../../core/http/async-handler.js';
 import { validate } from '../../../core/validation/validate.js';
-import { requirePermission } from '../../../core/http/require-permission.js';
+import {
+  requirePermission,
+  requireAnyPermission,
+} from '../../../core/http/require-permission.js';
 import { publicRoute } from '../../../core/http/route-marker.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 import {
@@ -35,6 +38,29 @@ rolesRouter.get(
   '/self-registerable',
   publicRoute,
   asyncHandler(rolesController.listSelfRegisterableRoles),
+);
+
+/**
+ * The role **picker** feed — narrowed to what the caller may actually assign.
+ *
+ * Any of three permissions opens it, because choosing a role is part of three
+ * different jobs: approving a registration, creating a user, and opening an
+ * assignment. Demanding `roles.view` on top refused people plainly entitled to
+ * do the work — a 403 in the middle of the registration queue, on a request the
+ * screen makes before the user has done anything.
+ *
+ * Distinct from `GET /` for exactly that reason: this returns the subset the
+ * caller can act on; the full catalogue stays behind `roles.view`. Same shape
+ * as `/self-registerable` above, which exists for the same reason one step
+ * earlier in the same flow.
+ *
+ * ⚠️ Must stay ABOVE `/:id` — Express matches in mount order.
+ */
+rolesRouter.get(
+  '/assignable',
+  requireAnyPermission(['roles.view', 'users.access', 'users.approve']),
+  validate(listRolesQuerySchema, 'query'),
+  asyncHandler(rolesController.listRoles),
 );
 
 rolesRouter.get(
@@ -81,7 +107,7 @@ rolesRouter.put(
 // boundary `GET /branches/:id/staff` draws.
 rolesRouter.get(
   '/:id/holders',
-  requirePermission('users.manage'),
+  requirePermission('users.view'),
   validate(roleIdParamsSchema, 'params'),
   validate(paginationQuerySchema, 'query'),
   asyncHandler(rolesController.listRoleHolders),

@@ -244,6 +244,15 @@ export const MESSAGES = {
     en: 'You do not have the permission required for this action',
     ar: 'لا تملك الصلاحية اللازمة لهذا الإجراء',
   },
+  /**
+   * The one refusal in the overrides screen that protects the administrator
+   * from themselves: denying yourself the permission that opens this screen
+   * leaves nobody able to undo it.
+   */
+  authz_self_lockout: {
+    en: 'You cannot deny yourself a permission you need to manage access',
+    ar: 'لا يمكنك حظر صلاحية عن نفسك تحتاجها لإدارة الصلاحيات',
+  },
   ownership_sum_exceeded: {
     en: 'Ownership percentages for this scope would exceed 100%',
     ar: 'مجموع نسب الملكية لهذا النطاق سيتجاوز ١٠٠٪',
@@ -357,6 +366,10 @@ export const MESSAGES = {
   role_not_self_registerable: {
     en: 'This role cannot be requested at registration — an administrator grants it directly',
     ar: 'هذا الدور لا يُطلب عند التسجيل — يمنحه الأدمن مباشرة',
+  },
+  branch_not_self_registerable: {
+    en: 'This branch cannot be requested at registration — it is closed or archived',
+    ar: 'هذا الفرع لا يُطلب عند التسجيل — مغلق نهائياً أو مؤرشف',
   },
   role_inactive_unassignable: {
     en: 'An inactive role cannot be assigned',

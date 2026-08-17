@@ -29,7 +29,7 @@ const SEVERITY_ORDER = { critical: 0, serious: 1, warning: 2, info: 3 } as const
  * receives a number it isn't allowed to see.
  */
 export async function getDashboardStats(permissionKeys: string[]): Promise<WireDashboardStats> {
-  const canSeeUsers = permissionKeys.includes('users.manage');
+  const canSeeUsers = permissionKeys.includes('users.view');
   const canSeeBranches = permissionKeys.includes('branches.manage');
   const canSeeRoles = permissionKeys.includes('roles.view');
 

@@ -37,6 +37,26 @@ export async function listBranches(
   );
 }
 
+/**
+ * The branch catalog a self-registering visitor picks from — the ONLY branches
+ * endpoint reachable without a session.
+ *
+ * Registration needs this list and has no session to read `GET /branches` with
+ * (that one is `requireAuth`): the form is filled in before an account exists.
+ * Without it the branch field on the register screen answers 401 and sits
+ * permanently empty — the same hole the roles picker had, which is why
+ * `GET /roles/self-registerable` exists one field above.
+ *
+ * Sends the same `WireBranch` shape as every other branches endpoint rather
+ * than a trimmed one — one wire shape, one client model, one picker. The
+ * per-row aggregates stay off it exactly as they do on `GET /branches`, so
+ * nothing about who staffs a branch leaks to an anonymous caller.
+ */
+export async function listSelfRegisterableBranches(): Promise<WireBranch[]> {
+  const rows = await branchesRepository.findSelfRegisterable();
+  return rows.map((row) => toWireBranch(row));
+}
+
 export async function getBranchById(id: number): Promise<WireBranch> {
   const row = await branchesRepository.findById(id);
   if (!row) throw new NotFoundError('Branch not found');

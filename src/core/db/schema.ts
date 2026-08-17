@@ -22,6 +22,13 @@ export * from '../../features/identity/schemas/audit-log-entries.schema.js';
 // core/auth/schemas/sessions.schema.ts for the full reasoning.
 export * from '../auth/schemas/sessions.schema.js';
 export * from '../auth/schemas/verification-tokens.schema.js';
+
+/**
+ * Per-account exceptions to what the roles grant. Owned by `core/authz/`
+ * because the mechanism is generic — the roles, branches and assignment history
+ * that make it *Qirtas's* stay in `features/identity/`.
+ */
+export * from '../authz/schemas/user-permission-overrides.schema.js';
 export * from '../../features/localization/schemas/languages.schema.js';
 export * from '../../features/localization/schemas/translation-entries.schema.js';
 

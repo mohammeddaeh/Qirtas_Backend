@@ -3,6 +3,7 @@ import { asyncHandler } from '../../../core/http/async-handler.js';
 import { validate } from '../../../core/validation/validate.js';
 import { requireAuth } from '../../../core/http/require-actor.js';
 import { requirePermission } from '../../../core/http/require-permission.js';
+import { publicRoute } from '../../../core/http/route-marker.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 import {
   branchIdParamsSchema,
@@ -23,6 +24,19 @@ branchesRouter.get(
   asyncHandler(branchesController.listBranches),
 );
 
+// Public — the ONLY unauthenticated route on this router, and the twin of
+// `GET /roles/self-registerable`. Registration happens before an account
+// exists, so the visitor has no session to read `GET /` with, yet the form asks
+// which branch they work at.
+//
+// ⚠️ Must stay ABOVE `/:id`: Express matches in mount order, and `/:id` would
+// otherwise swallow this path and reject it as a non-numeric id.
+branchesRouter.get(
+  '/self-registerable',
+  publicRoute,
+  asyncHandler(branchesController.listSelfRegisterableBranches),
+);
+
 branchesRouter.get(
   '/:id',
   requireAuth,
@@ -36,7 +50,7 @@ branchesRouter.get(
 // exposes — the same boundary the dashboard's `structure` block draws.
 branchesRouter.get(
   '/:id/staff',
-  requirePermission('users.manage'),
+  requirePermission('users.view'),
   validate(branchIdParamsSchema, 'params'),
   validate(paginationQuerySchema, 'query'),
   asyncHandler(branchesController.listBranchStaff),

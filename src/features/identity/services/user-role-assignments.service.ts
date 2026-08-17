@@ -236,12 +236,32 @@ const GUARDED_ROLE_CATEGORIES = new Set(['management', 'system']);
 /**
  * The permission whose holder count must never reach zero.
  *
- * `users.manage` and not, say, `roles.manage`, because it is the one that can
- * put the others back: whoever holds it can assign any role to anyone,
- * including the role that grants everything else. Lose it and the only repair
- * left is a direct write to the database.
+ * It is the one that can put the others back: whoever holds it can assign any
+ * role to anyone, including the role that grants everything else. Lose it and
+ * the only repair left is a direct write to the database.
+ *
+ * ## Why two keys and not one
+ *
+ * `users.manage` used to guard every user endpoint, assignment included. Since
+ * the split it is a **grant-only umbrella**, and the ability it named now lives
+ * in `users.access`. A role can therefore grant this two ways — storing the
+ * granular key, or storing the umbrella that expands to it — and a check
+ * naming only one would miss half the administrators.
+ *
+ * Checking the *stored* keys rather than the resolved set is deliberate here:
+ * this asks "does this role grant administration", which is a property of the
+ * role, not of any person holding it.
  */
-const ADMINISTRATION_PERMISSION = 'users.manage';
+const ADMINISTRATION_PERMISSION = 'users.access';
+const ADMINISTRATION_UMBRELLA = 'users.manage';
+
+/** True when the role's stored grants confer administration, either way. */
+function grantsAdministrationKeys(storedKeys: string[]): boolean {
+  return (
+    storedKeys.includes(ADMINISTRATION_PERMISSION) ||
+    storedKeys.includes(ADMINISTRATION_UMBRELLA)
+  );
+}
 
 /**
  * The one refusal `force` does not open.
@@ -269,7 +289,7 @@ async function assertNotLastAdministrator(
   if (role === undefined || !role.is_active) return;
 
   const grantsAdministration = await rolesRepository.findPermissionKeys(role.id);
-  if (!grantsAdministration.includes(ADMINISTRATION_PERMISSION)) return;
+  if (!grantsAdministrationKeys(grantsAdministration)) return;
 
   if (!wholeUser) {
     // Their OTHER live posts. If any of those still grants it, this closure
@@ -279,12 +299,12 @@ async function assertNotLastAdministrator(
     ).filter((a) => a.id !== assignment.id);
     for (const other of otherOwnAssignments) {
       const keys = await rolesRepository.findPermissionKeys(other.role_id);
-      if (keys.includes(ADMINISTRATION_PERMISSION)) return;
+      if (grantsAdministrationKeys(keys)) return;
     }
   }
 
   const otherAdministrators = await assignmentsRepository.countOtherActiveUsersWithPermission({
-    permissionKey: ADMINISTRATION_PERMISSION,
+    permissionKeys: [ADMINISTRATION_PERMISSION, ADMINISTRATION_UMBRELLA],
     excludingUserId: assignment.user_id,
   });
   if (otherAdministrators > 0) return;

@@ -395,6 +395,35 @@ function assertSelfRegisterable(role: RoleRow): void {
 }
 
 /**
+ * The same guard for the branch half of the requested post, and it was missing
+ * entirely: `requested_branch_id` was stored from the body without any lookup
+ * at all, so a request could name a branch that does not exist, or one that was
+ * archived or shut for good.
+ *
+ * That silence had a cost paid much later, by someone else. The id sits in the
+ * row through verification and through the review queue; the failure surfaces
+ * at `decideRegistration`, where the branch becomes an assignment — as a
+ * foreign-key error on a non-existent id, or as `branch_archived` on a retired
+ * one. The admin reads a refusal about a field they did not fill in, on a
+ * request they cannot correct, for an applicant who has already been waiting.
+ * Refusing at submission puts the error in front of the one person who can fix
+ * it, while they are still looking at the form.
+ *
+ * Absent stays legal: a post with no branch is a real post, not a missing value.
+ */
+async function assertRequestableBranch(branchId: number | null | undefined): Promise<void> {
+  if (branchId === null || branchId === undefined) return;
+  const branch = await branchesRepository.findById(branchId);
+  if (!branch) throw new NotFoundError('Requested branch not found');
+  if (branchesRepository.isSelfRegisterable(branch)) return;
+  throw new BusinessError(
+    422,
+    'This branch cannot be requested at registration',
+    'branch_not_self_registerable',
+  );
+}
+
+/**
  * Single self-registration entry point for every internal account (staff,
  * and optionally partner in the same request). Lands in pending_verification
  * (or pending_approval where verification is off) with zero active
@@ -417,6 +446,7 @@ export async function registerStaff(
   const role = await rolesRepository.findById(body.requested_role_id);
   if (!role) throw new NotFoundError('Requested role not found');
   assertSelfRegisterable(role);
+  await assertRequestableBranch(body.requested_branch_id);
 
   // ## Where a new registration lands, and why
   //
@@ -497,6 +527,7 @@ export async function resubmitRegistration(
   const role = await rolesRepository.findById(body.requested_role_id);
   if (!role) throw new NotFoundError('Requested role not found');
   assertSelfRegisterable(role);
+  await assertRequestableBranch(body.requested_branch_id);
 
   const row = await usersRepository.update(userId, {
     status: 'pending_approval',

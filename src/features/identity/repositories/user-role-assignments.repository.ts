@@ -11,6 +11,8 @@ import { rolesTable } from '../schemas/roles.schema.js';
 import { branchesTable } from '../schemas/branches.schema.js';
 import { permissionsTable } from '../schemas/permissions.schema.js';
 import { rolePermissionsTable } from '../schemas/role-permissions.schema.js';
+import { resolvePermissions } from '../../../core/authz/inference.js';
+import * as overridesRepository from '../../../core/authz/repositories/overrides.repository.js';
 
 const isActiveClause = sql`(${userRoleAssignmentsTable.valid_to} IS NULL OR ${userRoleAssignmentsTable.valid_to} > now())`;
 
@@ -306,7 +308,17 @@ export async function findActivePostsForUsers(
  * leave behind a door nobody can open.
  */
 export async function countOtherActiveUsersWithPermission(params: {
-  permissionKey: string;
+  /**
+   * Any one of these counts. Plural because a permission can be held two ways
+   * since the catalogue was split: directly (`users.access`) or through the
+   * grant-only umbrella (`users.manage`). SQL cannot expand the umbrella, so
+   * the caller passes both and this counts whoever stores either.
+   *
+   * Singular here would silently miss every holder of the granular key — and
+   * this counter guards the one thing that cannot be undone from inside the
+   * application.
+   */
+  permissionKeys: string[];
   excludingUserId: number;
 }): Promise<number> {
   const rows = await db
@@ -321,7 +333,7 @@ export async function countOtherActiveUsersWithPermission(params: {
     .innerJoin(permissionsTable, eq(permissionsTable.key, rolePermissionsTable.permission_key))
     .where(
       and(
-        eq(rolePermissionsTable.permission_key, params.permissionKey),
+        inArray(rolePermissionsTable.permission_key, params.permissionKeys),
         eq(rolesTable.is_active, true),
         isActiveClause,
         eq(usersTable.status, 'active'),
@@ -372,15 +384,24 @@ export async function findEffectivePermissionKeys(
  * use findEffectivePermissionKeys(userId, branchId) instead.
  */
 export async function findAllEffectivePermissionKeys(userId: number): Promise<string[]> {
-  const rows = await db
-    .selectDistinct({ key: rolePermissionsTable.permission_key })
-    .from(userRoleAssignmentsTable)
-    .innerJoin(rolesTable, eq(rolesTable.id, userRoleAssignmentsTable.role_id))
-    .innerJoin(rolePermissionsTable, eq(rolePermissionsTable.role_id, rolesTable.id))
-    .innerJoin(permissionsTable, eq(permissionsTable.key, rolePermissionsTable.permission_key))
-    .where(and(eq(userRoleAssignmentsTable.user_id, userId), isActiveClause, eq(rolesTable.is_active, true)));
+  const [rows, overrides] = await Promise.all([
+    db
+      .selectDistinct({ key: rolePermissionsTable.permission_key })
+      .from(userRoleAssignmentsTable)
+      .innerJoin(rolesTable, eq(rolesTable.id, userRoleAssignmentsTable.role_id))
+      .innerJoin(rolePermissionsTable, eq(rolePermissionsTable.role_id, rolesTable.id))
+      .innerJoin(permissionsTable, eq(permissionsTable.key, rolePermissionsTable.permission_key))
+      .where(
+        and(eq(userRoleAssignmentsTable.user_id, userId), isActiveClause, eq(rolesTable.is_active, true)),
+      ),
+    overridesRepository.findEffectsForUser(userId),
+  ]);
 
-  return rows.map((r) => r.key);
+  // **The single place the rules are applied.** Every guard, every screen and
+  // every `/users/me` response reads this function, so an account's answer
+  // cannot differ depending on who asked — which is exactly what would happen
+  // if the deny pass lived at a call site.
+  return [...resolvePermissions(rows.map((r) => r.key), overrides)].sort();
 }
 
 /** Lowest (= highest authority) level among a user's currently active role assignments. */

@@ -3,34 +3,42 @@
  * `npm run check:permissions`.
  *
  * ── Why this exists ────────────────────────────────────────────────────────
- * Qirtas keeps its permission catalog in two places that nothing compared:
- * the `PERMISSIONS` list in `core/db/seed-core.ts` (what an administrator can
+ * Qirtas kept its permission catalogue in two places that nothing compared: the
+ * `PERMISSIONS` list in `core/db/seed-core.ts` (what an administrator could
  * grant) and the `requirePermission('…')` calls across ten routers (what the
  * server actually refuses). An audit on 2026-08-13 compared them for the first
- * time and found **17 seeded keys that no route enforces** — permissions that
- * appear in the roles screen, get ticked, and gate nothing.
+ * time and found **17 seeded keys that no route enforced** — permissions that
+ * appeared in the roles screen, got ticked, and gated nothing.
  *
- * That half is misleading. The other direction is dangerous: a key a route
- * enforces but nothing seeds can never be held by anyone, so the endpoint is
- * shut for every user **including the Super Admin**, and nothing reports it.
+ * That was the visible half. The dangerous direction is the other one: a key a
+ * route enforces but nothing seeds can never be held by anyone, so the endpoint
+ * is shut for every user **including the Super Admin**, and nothing reports it.
  * A gate that is always shut reads in code exactly like a gate that works.
  *
- * And a third failure needs no catalog at all: a route that simply forgot its
- * guard. It looks exactly like a route meant to be public, and past forty
- * guarded routes nobody can tell them apart by reading.
+ * Both are now structurally impossible: `seed-core.ts` derives the catalogue
+ * from the registry, so the two cannot disagree. What this file still guards is
+ * the third failure, which needs no catalogue at all — a route that simply
+ * forgot its guard. It looks exactly like a route meant to be public, and past
+ * seventy guarded routes nobody can tell them apart by reading.
  *
  * ── The three checks ───────────────────────────────────────────────────────
  *  1. **Coverage** — every mounted route declares `publicRoute`, `requireAuth`
  *     or `requirePermission()`. Unclassified = failure.
- *  2. **No shut gates** — every enforced key exists in the seeded catalog.
- *     Missing = failure.
- *  3. **No orphan keys** — every seeded key is enforced somewhere. Unenforced
- *     = warning, listed by name.
+ *  2. **Every enforced key can be named** — from its route or from the plan.
+ *     Unnamed = failure (and `db:seed` would refuse anyway, later and louder).
+ *  3. **Planned keys** — in `PERMISSIONS` but declared by no route. Reported by
+ *     name; they are deliberately **not** seeded.
  *
- * (1) and (2) fail the run; (3) reports. Orphans are legitimate while a module
- * is still being built (`orders.*`, `printing.*`), so failing on them would
- * make the check something people switch off — which is how a check stops
+ * (1) and (2) fail the run; (3) informs. Planned keys are legitimate while a
+ * module is still being built (`orders.*`, `printing.*`), so failing on them
+ * would make the check something people switch off — which is how a check stops
  * being read at all.
+ *
+ * ⚠️ Check (2) used to be "every enforced key exists in the seeded catalogue".
+ * That was right while the catalogue was a hand-written list. It stopped being
+ * a check the day the seed started deriving from this same registry — the two
+ * could no longer disagree — so it was replaced rather than left in place
+ * looking useful.
  *
  * Same argument as `core/i18n/check-message-keys.ts`, and the same shape:
  * a written rule with no check is a suggestion.
@@ -43,7 +51,7 @@
  */
 import { API_ROUTERS } from '../../app.js';
 import { readAccess, type RouteAccess } from '../http/route-marker.js';
-import { listEnforcedPermissions } from './registry.js';
+import { isGrantable, listEnforcedPermissions } from './registry.js';
 import { SEEDED_PERMISSION_KEYS } from '../db/seed-core.js';
 
 interface ExpressLayer {
@@ -118,21 +126,35 @@ function main(): void {
     );
   }
 
-  // ── 2. No shut gates ─────────────────────────────────────────────────────
-  const unseeded = enforced.filter((key) => !seeded.includes(key));
-  if (unseeded.length > 0) {
+  // ── 2. Every enforced key can be named ───────────────────────────────────
+  //
+  // This used to compare against the hand-written catalogue, which was the
+  // right check while that list was the source. It is not any more: the seed is
+  // derived from this same registry, so that comparison could only ever pass.
+  //
+  // What can still go wrong is a key nobody named. `seed-core.ts` refuses it —
+  // and refusing at seed time means discovering it while deploying. Here it is
+  // caught while writing the route.
+  const unnamed = listEnforcedPermissions()
+    .filter((p) => !p.display && !seeded.includes(p.key))
+    .map((p) => p.key);
+
+  if (unnamed.length > 0) {
     failed = true;
-    console.error(`\n❌ ${unseeded.length} enforced key(s) are not in the seeded catalog:\n`);
-    for (const key of unseeded) console.error(`   ${key}`);
+    console.error(`\n❌ ${unnamed.length} enforced key(s) have no display name:\n`);
+    for (const key of unnamed) console.error(`   ${key}`);
     console.error(
-      '\n   Nobody can hold these, so their endpoints are shut for EVERY user —',
-      '\n   including the Super Admin — and nothing logs it.',
-      '\n   Add them to PERMISSIONS in src/core/db/seed-core.ts.',
+      '\n   The roles screen would render the raw key as its label, and',
+      '\n   `npm run db:seed` refuses to run at all. Name it where it is declared:',
+      '\n',
+      `\n     requirePermission('${unnamed[0]}', {`,
+      "\n       display: { ar: '…', en: '…' },",
+      '\n     })',
     );
   }
 
   // ── 3. Planned keys (informational) ──────────────────────────────────────
-  const orphans = seeded.filter((key) => !enforced.includes(key));
+  const orphans = seeded.filter((key) => !isGrantable(key));
   if (orphans.length > 0) {
     console.log(`\nℹ️  ${orphans.length} planned key(s) — declared by no route, so NOT seeded:\n`);
     for (const key of orphans) console.log(`   ${key}`);

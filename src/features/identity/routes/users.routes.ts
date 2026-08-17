@@ -24,7 +24,10 @@ import {
   currentUserQuerySchema,
 } from '../dtos/users.dto.js';
 import * as usersController from '../controllers/users.controller.js';
+import * as overridesController from '../../../core/authz/controllers/overrides.controller.js';
+import { replaceOverridesBodySchema } from '../../../core/authz/dtos/overrides.dto.js';
 import { userRoleAssignmentsRouter } from './user-role-assignments.routes.js';
+import * as assignmentsController from '../controllers/user-role-assignments.controller.js';
 
 export const usersRouter = Router();
 
@@ -39,7 +42,9 @@ const listUsersQuerySchema = paginationQuerySchema.merge(usersFilterQuerySchema)
  */
 usersRouter.get(
   '/',
-  requirePermission('users.manage'),
+  requirePermission('users.view', {
+    display: { ar: 'عرض المستخدمين', en: 'View Users' },
+  }),
   validate(listUsersQuerySchema, 'query'),
   asyncHandler(usersController.listUsers),
 );
@@ -50,6 +55,32 @@ usersRouter.get(
   requireAuth,
   validate(currentUserQuerySchema, 'query'),
   asyncHandler(usersController.getCurrentUser),
+);
+
+/**
+ * The caller's own posts — where they work and under which role. **No
+ * permission**, on the same principle as `/me` above: reading your own record
+ * is not an administrative act.
+ *
+ * It exists because the profile screen, which every account opens, was calling
+ * `/users/:id/role-assignments` with its own id — an administrative route — and
+ * being answered 403. A person was refused sight of their own job.
+ *
+ * ⚠️ Must stay **above** `usersRouter.use('/:userId/role-assignments', …)` at
+ * the bottom of this file: Express matches in mount order, and that router
+ * would otherwise swallow this path and reject `me` as a non-numeric id.
+ */
+usersRouter.get(
+  '/me/role-assignments',
+  requireAuth,
+  asyncHandler(assignmentsController.listForMe),
+);
+
+/** The closed half of the same record, for the caller. Same reasoning. */
+usersRouter.get(
+  '/me/role-assignments/ended',
+  requireAuth,
+  asyncHandler(assignmentsController.listEndedForMe),
 );
 
 /** Self-service resubmit after a rejection — only the calling user's own (rejected) account, identified by session, never by :id. Registered before /:id for the same reason as /me above. */
@@ -63,7 +94,7 @@ usersRouter.post(
 /** Another person's record — same boundary as the list above. */
 usersRouter.get(
   '/:id',
-  requirePermission('users.manage'),
+  requirePermission('users.view'),
   validate(userIdParamsSchema, 'params'),
   asyncHandler(usersController.getUserById),
 );
@@ -73,9 +104,36 @@ usersRouter.get(
  * assignments. `users.manage`, like every other read of someone else's record.
  * Own permissions come from `/users/me`, which needs no permission at all.
  */
+
+/**
+ * Per-account exceptions to what the roles grant — the tri-state an
+ * administrator sees is *inherit / allow / deny*, and **inherit is the absence
+ * of a row**.
+ *
+ * Guarded by `users.manage`, the same key that gates every other write to a
+ * person's access. A separate permission would be a second thing to grant for
+ * an action nobody performs without the first.
+ */
+usersRouter.get(
+  '/:id/overrides',
+  requirePermission('users.access', {
+    display: { ar: 'إدارة صلاحيات المستخدم', en: 'Manage User Access' },
+  }),
+  validate(userIdParamsSchema, 'params'),
+  asyncHandler(overridesController.getUserOverrides),
+);
+
+/** PUT, not PATCH: a tri-state screen knows the final state and nothing else. */
+usersRouter.put(
+  '/:id/overrides',
+  requirePermission('users.access'),
+  validate(userIdParamsSchema, 'params'),
+  validate(replaceOverridesBodySchema, 'body'),
+  asyncHandler(overridesController.replaceUserOverrides),
+);
 usersRouter.get(
   '/:id/permissions',
-  requirePermission('users.manage'),
+  requirePermission('users.access'),
   validate(userIdParamsSchema, 'params'),
   asyncHandler(usersController.getUserPermissions),
 );
@@ -88,7 +146,9 @@ usersRouter.get(
  */
 usersRouter.post(
   '/',
-  requirePermission('users.manage'),
+  requirePermission('users.create', {
+    display: { ar: 'إنشاء مستخدم', en: 'Create User' },
+  }),
   validate(createUserByAdminBodySchema, 'body'),
   asyncHandler(usersController.createUserByAdmin),
 );
@@ -96,7 +156,9 @@ usersRouter.post(
 /** Edits identity/profile fields only (first_name/last_name/email/phone) — status/is_admin/password stay on their own dedicated endpoints. */
 usersRouter.patch(
   '/:id',
-  requirePermission('users.manage'),
+  requirePermission('users.edit', {
+    display: { ar: 'تعديل مستخدم', en: 'Edit User' },
+  }),
   validate(userIdParamsSchema, 'params'),
   validate(updateUserBodySchema, 'body'),
   asyncHandler(usersController.updateUser),
@@ -182,7 +244,9 @@ usersRouter.post(
 
 usersRouter.post(
   '/:id/decide-registration',
-  requirePermission('users.manage'),
+  requirePermission('users.approve', {
+    display: { ar: 'البتّ في طلبات التسجيل', en: 'Decide Registrations' },
+  }),
   validate(userIdParamsSchema, 'params'),
   validate(decideRegistrationBodySchema, 'body'),
   asyncHandler(usersController.decideRegistration),
@@ -190,21 +254,23 @@ usersRouter.post(
 
 usersRouter.post(
   '/:id/suspend',
-  requirePermission('users.manage'),
+  requirePermission('users.status', {
+    display: { ar: 'تغيير حالة المستخدم', en: 'Change User Status' },
+  }),
   validate(userIdParamsSchema, 'params'),
   asyncHandler(usersController.suspendUser),
 );
 
 usersRouter.post(
   '/:id/disable',
-  requirePermission('users.manage'),
+  requirePermission('users.status'),
   validate(userIdParamsSchema, 'params'),
   asyncHandler(usersController.disableUser),
 );
 
 usersRouter.post(
   '/:id/reactivate',
-  requirePermission('users.manage'),
+  requirePermission('users.status'),
   validate(userIdParamsSchema, 'params'),
   asyncHandler(usersController.reactivateUser),
 );
@@ -215,7 +281,9 @@ usersRouter.post(
 // minutes ago, deleted by whoever created it.
 usersRouter.delete(
   '/:id',
-  requirePermission('users.manage'),
+  requirePermission('users.delete', {
+    display: { ar: 'حذف مستخدم', en: 'Delete User' },
+  }),
   validate(userIdParamsSchema, 'params'),
   asyncHandler(usersController.deleteUser),
 );
@@ -225,7 +293,7 @@ usersRouter.delete(
 // staffing and review screen, which is not part of running a branch.
 usersRouter.post(
   '/:id/archive',
-  requirePermission('users.manage'),
+  requirePermission('users.delete'),
   requirePermission('records.archive'),
   validate(userIdParamsSchema, 'params'),
   asyncHandler(usersController.archiveUser),
@@ -233,7 +301,7 @@ usersRouter.post(
 
 usersRouter.post(
   '/:id/unarchive',
-  requirePermission('users.manage'),
+  requirePermission('users.delete'),
   requirePermission('records.archive'),
   validate(userIdParamsSchema, 'params'),
   asyncHandler(usersController.unarchiveUser),

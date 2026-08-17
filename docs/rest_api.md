@@ -52,9 +52,12 @@
 | 408       | Timeout                | غير مستخدم بأي endpoint حالياً                                                       |
 | 409       | Conflict               | **محجوز** لميزة sync مستقبلية — انظر §5                                              |
 | 422       | Validation             | `ValidationError`، دائماً مع `errors`                                                |
-| 429       | Rate limit             | `RateLimitError`، يضبط header `Retry-After` (ثواني) — **مفعّل حالياً فقط على `POST /login`** (`core/middleware/login-rate-limit.ts`، in-memory، 5 محاولات/15 دقيقة لكل إيميل وIP) |
-| ≥500      | خطأ سيرفر              | أي خطأ غير متوقع (يُسجَّل كاملاً باللوجر، الرسالة للعميل عامة)                       |
+| 429       | Rate limit             | `RateLimitError`، يضبط header `Retry-After` (ثواني) — **مفعّل حالياً فقط على `POST /login`** (`core/middleware/login-rate-limit.ts`، in-memory، **5 محاولات/15 دقيقة لكل إيميل** و**30/15 دقيقة لكل IP**) — الرقمان مختلفان عمداً: الـIP شبكةٌ لا شخص (فرع خلف راوتر واحد)، فتساويهما كان يجعل خمس محاولات فاشلة موزّعة على خمسة موظفين تُقفل الموقع كلّه |
+| **503**   | غير متاح مؤقتاً        | `ServiceUnavailableError` — صيانة أو تفريغ حمل، مع `Retry-After` اختياري. **وسقوط أي تبعية يُترجَم هنا تلقائياً**: `error-handler.ts` يفحص رمز المقبس (`ECONNREFUSED` · `ETIMEDOUT` · `57P03`…) ويردّ 503 بدل 500 |
+| ≥500 أخرى | خطأ سيرفر              | خللٌ فعلي داخل الخادم (يُسجَّل كاملاً باللوجر، الرسالة للعميل عامة)                  |
 | 4xx أخرى  | Business error عام     | `BusinessError`                                                                      |
+
+> **لماذا 503 لا 500 عند سقوط تبعية؟** لأن العميل يتصرّف على الفارق: `qirtas_app` يعامل 502/503/504 كحالة عابرة تستحق إعادة محاولة، و500 كطريق مسدود بلا زرّ إعادة — فزرٌّ لا ينجح أبداً أسوأ من غيابه. تسمية انقطاعٍ عابر «خطأً داخلياً» تُخبر كل مستخدم أن التطبيق معطوب، في اللحظة التي كان انتظار عشر ثوانٍ يكفي فيها.
 
 ## 5. Conflict (409) — محجوز، غير مستخدم بعد
 
@@ -141,14 +144,19 @@ Accept-language: ar | en
 
 | المفتاح | يحمي |
 |---|---|
-| `users.manage` | `decide-registration`, `suspend`, `disable`, `reactivate`, إنشاء/نقل/إنهاء `UserRoleAssignment` |
+| `users.view` · `users.create` · `users.edit` | قراءة وإنشاء وتعديل حسابات المستخدمين |
+| `users.status` | `suspend` · `disable` · `reactivate` |
+| `users.approve` | `decide-registration` |
+| `users.access` | قراءة/كتابة أدوار المستخدم واستثناءاته، وإنشاء/نقل/إنهاء `UserRoleAssignment` |
+| `users.delete` | حذف · أرشفة · استرجاع |
+| **`users.manage`** | **مظلّة منحٍ لا يعلنها أي مسار** — تعني كل `users.*`، بما يُضاف لاحقاً. الأدوار التي كانت تحملها قبل التفصيل (2026-08-16) بقيت تعمل بلا هجرة |
 | `branches.manage` | إنشاء/تعديل فرع |
 | `ownerships.manage` | تسجيل نسبة ملكية |
 | `permissions.manage` | إضافة صلاحية جديدة للكتالوج |
 | `roles.view` / `roles.edit` (موجودة أصلاً) | قراءة/كتابة الأدوار وصلاحياتها |
 | `audit_log.view` (موجود أصلاً) | قراءة سجل التدقيق |
 | `localization.manage` (أُضيفت مع موديول Localization) | إضافة/تعديل لغة ديناميكية، تعطيلها، وتحديث (upsert) ترجماتها |
-| `dashboard.view` (أُضيفت 2026-07-29) | الوصول لـ `GET /api/v1/dashboard` — كل بلوك داخل الاستجابة مشروط إضافياً بصلاحية الموديول المطابقة (`users.manage`/`branches.manage`/`roles.view`) |
+| `dashboard.view` (أُضيفت 2026-07-29) | الوصول لـ `GET /api/v1/dashboard` — كل بلوك داخل الاستجابة مشروط إضافياً بصلاحية الموديول المطابقة (`users.view`/`branches.manage`/`roles.view`) |
 
 ## 8. شكل `User`
 
@@ -363,7 +371,7 @@ Accept-language: ar | en
 5. **الأرشفة idempotent** — طلبٌ ثانٍ يُرجع 200، لا 409. اتفاق أدمنَين على القرار نفسه ليس تعارضاً.
 6. **`GET /:id` يحمل الحكم والسبب** — `is_deletable`/`is_archivable` محسوبان بنفس القاعدتين اللتين يفرضهما المساران، فيعرض العميل الفعل **حيث ينجح**؛ والأعداد بجانبهما موجودة ليكون الرفض جملةً: «٧ تعيينات بتاريخه» تفيد، و«تعذّر الحذف» لا تفيد.
 
-**لماذا `records.archive` منفصلة عن `branches.manage`/`users.manage`/`roles.edit`**: ليست الأرشفة أخطر من التعديل — بل إن صلاحيات الإدارة اليومية تُعطى لمن يدير فرعاً ويوظّف الناس، وقرارُ أن سجلاً له ماضٍ يجب أن يتوقف عن الظهور ليس جزءاً من تلك الوظيفة. من يحملها يستطيع إخفاء فرعٍ عمل فيه أناس من كل شاشة بالتطبيق؛ الصفّ والتاريخ ينجوان، لكن لا أحد يبحث في أرشيف لم يُخبَر بوجوده. أما الحذف حين لا تاريخ فيكفيه مفتاح الموديول: لا شيء يُوزَن حين لا شيء يشير للصفّ.
+**لماذا `records.archive` منفصلة عن `branches.manage`/`users.delete`/`roles.edit`**: ليست الأرشفة أخطر من التعديل — بل إن صلاحيات الإدارة اليومية تُعطى لمن يدير فرعاً ويوظّف الناس، وقرارُ أن سجلاً له ماضٍ يجب أن يتوقف عن الظهور ليس جزءاً من تلك الوظيفة. من يحملها يستطيع إخفاء فرعٍ عمل فيه أناس من كل شاشة بالتطبيق؛ الصفّ والتاريخ ينجوان، لكن لا أحد يبحث في أرشيف لم يُخبَر بوجوده. أما الحذف حين لا تاريخ فيكفيه مفتاح الموديول: لا شيء يُوزَن حين لا شيء يشير للصفّ.
 
 ## Endpoints الحالية
 
@@ -373,26 +381,26 @@ Accept-language: ar | en
 
 | Method | Path                       | الحماية | ملاحظة                                                                                                            |
 | ------ | -------------------------- | --- | ----------------------------------------------------------------------------------------------------------------- |
-| GET    | `/`                        | 🔑 `users.manage` | قائمة مُصفّحة (`Paginated<User>`) — الفلاتر أدناه |
+| GET    | `/`                        | 🔑 `users.view` | قائمة مُصفّحة (`Paginated<User>`) — الفلاتر أدناه |
 | GET    | `/me`                      | 🔒 مسجّل دخول | **بيانات المستخدم الحالي نفسه** — `{user, permission_keys}` (نفس شكل بيانات `login` بدون `token`/`session_id`). يعيد استخدام نفس `findAllEffectivePermissionKeys` المستخدم بـ`login`. مُسجَّل **قبل** `/:id` كي لا يُبتلَع بمسار الـparam. الاستخدام الأساسي: تحقق خلفي صامت بالفرونت بعد استعادة جلسة مخبّأة (**✅ 2026-07-27**، انظر [docs/reference/session_permission_integrity.md](../../docs/reference/session_permission_integrity.md) §6/§10) |
-| GET    | `/:id`                     | 🔑 `users.manage` | يوزر واحد أو 404 |
-| POST   | `/`                        | 🔑 `users.manage` | **إنشاء مباشر من الأدمن** — يختلف عن `/register` (تسجيل ذاتي + مراجعة لاحقة). هنا الأدمن يُنشئ الحساب مباشرة لصالح شخص آخر بخطوة واحدة: `status=active` فوراً مع `role_id` (إلزامي) و`branch_id`/`ownership_percentage` (اختياريان) مُعيَّنة في نفس الطلب — الأدمن نفسه هو الموافقة، لا حاجة لـ`decide-registration` بعدها. تعارض إيميل → `409`، دور غير موجود/غير فعّال → `404`/`422` |
-| PATCH  | `/:id`                     | 🔑 `users.manage` | تعديل حقول الهوية/البروفايل فقط (`first_name`/`last_name`/`email`/`phone`) — **لا** `status`/`is_admin`/كلمة المرور (لكل منها endpoint مخصص: suspend/disable/reactivate/decide-registration للحالة، وتدفق منفصل خارج النطاق لكلمة المرور). تعارض إيميل مع يوزر آخر → `409`. الهدف `is_root_protected=true` → `403` دائماً، بلا استثناء لأي منفِّذ (**✅ 2026-07-27**) |
+| GET    | `/:id`                     | 🔑 `users.view` | يوزر واحد أو 404 |
+| POST   | `/`                        | 🔑 `users.create` | **إنشاء مباشر من الأدمن** — يختلف عن `/register` (تسجيل ذاتي + مراجعة لاحقة). هنا الأدمن يُنشئ الحساب مباشرة لصالح شخص آخر بخطوة واحدة: `status=active` فوراً مع `role_id` (إلزامي) و`branch_id`/`ownership_percentage` (اختياريان) مُعيَّنة في نفس الطلب — الأدمن نفسه هو الموافقة، لا حاجة لـ`decide-registration` بعدها. تعارض إيميل → `409`، دور غير موجود/غير فعّال → `404`/`422` |
+| PATCH  | `/:id`                     | 🔑 `users.edit` | تعديل حقول الهوية/البروفايل فقط (`first_name`/`last_name`/`email`/`phone`) — **لا** `status`/`is_admin`/كلمة المرور (لكل منها endpoint مخصص: suspend/disable/reactivate/decide-registration للحالة، وتدفق منفصل خارج النطاق لكلمة المرور). تعارض إيميل مع يوزر آخر → `409`. الهدف `is_root_protected=true` → `403` دائماً، بلا استثناء لأي منفِّذ (**✅ 2026-07-27**) |
 | POST   | `/register`                | 🌐 عام + Rate Limit | **التسجيل الذاتي** — نقطة الدخول الوحيدة لأي حساب موظف/شريك (self-service). **✅ محدَّث 2026-08-11**: ينشئ `status=pending_verification` (لا `pending_approval`) ويُرسل رمز تأكيد للبريد، فلا يظهر بطابور المراجعة قبل إثبات العنوان — راجع §8. عند `EMAIL_VERIFICATION_MODE=off` يهبط عند `pending_approval` كما كان تماماً. **مختلف عن `POST /` أعلاه** (إنشاء مباشر من الأدمن، فعّال ومتحقَّق فوراً — الأدمن هو الإثبات).<br>**✅ تغيّر شكل الرد 2026-08-12**: يُرجع الآن **نفس جسم `POST /login`** (`{ user, token, session_id, permission_keys, is_super_admin }`) لا كائن اليوزر وحده — كل ما كان بـ`data` صار بـ`data.user`. **السبب**: `POST /auth/verify-email` محمي بـ`requireAuth`، فبلا توكن هنا يستحيل على العميل تنفيذ الخطوة التي يطلبها الرد نفسه، وكان الحل السابق إرسال المستخدم لشاشة الدخول ليكتب بيانات سلّمها للتو. **ولا يمنح شيئاً جديداً**: نفس الحساب يستدعي `POST /login` بعد ثانية فيأخذ التوكن نفسه — الحساب بلا تعيين فعّال، فـ`permission_keys` فارغة والجلسة لا تفتح غير شاشة الرمز. صادرة عبر `login()` داخلياً فلا تنحرف عن رفضات `canSignIn` ولا عن حساب الصلاحيات |
 | POST   | `/bootstrap-super-admin`   | 🌐 عام | Setup Wizard — ينجح **فقط** لو عدد اليوزرز بالنظام = صفر. ينشئ Super Admin + Ownership 100% + `is_root_protected=true` (المسار الوحيد الذي يضبط هذا الحقل — **✅ 2026-07-27**) |
-| POST   | `/login`                   | 🌐 عام + Rate Limit | إيميل + كلمة مرور → `{user, token, session_id, permission_keys}`. `token` يُستخدم كـ`Authorization: Bearer <token>` بأي طلب لاحق. `permission_keys` هو اتحاد صلاحيات كل تعيينات اليوزر الفعّالة (نفس مصدر `findAllEffectivePermissionKeys` المستخدم بـ`requirePermission`، branch-agnostic) — **✅ 2026-07-27**، يُستهلك بالفرونت لتحديد أي UI مُصرَّح بها فوراً بعد الدخول دون طلب إضافي. **✅ محدَّث (2026-07-28)**: `pending_approval`/`rejected` الآن ينجحان (`200`) ويحصلان على جلسة حقيقية بدل `403` — الحساب يبقى قابل للوصول (شاشة "حالة الطلب"، تعديل وإعادة إرسال) حتى بعد حذف/إعادة تثبيت التطبيق؛ الجلسة لا تفتح أي endpoint محمي فعلياً لأن `permission_keys` تبقى `[]` دائماً (صفر `UserRoleAssignment` فعّال لهاتين الحالتين). فقط `suspended`/`disabled` يبقيان يرفضان بـ**403** مع `data.account_status` للتمييز البرمجي (انظر التفصيل تحت الجدول — لا تعتمد على مطابقة نص `message`). **محدود بـ5 محاولات/15 دقيقة لكل إيميل و5/15 دقيقة لكل IP معاً** (`core/middleware/login-rate-limit.ts`) — تجاوز أي منهما → `429` مع `Retry-After` بالثواني. النجاح يصفّر عدّاد ذاك الإيميل/IP فوراً |
+| POST   | `/login`                   | 🌐 عام + Rate Limit | إيميل + كلمة مرور → `{user, token, session_id, permission_keys}`. `token` يُستخدم كـ`Authorization: Bearer <token>` بأي طلب لاحق. `permission_keys` هو اتحاد صلاحيات كل تعيينات اليوزر الفعّالة (نفس مصدر `findAllEffectivePermissionKeys` المستخدم بـ`requirePermission`، branch-agnostic) — **✅ 2026-07-27**، يُستهلك بالفرونت لتحديد أي UI مُصرَّح بها فوراً بعد الدخول دون طلب إضافي. **✅ محدَّث (2026-07-28)**: `pending_approval`/`rejected` الآن ينجحان (`200`) ويحصلان على جلسة حقيقية بدل `403` — الحساب يبقى قابل للوصول (شاشة "حالة الطلب"، تعديل وإعادة إرسال) حتى بعد حذف/إعادة تثبيت التطبيق؛ الجلسة لا تفتح أي endpoint محمي فعلياً لأن `permission_keys` تبقى `[]` دائماً (صفر `UserRoleAssignment` فعّال لهاتين الحالتين). فقط `suspended`/`disabled` يبقيان يرفضان بـ**403** مع `data.account_status` للتمييز البرمجي (انظر التفصيل تحت الجدول — لا تعتمد على مطابقة نص `message`). **محدود بـ5 محاولات/15 دقيقة لكل إيميل و30/15 دقيقة لكل IP معاً** (`core/middleware/login-rate-limit.ts` — الرقمان مختلفان عمداً، راجع §4) — تجاوز أي منهما → `429` مع `Retry-After` بالثواني. النجاح يصفّر عدّاد ذاك الإيميل/IP فوراً |
 | POST   | `/logout`                  | 🌐 عام | ينهي الجلسة الحالية فقط (حسب التوكن بالـheader) — بقية جلسات نفس اليوزر تبقى شغّالة. Idempotent (200 حتى لو التوكن أصلاً غير صالح) |
 | POST   | `/forgot-password`         | ⚠️ **مهجور** | نُقل إلى `POST /api/v1/auth/forgot-password` (2026-08-11). المسار القديم يبقى عاملاً كـalias — راجع الملاحظة تحت الجدول |
 | POST   | `/reset-password`          | ⚠️ **مهجور** | نُقل إلى `POST /api/v1/auth/reset-password`. **تغيّر اسم حقل**: `code` بدل `token` (الاسم القديم ما زال مقبولاً) |
 | POST   | `/change-password`         | ⚠️ **مهجور** | نُقل إلى `POST /api/v1/auth/change-password` |
 | POST   | `/me/resubmit-registration` | 🔒 مسجّل دخول | **✅ جديد (2026-07-28)** — إعادة تسجيل حساب `rejected` (نفس اليوزر المسجَّل دخوله فقط، عبر الجلسة لا `:id`). يقبل `requested_role_id` (إلزامي)/`requested_branch_id`/`requested_ownership_percentage` (نفس شكل `/register`، بدون حقول الهوية/كلمة المرور). يرجّع `status: rejected → pending_approval` ويصفّر `rejection_reason`/`decided_at`/`decided_by_user_id`. `409` لو الحساب مو `rejected` حالياً |
-| POST   | `/:id/decide-registration` | 🔑 `users.manage` | قرار الأدمن على طلب معلّق: `approve` (كما هو أو بتعديل الدور/الفرع/النسبة) أو `reject` (سبب إلزامي) |
-| POST   | `/:id/suspend`             | 🔑 `users.manage` | إيقاف مؤقت وقابل للرجوع (تحقيق/إجازة) — يختلف عن `disable`. الهدف `is_root_protected=true` → `403` دائماً (**✅ 2026-07-27**) |
-| POST   | `/:id/disable`             | 🔑 `users.manage` | تعطيل دائم (Offboarding) — لا حذف فعلي أبداً. الهدف `is_root_protected=true` → `403` دائماً (**✅ 2026-07-27**)   |
-| POST   | `/:id/reactivate`          | 🔑 `users.manage` | من `suspended` أو `disabled` إلى `active` — بدون إنشاء حساب جديد. نفس فحص `is_root_protected` مضاف للاتساق مع باقي عمليات الحالة (نظرياً غير قابل للحدوث لحساب جذري بما إنه لا يصل أصلاً لـ`suspended`/`disabled`) |
-| DELETE | `/:id`                     | 🔑 `users.manage` | **حذف صلب (2026-08-13)** — لحساب لم يُسجَّل عليه شيء **قط**: صفر تعيين، صفر ملكية، **وصفر سطر Audit نفّذه بنفسه**. الأخير هو الشرط الحاكم عملياً: `audit_log_entries.user_id` بـ`RESTRICT`، فمن سجّل دخوله مرة واحدة صار غير قابل للحذف أبداً — والباقي فعلياً هو الحساب المكرَّر/المكتوب بخطأ. `409 user_has_audit_history` · `409 user_has_history` · `403 user_root_protected` · `403 user_cannot_remove_self` |
-| POST   | `/:id/archive`             | 🔑 `users.manage` **+** `records.archive` | **أرشفة (2026-08-13)** — مخرج كل من لا ينطبق عليه الحذف، أي الجميع تقريباً: يختفي من القوائم ويُقفل، وكل ما فعله يبقى منسوباً لشخص حقيقي. الشرط: صفر تعيين مفتوح وصفر ملكية مفتوحة. **يكتب `status: "disabled"` بنفس العبارة** فتبقى بوابة الدخول واحدة. `409 user_has_active_assignments` · `409 user_has_active_ownerships` · `403 user_root_protected` · `403 user_cannot_remove_self`. متكرِّرة بلا أثر |
-| POST   | `/:id/unarchive`           | 🔑 `users.manage` **+** `records.archive` | استرجاع — يمسح `archived_at` **وحده**، فيعود الحساب `disabled`. إعادة منح الوصول تبقى قراراً منفصلاً بمساره المسجَّل (`/:id/reactivate`) |
+| POST   | `/:id/decide-registration` | 🔑 `users.approve` | قرار الأدمن على طلب معلّق: `approve` (كما هو أو بتعديل الدور/الفرع/النسبة) أو `reject` (سبب إلزامي) |
+| POST   | `/:id/suspend`             | 🔑 `users.status` | إيقاف مؤقت وقابل للرجوع (تحقيق/إجازة) — يختلف عن `disable`. الهدف `is_root_protected=true` → `403` دائماً (**✅ 2026-07-27**) |
+| POST   | `/:id/disable`             | 🔑 `users.status` | تعطيل دائم (Offboarding) — لا حذف فعلي أبداً. الهدف `is_root_protected=true` → `403` دائماً (**✅ 2026-07-27**)   |
+| POST   | `/:id/reactivate`          | 🔑 `users.status` | من `suspended` أو `disabled` إلى `active` — بدون إنشاء حساب جديد. نفس فحص `is_root_protected` مضاف للاتساق مع باقي عمليات الحالة (نظرياً غير قابل للحدوث لحساب جذري بما إنه لا يصل أصلاً لـ`suspended`/`disabled`) |
+| DELETE | `/:id`                     | 🔑 `users.delete` | **حذف صلب (2026-08-13)** — لحساب لم يُسجَّل عليه شيء **قط**: صفر تعيين، صفر ملكية، **وصفر سطر Audit نفّذه بنفسه**. الأخير هو الشرط الحاكم عملياً: `audit_log_entries.user_id` بـ`RESTRICT`، فمن سجّل دخوله مرة واحدة صار غير قابل للحذف أبداً — والباقي فعلياً هو الحساب المكرَّر/المكتوب بخطأ. `409 user_has_audit_history` · `409 user_has_history` · `403 user_root_protected` · `403 user_cannot_remove_self` |
+| POST   | `/:id/archive`             | 🔑 `users.delete` **+** `records.archive` | **أرشفة (2026-08-13)** — مخرج كل من لا ينطبق عليه الحذف، أي الجميع تقريباً: يختفي من القوائم ويُقفل، وكل ما فعله يبقى منسوباً لشخص حقيقي. الشرط: صفر تعيين مفتوح وصفر ملكية مفتوحة. **يكتب `status: "disabled"` بنفس العبارة** فتبقى بوابة الدخول واحدة. `409 user_has_active_assignments` · `409 user_has_active_ownerships` · `403 user_root_protected` · `403 user_cannot_remove_self`. متكرِّرة بلا أثر |
+| POST   | `/:id/unarchive`           | 🔑 `users.delete` **+** `records.archive` | استرجاع — يمسح `archived_at` **وحده**، فيعود الحساب `disabled`. إعادة منح الوصول تبقى قراراً منفصلاً بمساره المسجَّل (`/:id/reactivate`) |
 
 > **لماذا لا يحذف/يؤرشف أحدٌ نفسه** (`user_cannot_remove_self`): الأرشفة تكتب `disabled`، فتنهي وصول المنفِّذ أثناء تنفيذه — الرد يصل إلى شاشة لم يعد لها حق أن تكون مفتوحة، ولو كان آخر إداريّ فلا أحد يستطيع التراجع. `assertNotLastAdministrator` يحرس مسار التعيينات؛ وهذا يحرس الطريق الأقصر إلى المكان نفسه.
 >
@@ -535,12 +543,12 @@ Accept-language: ar | en
 | Method | Path                                       | الحماية | ملاحظة                                                                                                              |
 | ------ | ------------------------------------------ | --- | ------------------------------------------------------------------------------------------------------------------- |
 | GET    | `/users/:userId/role-assignments`          | 🔒 مسجّل دخول | التعيينات الفعّالة حالياً لهذا اليوزر                                                                               |
-| GET    | `/users/:userId/role-assignments/ended`    | 🔑 `users.manage` | **التعيينات المنتهية** — النصف المُغلق من نفس السجل. كل صف يحمل `role_name_then` |
-| POST   | `/users/:userId/role-assignments`          | 🔑 `users.manage` | تعيين دور جديد (يخضع لفحص منع تصعيد الصلاحيات نسبة لمستوى المنفّذ)                                                  |
-| POST   | `/role-assignments/:assignmentId/transfer` | 🔑 `users.manage` | نقل فرع/دور — يقفل التعيين الحالي ويفتح واحد جديد (لا يعدّل `branch_id` مباشرة). تحذير "آخر موظف مؤهل" يُتخطّى بـ`force: true` |
-| POST   | `/role-assignments/:assignmentId/end`      | 🔑 `users.manage` | إنهاء تعيين (Offboarding). نفس التحذير ونفس `force`. الجسم `{ force?, effective_at? }` — كله اختياري |
+| GET    | `/users/:userId/role-assignments/ended`    | 🔑 `users.access` | **التعيينات المنتهية** — النصف المُغلق من نفس السجل. كل صف يحمل `role_name_then` |
+| POST   | `/users/:userId/role-assignments`          | 🔑 `users.access` | تعيين دور جديد (يخضع لفحص منع تصعيد الصلاحيات نسبة لمستوى المنفّذ)                                                  |
+| POST   | `/role-assignments/:assignmentId/transfer` | 🔑 `users.access` | نقل فرع/دور — يقفل التعيين الحالي ويفتح واحد جديد (لا يعدّل `branch_id` مباشرة). تحذير "آخر موظف مؤهل" يُتخطّى بـ`force: true` |
+| POST   | `/role-assignments/:assignmentId/end`      | 🔑 `users.access` | إنهاء تعيين (Offboarding). نفس التحذير ونفس `force`. الجسم `{ force?, effective_at? }` — كله اختياري |
 
-> **`GET /users/:id/permissions`** (2026-08-05) — 🔑 `users.manage`. مصفوفة مسطّحة بمفاتيح الصلاحيات: اتحاد ما تمنحه كل تعيينات الشخص الفعّالة. منفصل عن سجل المستخدم لا حقلاً فيه — مشتقّ من التعيينات، قد يطول، ومعظم قراءات المستخدم لا تحتاجه. صلاحيات المستخدم **عن نفسه** تأتي من `/users/me` بلا أي صلاحية مطلوبة.
+> **`GET /users/:id/permissions`** (2026-08-05) — 🔑 `users.access`. مصفوفة مسطّحة بمفاتيح الصلاحيات: اتحاد ما تمنحه كل تعيينات الشخص الفعّالة. منفصل عن سجل المستخدم لا حقلاً فيه — مشتقّ من التعيينات، قد يطول، ومعظم قراءات المستخدم لا تحتاجه. صلاحيات المستخدم **عن نفسه** تأتي من `/users/me` بلا أي صلاحية مطلوبة.
 
 > **`GET /users/:userId/role-assignments` يحمل `branch_status`** (2026-08-05) — حالة الفرع نفسه بجانب اسمه، و`null` للتعيين غير المقيّد (لا فرع له ليحمل حالة، و`active` هنا كانت ستخترع فرعاً غير موجود).
 >
@@ -561,9 +569,9 @@ Accept-language: ar | en
 >
 > **`overridable` ليس زينة**: هو الفرق بين تحذير يعرض «أنهِ على أي حال» وبين رفض لا يعرضه — والاثنان 409، فمطابقة النص المترجم لتمييزهما تنكسر بأول تعديل صياغة.
 >
-> **والاستثناء الوحيد الذي لا يفتحه `force`: `409 last_system_role_holder`** (`overridable: false`) — يُرمى حين يكون هذا آخر شخص فعّال يحمل `users.manage` (بعد استبعاد تعييناته الأخرى التي قد تمنحها). ليست قاعدة توظيف بل قفل: بلا حامل واحد لهذه الصلاحية لا يبقى **من يعيدها**، والإصلاح الوحيد كتابة مباشرة بقاعدة البيانات.
+> **والاستثناء الوحيد الذي لا يفتحه `force`: `409 last_system_role_holder`** (`overridable: false`) — يُرمى حين يكون هذا آخر شخص فعّال يحمل `users.access` (أو مظلّته `users.manage`) (بعد استبعاد تعييناته الأخرى التي قد تمنحها). ليست قاعدة توظيف بل قفل: بلا حامل واحد لهذه الصلاحية لا يبقى **من يعيدها**، والإصلاح الوحيد كتابة مباشرة بقاعدة البيانات.
 >
-> **ولماذا صلاحية لا فئة؟** لأن المحورين توقّفا عن التطابق: `مدقق` فئته `system` ولا يقفل شيئاً بمغادرته (صلاحياته قراءة فقط)، ودورٌ مخصَّص يحمل `users.manage` لم يكن ضمن `GUARDED_ROLE_CATEGORIES` إطلاقاً ويقفل الجميع. الفئة تقرّر **بماذا يُحذَّر**، والصلاحية تقرّر **ما لا يُسمح به**.
+> **ولماذا صلاحية لا فئة؟** لأن المحورين توقّفا عن التطابق: `مدقق` فئته `system` ولا يقفل شيئاً بمغادرته (صلاحياته قراءة فقط)، ودورٌ مخصَّص يحمل `users.access` لم يكن ضمن `GUARDED_ROLE_CATEGORIES` إطلاقاً ويقفل الجميع. الفئة تقرّر **بماذا يُحذَّر**، والصلاحية تقرّر **ما لا يُسمح به**.
 >
 > **يُسجَّل بالتدقيق**: `forced_last_holder: true` يُكتب بديف `assignment.end`/`assignment.transfer` **حين يحدث فقط** — وهو الحقل الذي يجيب لاحقاً عن «من قرّر أن الفرع يعمل بلا مدير».
 >
@@ -605,7 +613,7 @@ Accept-language: ar | en
 | PUT    | `/:id/permissions` | 🔑 `roles.edit` | استبدال كامل لصلاحيات الدور — رجعي فوري على كل المعيّنين، يُسجَّل بـAudit Log لو لمس صلاحية `isSensitive`. **يرفع نفس تحذير تطابق مجموعة الصلاحيات** الذي يرفعه الإنشاء (تجاوز بـ`force: true`) |
 | PUT    | `/:id/level`       | 🔑 `roles.edit` + Super Admin | **Super Admin حصراً** (فحص إضافي بالـservice نفسه فوق `requirePermission`) — تعديل `level` خارج فحص المستوى النسبي المعتاد (سد ثغرة تصعيد الصلاحيات) |
 | POST   | `/:id/deactivate`  | 🔑 `roles.edit` | تعطيل (لا حذف) — يُرفض لو فيه تعيينات فعّالة، أو لو الدور Super Admin                                     |
-| GET    | `/:id/holders`     | 🔑 `users.manage` | من يحمل الدور الآن — صف لكل تعيين فعّال، مُصفَّح. **`users.manage` لا `roles.view`**: الحمولة قائمة أشخاص، وقراءة الدور غير قراءة من يحمله — نفس الحد الذي يرسمه `GET /branches/:id/staff` |
+| GET    | `/:id/holders`     | 🔑 `users.view` | من يحمل الدور الآن — صف لكل تعيين فعّال، مُصفَّح. **`users.view` لا `roles.view`**: الحمولة قائمة أشخاص، وقراءة الدور غير قراءة من يحمله — نفس الحد الذي يرسمه `GET /branches/:id/staff` |
 | DELETE | `/:id`             | 🔑 `roles.edit` | حذف صلب — مسموح فقط إن لم يُشِر إليه أي تعيين **قط**. «لا أحد يحمله الآن» ليس الشرط (ذاك هو التعطيل أو الأرشفة). `409 role_has_history` أو `403 role_system_default_undeletable` |
 | POST   | `/:id/archive`     | 🔑 `roles.edit` **+** `records.archive` | **أرشفة (2026-08-13)** — المخرج الذي لا يستطيع الحذف تقديمه: يُخفي دوراً **حُمِل فعلاً** ولا يُتلف شيئاً. الشرط: صفر تعيين **مفتوح** أياً كانت حالة الحامل. لا يلمس `is_active`. `409 role_has_active_holders` · `403 role_system_default_unarchivable`. **متكرِّرة بلا أثر** (idempotent) |
 | POST   | `/:id/unarchive`   | 🔑 `roles.edit` **+** `records.archive` | استرجاع — يمسح `archived_at` ولا شيء غيره |
@@ -618,6 +626,8 @@ Accept-language: ar | en
 > **ولماذا `system` مستثناة**: تلك فئة التزويد الداخلي (المدير العام · مدقق) — تُمنَح من الأدمن ولا يُتقدَّم لها. و**نفس الشرط مفروض بالكتابة** (`assertSelfRegisterable` بـ`users.service.ts`، على التسجيل وإعادة الإرسال معاً) بـ`422 role_not_self_registerable`: كتالوج لا يفرضه مسار الكتابة زينة، وجسمُ طلب مُلفَّق كان يضع بطابور المراجعة سطراً لا وجود له إلا ليُرفض.
 >
 > **الشكل المُرسَل هو `WireRole` نفسه** لا شكل مقتضب — عقد واحد، موديل واحد بالعميل، منتقٍ واحد. وما تستطيعه الأدوار يبقى محجوباً كما هو: `permissions` غائبة هنا تماماً كغيابها بـ`GET /roles`، و`GET /permissions` يبقى محروساً.
+>
+> **ونفس القصة للفرع (2026-08-16)** — `GET /branches/self-registerable` عام لنفس السبب حرفياً، و`requested_branch_id` صار يُتحقَّق منه بالكتابة (`assertRequestableBranch`، على التسجيل وإعادة الإرسال معاً) بـ`404` للمعدوم و`422 branch_not_self_registerable` للمؤرشف/المغلق نهائياً. **لم يكن يُتحقَّق منه إطلاقاً**: كان يُخزَّن من الجسم بلا أي بحث، فيمرّ المعرّف عبر التحقق وعبر طابور المراجعة، ثم ينفجر عند `decideRegistration` حيث يصير الفرع تعييناً — خطأ مفتاح أجنبي أو `branch_archived`. الأدمن يقرأ رفضاً عن حقل لم يملأه، بطلب لا يستطيع تصحيحه، لمتقدّم انتظر أياماً. **والغياب يبقى مشروعاً**: منصب بلا فرع منصب حقيقي لا قيمة ناقصة.
 
 > **لماذا لا يُعاد تسمية دور Super Admin**: `SUPER_ADMIN_ROLE_NAME` يُقارَن كنص خام بـ`roles.name` في الحراس التي تقرر من يعدّل مستوى دور ومن يُعدّ الحساب الجذري المحمي (`users.service.ts`). إعادة التسمية لا تُفشِل شيئاً — تجعل تلك البحوث ترجع فارغاً، أي **تُعطّل** الفحوص بدل أن تُسقطها. لا شيء آخر يُعنوَن بالاسم، فبقية الأدوار المزروعة تُعاد تسميتها بحرية.
 >
@@ -647,8 +657,9 @@ Accept-language: ar | en
 | Method | Path   | الحماية | ملاحظة                  |
 | ------ | ------ | --- | ----------------------- |
 | GET    | `/`    | 🔒 مسجّل دخول | قائمة مُصفّحة. `?archived=true` يعرض **المؤرشف وحده** |
+| GET    | `/self-registerable` | 🌐 **عام — بلا مصادقة** | **كتالوج التسجيل الذاتي** (2026-08-16) — كل فرع غير مؤرشف وغير `closed`، غير مُصفّح، بلا أعداد §16. `temporarily_closed` **مشمول عمداً**: الفرع متوقَّع عودته، والمنتقي يعرض حالته بجانب اسمه. المسار **مسجَّل قبل `/:id`** وإلا ابتلعه ورفضه كـid غير رقمي |
 | GET    | `/:id` | 🔒 مسجّل دخول | فرع واحد أو 404 — ومعه حقول §16 (`is_deletable`/`is_archivable` + الأعداد) |
-| GET    | `/:id/staff` | 🔑 `users.manage` | طاقم الفرع مُصفّحاً — صف لكل تعيين فعّال (أدناه) |
+| GET    | `/:id/staff` | 🔑 `users.view` | طاقم الفرع مُصفّحاً — صف لكل تعيين فعّال (أدناه) |
 | POST   | `/`    | 🔑 `branches.manage` | إنشاء فرع. الاسم فريد: `409 branch_name_taken`، و**`409 branch_name_taken_by_archived`** حين يحمل الاسمَ فرعٌ مؤرشف — مفتاحان لا واحد، لأن خطوة القارئ التالية تختلف: الأول «اختر اسماً آخر»، والثاني «الفرع الذي تعيد إنشاءه موجود، استرجعه بتاريخه بدل بنائه فارغاً» |
 | PATCH  | `/:id` | 🔑 `branches.manage` | تعديل بيانات/حالة. يُرفض على فرع مؤرشف `409 branch_archived` |
 | DELETE | `/:id` | 🔑 `branches.manage` | **حذف صلب (2026-08-13)** — مسموح فقط إن لم يُشِر إليه أي تعيين ولا أي ملكية **قط**، وليس الفرع الافتراضي. `409 branch_has_history` · `403 branch_is_default`. هذا هو جواب «أضفت فرعاً وخربطت وبدي أحذفه» |
@@ -689,13 +700,13 @@ Accept-language: ar | en
 >
 > **تحقق حيّ (2026-08-04)**: «العبدالله» → ٣ نتائج · «إيمان» → ١ · `09357` → ١ · `%` → ٠ (لا يطابق الكل) · `unassigned=true` → ٦ · `is_admin=true` → ١.
 
-> **⚠️ تغيير كاسر (2026-08-04)** — `GET /users` و`GET /users/:id` و`GET /users/:userId/role-assignments` انتقلت من 🔒 `requireAuth` إلى 🔑 `users.manage`. كانت الحمولة دليل المنظمة كاملاً متاحاً لأي حامل توكن صالح (`production_readiness.md` §A1). `GET /users/me` **لم يتغيّر** — بيانات المستخدم عن نفسه تبقى مفتوحة.
+> **⚠️ تغيير كاسر (2026-08-04)** — `GET /users` و`GET /users/:id` و`GET /users/:userId/role-assignments` انتقلت من 🔒 `requireAuth` إلى 🔑 `users.manage` — ثم إلى `users.view`/`users.access` مع تفصيل الكتالوج (2026-08-16). كانت الحمولة دليل المنظمة كاملاً متاحاً لأي حامل توكن صالح (`production_readiness.md` §A1). `GET /users/me` **لم يتغيّر** — بيانات المستخدم عن نفسه تبقى مفتوحة.
 >
 > **سجل التدقيق**: كل طفرة بموديول `identity` تُسجَّل الآن بـ`audit_log_entries` (١٥ إجراءً، الكتالوج بـ`services/audit-actions.ts`). أي endpoint جديد يُحدِث تغييراً يجب أن يستدعي `auditService.record` — الفاعل يصل عبر `buildActorContext(req, requireActorId(req))` من الـcontroller.
 | POST   | `/`    | 🔑 `branches.manage` | إنشاء فرع               |
 | PATCH  | `/:id` | 🔑 `branches.manage` | تعديل بيانات/حالة الفرع — الانتقال إلى `closed` مشروط (أدناه) |
 
-> **`GET /:id/staff` — محمي بـ`users.manage` لا `branches.manage`.** الحمولة قائمة أشخاص (اسم، إيميل، حالة حساب)، وقراءة سجل الفرع غير قراءة طاقمه — الصلاحية تتبع البيانات المكشوفة، نفس الحدّ الذي ترسمه كتلة `structure` باللوحة.
+> **`GET /:id/staff` — محمي بـ`users.view` لا `branches.manage`.** الحمولة قائمة أشخاص (اسم، إيميل، حالة حساب)، وقراءة سجل الفرع غير قراءة طاقمه — الصلاحية تتبع البيانات المكشوفة، نفس الحدّ الذي ترسمه كتلة `structure` باللوحة.
 >
 > الصف **مفتاحه التعيين لا المستخدم**: الشخص الواحد قد يحمل دورين بنفس الفرع، ودمجهما بصف واحد يُخفي الدور الثاني ويُفقد الواجهة `assignment_id` اللازم للنقل/الإنهاء. أصحاب الوصول غير المقيّد (`branch_id IS NULL`) **غير مشمولين** — ليسوا طاقم هذا الفرع، هم فقط غير محصورين بأي فرع.
 >
@@ -716,19 +727,19 @@ Accept-language: ar | en
 
 | Method | Path | الحماية | ملاحظة |
 | ------ | ---- | --- | ------ |
-| GET    | `/`  | 🔑 `dashboard.view` | إحصائيات مجمّعة لواجهة لوحة التحكم — كل بلوك أعلى-مستوى (`users`/`branches`/`roles`/`charts`/`structure`/`signals`) يظهر فقط لو المستخدم يملك أيضاً صلاحية الموديول المطابقة (`users.manage`/`branches.manage`/`roles.view`) — نفس رؤية شاشة القائمة التي تفتحها كل بطاقة، وليس فحصاً منفصلاً. البلوك الغائب لا يظهر بالـJSON إطلاقاً (وليس صفراً) |
+| GET    | `/`  | 🔑 `dashboard.view` | إحصائيات مجمّعة لواجهة لوحة التحكم — كل بلوك أعلى-مستوى (`users`/`branches`/`roles`/`charts`/`structure`/`signals`) يظهر فقط لو المستخدم يملك أيضاً صلاحية الموديول المطابقة (`users.view`/`branches.manage`/`roles.view`) — نفس رؤية شاشة القائمة التي تفتحها كل بطاقة، وليس فحصاً منفصلاً. البلوك الغائب لا يظهر بالـJSON إطلاقاً (وليس صفراً) |
 
 **بوابة الصلاحيات لكل بلوك:**
 
 | البلوك | يتطلب |
 | --- | --- |
-| `users` | `users.manage` |
+| `users` | `users.view` |
 | `branches` | `branches.manage` |
 | `roles` | `roles.view` |
-| `charts.users_per_branch` | `users.manage` + `branches.manage` |
-| `charts.users_per_role` | `users.manage` + `roles.view` |
-| `structure` | `users.manage` **و** `branches.manage` معاً — يغطي محورَي علاقة (فرع × دور) فلا يكفيه أحدهما |
-| `signals` | `users.manage` **أو** `branches.manage` — كل إشارة تُدرَج فقط إن توفّرت صلاحية مصدرها |
+| `charts.users_per_branch` | `users.view` + `branches.manage` |
+| `charts.users_per_role` | `users.view` + `roles.view` |
+| `structure` | `users.view` **و** `branches.manage` معاً — يغطي محورَي علاقة (فرع × دور) فلا يكفيه أحدهما |
+| `signals` | `users.view` **أو** `branches.manage` — كل إشارة تُدرَج فقط إن توفّرت صلاحية مصدرها |
 
 #### قواعد قراءة إلزامية
 
@@ -797,7 +808,7 @@ Accept-language: ar | en
 }
 ```
 
-**مثال ثانٍ** — مستخدم يملك `users.manage` + `roles.view` فقط (بلا `branches.manage`): تختفي `branches` و`structure` و`charts.users_per_branch` بالكامل، وتبقى إشارات `users` فقط:
+**مثال ثانٍ** — مستخدم يملك `users.view` + `roles.view` فقط (بلا `branches.manage`): تختفي `branches` و`structure` و`charts.users_per_branch` بالكامل، وتبقى إشارات `users` فقط:
 
 ```json
 {

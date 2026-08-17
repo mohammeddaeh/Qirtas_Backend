@@ -65,6 +65,28 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
     return;
   }
 
+  // A dependency being unreachable is **not** an internal error, and calling it
+  // one costs the client its retry: 500 tells the app "this is broken", so it
+  // shows a dead end at the exact moment waiting a few seconds would have
+  // worked. 503 says "come back shortly", which is both true and actionable.
+  //
+  // The common case by far is the database going away — a restart, a failover,
+  // a connection pool exhausted under load. It surfaces as a driver-level
+  // socket error, never as an ApiError, so without this it lands in the
+  // catch-all below and every request during a ten-second failover is reported
+  // to users as the application being broken.
+  if (isDependencyUnavailable(err)) {
+    logger.error({ err }, 'Dependency unavailable — answering 503');
+    res.setHeader('Retry-After', '5');
+    const body: ErrorEnvelope = {
+      status: false,
+      message: 'Service temporarily unavailable',
+      code: 503,
+    };
+    res.status(503).json(body);
+    return;
+  }
+
   logger.error({ err }, 'Unhandled error');
   const body: ErrorEnvelope = {
     status: false,
@@ -72,4 +94,50 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
     code: 500,
   };
   res.status(500).json(body);
+}
+
+/**
+ * Socket-level codes that mean "the thing I depend on is not answering", as
+ * opposed to "my code threw".
+ *
+ * Matched on `code`, never on the message text: driver messages are prose that
+ * changes between library versions, and a branch built on them breaks silently
+ * on an upgrade — the same trap `ErrorEnvelope.data` exists to close on the
+ * client side.
+ *
+ * `ECONNRESET` is deliberately absent: it is as often a client hanging up
+ * mid-request as it is a dependency dying, and answering 503 to the first case
+ * would tell healthy clients to retry a request that already succeeded.
+ */
+const UNAVAILABLE_CODES = new Set([
+  'ECONNREFUSED', // nothing listening on the port
+  'ENOTFOUND', // DNS gave nothing — host is gone or not up yet
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ETIMEDOUT', // the dependency accepted nothing in time
+  'EPIPE',
+  '57P01', // postgres: admin_shutdown
+  '57P03', // postgres: cannot_connect_now (still starting up)
+  '08006', // postgres: connection_failure
+  '08001', // postgres: sqlclient_unable_to_establish_sqlconnection
+]);
+
+function isDependencyUnavailable(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === 'string' && UNAVAILABLE_CODES.has(code)) return true;
+
+  // Drivers routinely wrap the socket error, so the code that matters sits one
+  // level down. Checked explicitly rather than walking the chain: an unbounded
+  // walk can follow a cycle, and one level is where every case observed lives.
+  const cause = (err as { cause?: unknown }).cause;
+  if (typeof cause === 'object' && cause !== null) {
+    const causeCode = (cause as { code?: unknown }).code;
+    if (typeof causeCode === 'string' && UNAVAILABLE_CODES.has(causeCode)) {
+      return true;
+    }
+  }
+
+  return false;
 }

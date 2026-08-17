@@ -1,7 +1,26 @@
 import type { NextFunction, Request, Response } from 'express';
 import { RateLimiter } from '../security/rate-limiter.js';
 
-const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS_PER_EMAIL = 5;
+/**
+ * Deliberately far above the per-email budget, not equal to it.
+ *
+ * One IP is one *network*, not one person: a branch behind a single router,
+ * an office NAT, a carrier CGNAT. At parity (both 5) this bucket stops being
+ * the secondary layer it is documented as and becomes the binding one — five
+ * failed logins *in total*, spread across five different employees, lock the
+ * whole site out for fifteen minutes, and nothing on any of their screens can
+ * explain why a correct password is being refused. It also makes the number
+ * unusable in development, where one device cycles through many test accounts.
+ *
+ * The primary defence against guessing a specific account is the per-email
+ * bucket, and it is untouched by this: an attacker with a thousand IPs still
+ * gets five tries per account. What this bucket buys is the other direction —
+ * one source spraying one password across many accounts — and 30/15min still
+ * cuts that to a crawl while staying above anything a real shared network
+ * produces by accident.
+ */
+const MAX_ATTEMPTS_PER_IP = 30;
 const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
@@ -23,13 +42,13 @@ const SWEEP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
  */
 const LOGIN_MESSAGE = 'Too many login attempts — please try again later';
 const emailLimiter = new RateLimiter(
-  MAX_ATTEMPTS,
+  MAX_ATTEMPTS_PER_EMAIL,
   WINDOW_MS,
   LOGIN_MESSAGE,
   'too_many_login_attempts',
 );
 const ipLimiter = new RateLimiter(
-  MAX_ATTEMPTS,
+  MAX_ATTEMPTS_PER_IP,
   WINDOW_MS,
   LOGIN_MESSAGE,
   'too_many_login_attempts',

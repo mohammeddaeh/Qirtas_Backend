@@ -53,6 +53,49 @@ export function findById(id: number): Promise<BranchRow | undefined> {
 }
 
 /**
+ * Whether a visitor may name this branch on a registration request.
+ *
+ * Two conditions, each for its own reason:
+ * - not archived — an archived branch accepts no new assignment at all
+ *   (`branch_archived`), so approving a request that names one would fail at
+ *   the last step, after a person had already been told to wait for a decision.
+ * - not `closed` — that is the permanent state, reached only after every
+ *   assignment has been cleared out. Applying to work somewhere that has shut
+ *   for good is not a request an admin can grant.
+ *
+ * `temporarily_closed` deliberately stays in: it is a branch that is expected
+ * back, staffing one before it reopens is legitimate (the admin picker allows
+ * exactly that), and the picker renders the state next to the name — so the
+ * applicant is never choosing it blind.
+ *
+ * The single definition behind BOTH the public catalog and the register
+ * endpoint's guard — a catalog the write path does not enforce is decorative.
+ */
+export function isSelfRegisterable(row: BranchRow): boolean {
+  return row.archived_at === null && row.status !== 'closed';
+}
+
+/**
+ * The branch catalog a self-registering visitor picks from — every branch
+ * [isSelfRegisterable] accepts.
+ *
+ * Unpaginated on purpose: a bounded catalog read by an anonymous form that has
+ * nowhere to put a "load more", exactly like the roles one it mirrors.
+ */
+export function findSelfRegisterable(): Promise<BranchRow[]> {
+  return db
+    .select()
+    .from(branchesTable)
+    .where(
+      and(
+        sql`${branchesTable.archived_at} IS NULL`,
+        sql`${branchesTable.status} <> 'closed'`,
+      ),
+    )
+    .orderBy(asc(branchesTable.name));
+}
+
+/**
  * Name lookup for the uniqueness guard — searches archived rows too, and must.
  *
  * `branches_name_unique_idx` is a plain unique index, not partial on

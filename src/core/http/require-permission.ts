@@ -29,6 +29,45 @@ import * as userRoleAssignmentsRepository from '../../features/identity/reposito
  *
  * The middleware body below is byte-for-byte the behaviour it always had.
  */
+/**
+ * Passes when the caller holds **any** of the keys.
+ *
+ * For an endpoint that legitimately serves several audiences. The case it was
+ * added for: the role **picker** feed. Choosing a role is part of approving a
+ * registration, of creating a user, and of opening an assignment — three
+ * different permissions — so demanding `roles.view` on top refused people who
+ * were plainly entitled to do the job, with a 403 mid-task.
+ *
+ * Prefer a single key wherever one exists. Two keys on a route is a fact an
+ * administrator has to reconstruct from the roles screen, and the screen cannot
+ * show it.
+ */
+export function requireAnyPermission(permissionKeys: string[], meta: PermissionMeta = {}) {
+  if (permissionKeys.length === 0) {
+    throw new Error('requireAnyPermission() needs at least one key');
+  }
+  for (const key of permissionKeys) registerPermission(key, meta);
+
+  const guard = async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const actorUserId = requireActorId(req);
+      const held = await userRoleAssignmentsRepository.findAllEffectivePermissionKeys(actorUserId);
+      if (!permissionKeys.some((key) => held.includes(key))) {
+        throw new ForbiddenError(
+          `Missing one of: ${permissionKeys.join(', ')}`,
+          undefined,
+          'permission_missing',
+        );
+      }
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  return markAccess(guard, { kind: 'permission', keys: permissionKeys });
+}
+
 export function requirePermission(permissionKey: string, meta: PermissionMeta = {}) {
   registerPermission(permissionKey, meta);
 

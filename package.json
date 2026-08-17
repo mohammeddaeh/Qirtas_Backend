@@ -22,7 +22,8 @@
     "check:messages": "tsx src/core/i18n/check-message-keys.ts",
     "test:mail": "tsx tests/email-recipient.test.ts",
     "test:import": "tsx tests/import-duplicate-detection.test.ts",
-    "check:permissions": "tsx src/core/authz/check-permissions.ts"
+    "check:permissions": "tsx src/core/authz/check-permissions.ts",
+    "print:permissions": "tsx src/core/authz/print-permissions.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.0",

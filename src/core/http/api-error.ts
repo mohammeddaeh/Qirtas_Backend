@@ -96,6 +96,45 @@ export class PayloadTooLargeError extends ApiError {
   }
 }
 
+/**
+ * 503 — reachable, but not serving right now: maintenance, a dependency that
+ * is down, or load being shed on purpose before the process falls over.
+ *
+ * ## Why this is not a 500
+ *
+ * A 500 says "something in here is broken"; a 503 says "come back shortly". The
+ * client acts on that difference — the Flutter app maps 502/503/504 to a
+ * retryable state with a "try again" affordance, and a 500 to a dead end,
+ * because a retry button that can never succeed is worse than none.
+ *
+ * Answering 500 for a transient outage therefore costs every client its retry:
+ * the app tells the user the app is broken, at the exact moment waiting ten
+ * seconds would have worked.
+ *
+ * [retryAfterSeconds] is optional and sets `Retry-After`, which RFC 9110
+ * defines on 503 exactly as it does on 429. Send it whenever the wait is
+ * actually known (a maintenance window, a rate-limited upstream); omitting it
+ * is honest when it is not.
+ */
+export class ServiceUnavailableError extends ApiError {
+  constructor(
+    message = 'Service temporarily unavailable',
+    retryAfterSeconds?: number,
+    messageKey?: string,
+  ) {
+    super(
+      503,
+      message,
+      undefined,
+      retryAfterSeconds === undefined
+        ? undefined
+        : { 'Retry-After': String(retryAfterSeconds) },
+      undefined,
+      messageKey,
+    );
+  }
+}
+
 /** Generic 4xx business-rule failure that isn't one of the above. */
 export class BusinessError extends ApiError {
   constructor(

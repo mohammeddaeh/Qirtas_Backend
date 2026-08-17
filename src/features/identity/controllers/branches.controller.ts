@@ -12,6 +12,11 @@ export async function listBranches(req: Request, res: Response): Promise<void> {
   ok(res, result);
 }
 
+export async function listSelfRegisterableBranches(_req: Request, res: Response): Promise<void> {
+  const branches = await branchesService.listSelfRegisterableBranches();
+  ok(res, branches);
+}
+
 export async function getBranchById(req: Request, res: Response): Promise<void> {
   const { id } = req.params as unknown as { id: number };
   const branch = await branchesService.getBranchById(id);

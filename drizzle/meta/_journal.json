@@ -64,6 +64,13 @@
       "when": 1786613906522,
       "tag": "0008_tan_mongoose",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786860045056,
+      "tag": "0009_authz_user_permission_overrides",
+      "breakpoints": true
     }
   ]
 }
