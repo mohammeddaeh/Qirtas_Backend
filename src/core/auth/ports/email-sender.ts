@@ -11,9 +11,13 @@
  * deployments is the *transport*, not the *message*, so the transport is what
  * gets abstracted.
  *
- * `PasswordResetDelivery` (core/notifications/password-reset-delivery.ts) is the
- * one-method interface this replaced. It has no callers left and is kept only
- * so an application built on an older copy of the template still compiles.
+ * `PasswordResetDelivery` (core/notifications/) was the one-method interface
+ * this replaced. It was kept for a while "so an older copy of the template
+ * still compiles" — which is not a reason that survives contact with a reader:
+ * a second, exported, fully-documented mail port sitting beside this one reads
+ * as a live alternative, and `docs/rest_api.md` did in fact still describe the
+ * password-reset flow as going through it. **Deleted 2026-08-17**, with zero
+ * callers; `core/notifications/` went with it.
  *
  * ## What an implementation must guarantee
  *

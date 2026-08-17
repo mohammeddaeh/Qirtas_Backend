@@ -27,6 +27,10 @@
 | `src/features/auth/` | **الواجهة HTTP للمصادقة فقط** (routes/controllers/dtos/openapi) — كل المنطق بـ`src/core/auth/`. تخدم: `/auth/refresh` · `/auth/sessions` (عرض/إبطال/خروج من الباقي) · `/auth/verify-email` · `/auth/resend-verification` · `/auth/forgot-password` · `/auth/reset-password` · `/auth/change-password`. **`login`/`logout` ليسا هنا** — بقيا بـ`identity` لأن ردّهما يحمل `permission_keys`/`is_super_admin` (تخويل لا مصادقة)، ويفوّضان المصادقة لنفس خدمة `core/auth` |
 | `src/features/localization/` | **Dynamic (Remote) Localization** — `languages` + `translation_entries`: يخدم أي لغة إضافية بعد ar/en بالكامل (لا قيمة أساسية محلية لها)، **و** يخدم أيضاً طبقة "Override" اختيارية فوق ar/en نفسيهما (اللتان تبقيان compile-time بالفرونت كقيمة أساسية مضمونة أوفلاين دائماً — الـoverride طبقة إضافية غير مُلزِمة فوقها، لا بديل عنها) — انظر §13 (أسماء الصلاحيات) و§15 (أي نص واجهة عادي) بالمرجع أدناه. `GET /languages` (غير مُصفّحة، فعّالة فقط) هو استطلاع الإصدار الذي يتحقق منه التطبيق عند الإقلاع؛ `GET /:code/translations` يرجّع خريطة الترجمة الكاملة (whole-file، لا `since`)؛ `PUT /:code/translations` يرفع `version` تلقائياً كإشارة إبطال كاش. صلاحية `localization.manage` للكتابة. مصدر القرار المعماري الكامل: [docs/reference/dynamic_localization.md](../docs/reference/dynamic_localization.md) (Model 2 — نظامان متوازيان لأي لغة إضافية؛ Local-First with Remote Override لكل اللغات بما فيها ar/en) |
 
+| `src/features/dashboard/` | **قراءة مجمَّعة واحدة** (`GET /dashboard`، `dashboard.view`) تُغذّي شاشة اللوحة بالفرونت: العدّادات + توزيع المستخدمين على الأدوار والفروع + الإشارات القابلة للتصرّف (فرع بلا طاقم). **قراءة فقط** — لا كتابة ولا كيان خاص به، يجمع من جداول `identity`. كان غائباً عن هذا الجدول رغم كونه مبنيّاً وموصولاً (أُضيف 2026-08-17) |
+
+> **وموديولان يعيشان بـ`core/` عمداً لا بـ`features/`** لأنهما لا يملكان مجال عمل: `core/authz/` (كتالوج الصلاحيات + `requirePermission` + تجاوزات المستخدم) و`core/data-transfer/` (استيراد/تصدير عام — المورد يصير قابلاً للنقل بملف `*.transfer.ts` واحد بجانب الـfeature، بلا سطر واحد بالموديول).
+
 > `orders/`, `inventory/`, `printing/`, `customization/` وبقية موديولات المشروع **لم تُبنَ بعد** — انسخ نمط `features/identity/` بنفس التشريح.
 
 ---
@@ -131,6 +135,25 @@ features → other features                              ❌ NEVER (مطابق �
 | جدول DB جديد                                     | `src/core/db/schema.ts` (barrel) + migration جديدة (`npm run db:generate`) |
 | Script جديد بـ`package.json`                     | `docs/scripts.md`                                                          |
 | أي تغيير على `core/auth/ports/email-sender.ts` أو المحوّلَين أو مسار المستقبِل | `docs/mail.md` + `tests/email-recipient.test.ts`                          |
+| **حذف منفذ/خدمة/محوِّل** | **ابحث عن اسمه بـ`docs/` قبل الحذف وبعده** — انظر القاعدة تحته |
+
+### 🧟 قاعدة صارمة — لا يُبقى منفذٌ بلا مستدعٍ «للتوافق»
+
+`core/notifications/password-reset-delivery.ts` بقي بعد أن استبدله `EmailSender`،
+بحجّة مكتوبة داخله: «بلا مستدعين، ويُبقى فقط ليُصرَّف مشروعٌ بُني على نسخة أقدم من
+القالب». والنتيجة أن **`docs/rest_api.md` ظلّ يصف مسار «نسيت كلمة المرور» بأنه
+يمرّ به**، ويقول إن «المشروع بلا مرسل بريد — لا nodemailer ولا مزوّد»، بينما
+`nodemailer` تبعية معلنة و`requestPasswordReset` يستدعي `emailSender()` منذ توحيد
+المنافذ. فكان العقد — **المرجع الوحيد** — يوصي بعملٍ منتهٍ: «الإطلاق يتطلب محوّلاً
+حقيقياً، ملف واحد وسطر تبديل».
+
+**السبب**: منفذٌ ثانٍ مُصدَّر وموثَّق بجوار الأول يُقرأ كبديل حيّ، لا كأثر. و«توافق
+مشروع أقدم» ليس مبرِّراً يعيش بهذا المستودع — لا يوجد مستهلك خارجي، والقالب يُنسخ
+لا يُستورَد. حُذف الملف والمجلد 2026-08-17.
+
+**القاعدة**: يُحذف ما لا مستدعي له بنفس التغيير الذي استبدله، ويُبحَث عن اسمه بـ
+`docs/` و`src/` معاً — الوثيقة تعيش أطول من الكود لأن **لا شيء يُفشلها**:
+`npm run typecheck` و`check:permissions` و`check:messages` كلها تمرّ على وثيقة تكذب.
 
 ---
 
