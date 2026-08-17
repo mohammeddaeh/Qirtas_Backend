@@ -423,6 +423,23 @@ export const MESSAGES = {
     en: 'Some rows collide with records that already exist. Nothing was imported — upload the file again to see which rows.',
     ar: 'بعض الصفوف تتعارض مع سجلات موجودة. لم يُستورد شيء — أعد رفع الملف لتظهر الصفوف المتعارضة.',
   },
+  /**
+   * `express.json()` refused the body — malformed JSON, wrong charset, or the
+   * client hung up mid-upload. Set by `error-handler.ts`, not by any throw
+   * site, which is why `check:messages` cannot see its use.
+   *
+   * Worded as "try again" because that is genuinely the fix: the most common
+   * cause here is a truncated request on a flaky mobile connection, not a
+   * malformed client.
+   */
+  body_malformed: {
+    en: 'The request could not be read — please try again',
+    ar: 'تعذّرت قراءة الطلب — يرجى المحاولة مرة أخرى',
+  },
+  body_too_large: {
+    en: 'The request is too large',
+    ar: 'حجم الطلب كبير جداً',
+  },
 } as const satisfies Record<string, Record<Lang, string>>;
 
 export type MessageKey = keyof typeof MESSAGES;

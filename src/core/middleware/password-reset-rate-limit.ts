@@ -41,15 +41,25 @@ const ipLimiter = new RateLimiter(
   'too_many_reset_attempts',
 );
 
-setInterval(() => ipLimiter.sweepExpired(), SWEEP_INTERVAL_MS).unref();
+// `void` because the sweep is fire-and-forget maintenance: a failed delete is
+// retried by the next tick, and awaiting it here would have nowhere to report.
+setInterval(() => void ipLimiter.sweepExpired(), SWEEP_INTERVAL_MS).unref();
 
-export function passwordResetRateLimit(
+/**
+ * Async since the store may be shared (`RATE_LIMIT_STORE=postgres`).
+ *
+ * **The `await` is the guard.** Express 4 does not await middleware, so
+ * dropping it would let this call `next()` immediately and pass the request
+ * through while the `RateLimitError` surfaced separately as an unhandled
+ * rejection — the guard would appear to exist and stop nothing.
+ */
+export async function passwordResetRateLimit(
   req: Request,
   _res: Response,
   next: NextFunction,
-): void {
+): Promise<void> {
   try {
-    ipLimiter.consume(`password-reset-ip:${req.ip ?? 'unknown'}`);
+    await ipLimiter.consume(`password-reset-ip:${req.ip ?? 'unknown'}`);
     next();
   } catch (err) {
     next(err);

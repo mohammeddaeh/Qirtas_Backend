@@ -53,6 +53,30 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
     return;
   }
 
+  // `express.json()` rejected the body before any route saw it — malformed
+  // JSON, or a body over the size limit.
+  //
+  // Without this the throw is an ordinary `SyntaxError`, so it fell through to
+  // the catch-all below and the client was told **500 internal server error**
+  // for a request it had itself sent wrong. That is the worst possible answer
+  // to the most recoverable class of failure: `DioFailureMapper` on the Flutter
+  // side turns 500 into `ServerFailure`, which is deliberately `canRetry: false`
+  // because a genuine 500 does not fix itself — so the user got a dead end, and
+  // the log said the server was broken when nothing was.
+  //
+  // A truncated upload on a flaky mobile connection lands here too, which is
+  // exactly the case that must say "send it again".
+  const bodyParse = asBodyParserError(err);
+  if (bodyParse !== null) {
+    const body: ErrorEnvelope = {
+      status: false,
+      message: resolveMessage(bodyParse.messageKey, req.lang, bodyParse.message),
+      code: bodyParse.httpStatus,
+    };
+    res.status(bodyParse.httpStatus).json(body);
+    return;
+  }
+
   // Defensive: a ZodError that escaped validate() (shouldn't normally happen).
   if (err instanceof ZodError) {
     const body: ErrorEnvelope = {
@@ -94,6 +118,40 @@ export function errorHandler(err: unknown, req: Request, res: Response, next: Ne
     code: 500,
   };
   res.status(500).json(body);
+}
+
+/**
+ * Classifies a body-parser rejection, or returns `null` if this is not one.
+ *
+ * Matched on `type` — the stable discriminator body-parser sets on every error
+ * it raises — never on the message, for the same reason `ErrorEnvelope.data`
+ * exists: message text is prose that changes between library versions.
+ */
+function asBodyParserError(
+  err: unknown,
+): { httpStatus: number; message: string; messageKey: string } | null {
+  if (typeof err !== 'object' || err === null) return null;
+
+  const type = (err as { type?: unknown }).type;
+  if (typeof type !== 'string') return null;
+
+  switch (type) {
+    case 'entity.parse.failed':
+    case 'encoding.unsupported':
+    case 'charset.unsupported':
+      return { httpStatus: 400, message: 'Malformed request body', messageKey: 'body_malformed' };
+
+    case 'entity.too.large':
+      return { httpStatus: 413, message: 'Request body is too large', messageKey: 'body_too_large' };
+
+    // `request.aborted` — the client hung up mid-body. Nothing to answer to,
+    // but naming it keeps it out of the 500 bucket in the logs.
+    case 'request.aborted':
+      return { httpStatus: 400, message: 'Request was aborted', messageKey: 'body_malformed' };
+
+    default:
+      return null;
+  }
 }
 
 /**

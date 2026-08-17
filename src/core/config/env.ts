@@ -13,6 +13,29 @@ const envSchema = z.object({
    * tune via env, not a business-rule decision baked into code.
    */
   SESSION_IDLE_TIMEOUT_MINUTES: z.coerce.number().int().positive().default(10080), // 7 days
+
+  /**
+   * Where rate-limit counters live — `memory` (default) or `postgres`.
+   *
+   * **Set this to `postgres` before running more than one instance.** The
+   * memory store keeps its `Map` per process, so a load balancer across N
+   * replicas turns a limit of five attempts into 5×N — and a deploy or crash
+   * clears every counter. Neither shows up as an error, in a log line, or in
+   * any test that runs on one machine. The only party who ever observes the
+   * difference is the one guessing passwords.
+   *
+   * `postgres` is correct across replicas and restarts, at the cost of one
+   * upsert per guarded request. Guarded requests are login, registration,
+   * password reset and verification — never a hot path, and all of them touch
+   * the database in the same round trip anyway.
+   *
+   * Deliberately not Redis, and no dependency was added for it: this project
+   * already runs Postgres, and a second piece of infrastructure to count login
+   * attempts is a cost most deployments should not pay. `RateLimitStore` is a
+   * three-method interface if you want one anyway.
+   */
+  RATE_LIMIT_STORE: z.enum(['memory', 'postgres']).default('memory'),
+
   /**
    * Comma-separated browser origins allowed to call this API, e.g.
    * `https://admin.qirtas.sy,https://qirtas.sy`.

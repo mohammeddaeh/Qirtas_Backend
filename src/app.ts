@@ -123,9 +123,19 @@ export function buildApp(): Express {
 
   app.use(helmet());
   app.use(cors(corsOptions()));
-  app.use(express.json());
   app.use(pinoHttp({ logger }));
+
+  // Before `express.json()`, not after.
+  //
+  // The body parser is the earliest middleware that can *throw* — malformed
+  // JSON, a body over the limit — and `error-handler.ts` translates its message
+  // with `req.lang`. With this line after the parser, `req.lang` was still
+  // `undefined` on exactly the path that needed it, so a body error answered in
+  // whatever the fallback happened to be. Nothing before this point can reject
+  // a request, so moving it up costs nothing and closes the gap.
   app.use(requestContext);
+
+  app.use(express.json());
   app.use(asyncHandler(auth));
 app.get('/', (_req, res) => {
   res.json({

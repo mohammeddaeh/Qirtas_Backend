@@ -134,6 +134,7 @@ features → other features                              ❌ NEVER (مطابق �
 | Feature module جديد                              | جدول Modules أعلاه + `docs/architecture.md`                                |
 | جدول DB جديد                                     | `src/core/db/schema.ts` (barrel) + migration جديدة (`npm run db:generate`) |
 | Script جديد بـ`package.json`                     | `docs/scripts.md`                                                          |
+| **أي تغيير على شكل رد يقرأه الفرونت** | `src/features/**/__tests__/wire-contract.test.ts` **و**`qirtas_app/test/wire_contract_test.dart` — **الاثنان معاً** |
 | أي تغيير على `core/auth/ports/email-sender.ts` أو المحوّلَين أو مسار المستقبِل | `docs/mail.md` + `tests/email-recipient.test.ts`                          |
 | **حذف منفذ/خدمة/محوِّل** | **ابحث عن اسمه بـ`docs/` قبل الحذف وبعده** — انظر القاعدة تحته |
 
@@ -157,8 +158,30 @@ features → other features                              ❌ NEVER (مطابق �
 
 ---
 
+## ⛓️ عقد الـwire — قاعدة صارمة
+
+**مفاتيح JSON عقدٌ مع `qirtas_app`، ولا شيء يفرضه تلقائياً.** خطؤها لا يراه `tsc`
+(الخادم لا يعلم أن عميلاً موجوداً)، ولا `dart analyze` (المفتاح الغائب `null`،
+و`null` قيمة `dynamic` سليمة)، ويبتلعه `HandleBodyResponse` فيصل المستخدمَ «حدث
+خطأ» بينما السيرفر يسجّل `200 OK`.
+
+**هذا وقع فعلاً بالقالب الذي اشتُقّ منه هذا المشروع** — العميل يقرأ `data.user`
+والخادم يرسل `data.account`، فلم يعمل مسار الدخول ولا مرّة، وخطّا CI أخضران.
+
+الحارس: `src/features/**/__tests__/wire-contract.test.ts` هنا،
+و`qirtas_app/test/wire_contract_test.dart` هناك — **مكتوبان على الأشكال نفسها**.
+أي تغيير بشكل رد يُحدَّث بالملفين معاً بنفس التغيير.
+
+> **وفخّ ثانٍ أهدأ**: schema الـDTO تُغذّي `/openapi.json` **ولا شيء يقارنها بما
+> تُرجعه الخدمة فعلاً**. `loginResponseSchema` أغفلت `is_super_admin` بينما
+> الخدمة ترسله والعميل يقرأه — فالعقد المنشور ينكر وجود العَلَم الذي يقرّر ظهور
+> كل أداة إدارة. صُحِّح 2026-08-17 ويحرسه `wire-contract.test.ts` الآن.
+
+---
+
 ## قواعد التعديل
 
 - تغيير minimal ومعزول — لا refactors واسعة بدون موافقة صريحة.
+- **`npm test` قبل إغلاق أي مهمة** (vitest، بلا قاعدة بيانات ولا خادم).
 - بعد أي تعديل schema: `npm run db:generate` ثم `npm run db:migrate`.
 - تحقق دائماً قبل الإغلاق: `npm run typecheck && npm run lint`.

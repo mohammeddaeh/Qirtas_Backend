@@ -355,18 +355,35 @@ export const updateUserBodySchema = z.object({
 });
 export type UpdateUserBody = z.infer<typeof updateUserBodySchema>;
 
-/** Mirrors LoginResult (services/users.service.ts) for OpenAPI doc generation only. */
+/**
+ * Mirrors LoginResult (services/users.service.ts) for OpenAPI doc generation only.
+ *
+ * ⚠️ **`is_super_admin` was missing here while the service sent it** (found
+ * 2026-08-17). Nothing failed: this schema feeds `/openapi.json` and nothing
+ * else, so the field travelled on every login while the published contract
+ * denied it existed — and `LoginModel` on the Flutter side reads it. A client
+ * generated from this document, or a reviewer trusting it, would have dropped
+ * the one flag that decides whether admin controls render at all.
+ *
+ * A doc-only schema drifting is silent by construction: `tsc` does not compare
+ * it to the service's return type, and no test parsed it. `test/wire_contract_test.dart`
+ * on the app side now asserts the shipped shape.
+ */
 export const loginResponseSchema = z.object({
   user: userResponseSchema,
   token: z.string(),
   session_id: z.number().int(),
   permission_keys: z.array(z.string()),
+  is_super_admin: z.boolean(),
 });
 
 /** Mirrors CurrentUserResult (services/users.service.ts) for OpenAPI doc generation only — same as loginResponseSchema minus token/session_id. */
 export const currentUserResponseSchema = z.object({
   user: userResponseSchema,
   permission_keys: z.array(z.string()),
+  is_super_admin: z.boolean(),
+  /** Debug builds only — see [CurrentUserResult.declared_keys]. Absent in release. */
+  declared_keys: z.array(z.string()).optional(),
 });
 
 /** See docs/rest_api.md §6.1 Filtering & Sorting — merged with paginationQuerySchema at the route. */
