@@ -94,7 +94,16 @@ const envSchema = z.object({
    * fixed in auth-config.ts — length is the knob worth deployment-level tuning,
    * character classes are not (see that file for why).
    */
-  PASSWORD_MIN_LENGTH: z.coerce.number().int().min(8).default(8),
+  PASSWORD_MIN_LENGTH: z.coerce.number().int().min(1).default(8),
+
+  /**
+   * `strict` (default) — length >= PASSWORD_MIN_LENGTH (8+), one letter, one digit.
+   * `relaxed` — **development only**: any non-empty password is accepted
+   * (e.g. `12345678`), so test accounts can be typed by hand. Refused when
+   * NODE_ENV=production (see the check below the schema) — a weak-password
+   * switch that could ride into a real deployment is not a dev convenience.
+   */
+  PASSWORD_POLICY: z.enum(['strict', 'relaxed']).default('strict'),
 
   // ── Mail transport ────────────────────────────────────────────────────────
   // These ARE secrets (SMTP_PASS especially) and are read only by
@@ -126,7 +135,16 @@ const envSchema = z.object({
   MAIL_TRANSPORT: z.enum(['auto', 'smtp', 'log']).default('auto'),
 });
 
-const parsed = envSchema.safeParse(process.env);
+const parsed = envSchema
+  .refine((e) => !(e.NODE_ENV === 'production' && e.PASSWORD_POLICY === 'relaxed'), {
+    message: 'PASSWORD_POLICY=relaxed is not allowed when NODE_ENV=production',
+    path: ['PASSWORD_POLICY'],
+  })
+  .refine((e) => e.PASSWORD_POLICY === 'relaxed' || e.PASSWORD_MIN_LENGTH >= 8, {
+    message: 'PASSWORD_MIN_LENGTH below 8 requires PASSWORD_POLICY=relaxed',
+    path: ['PASSWORD_MIN_LENGTH'],
+  })
+  .safeParse(process.env);
 
 if (!parsed.success) {
   console.error('❌ Invalid environment configuration:');

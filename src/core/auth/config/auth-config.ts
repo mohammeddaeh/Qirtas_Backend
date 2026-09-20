@@ -97,7 +97,9 @@ export const authConfig = {
   },
 
   password: {
-    minLength: env.PASSWORD_MIN_LENGTH,
+    // `relaxed` = development only (env.ts refuses it in production): any
+    // non-empty password, so test accounts can be `12345678`.
+    minLength: env.PASSWORD_POLICY === 'relaxed' ? 1 : env.PASSWORD_MIN_LENGTH,
     /**
      * Composition rules stay deliberately mild: one letter, one digit.
      *
@@ -106,8 +108,8 @@ export const authConfig = {
      * common "strong" password in every breach corpus. The server's job is to
      * refuse the genuinely trivial, not to teach.
      */
-    requireLetter: true,
-    requireDigit: true,
+    requireLetter: env.PASSWORD_POLICY !== 'relaxed',
+    requireDigit: env.PASSWORD_POLICY !== 'relaxed',
     maxLength: 255,
   },
 } as const;

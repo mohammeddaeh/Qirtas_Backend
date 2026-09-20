@@ -45,7 +45,7 @@ import * as usersRepository from '../../features/identity/repositories/users.rep
 import * as rolesRepository from '../../features/identity/repositories/roles.repository.js';
 import type { RequestActorContext } from '../http/require-actor.js';
 
-const DEMO_PASSWORD = 'Qirtas@2026';
+const DEMO_PASSWORD = '12345678'; // dev-only — needs PASSWORD_POLICY=relaxed to be *typed*; seeding bypasses the policy
 
 // ── Role names (Arabic — must match seed.ts exactly) ───────────────────────
 const ROLE = {
