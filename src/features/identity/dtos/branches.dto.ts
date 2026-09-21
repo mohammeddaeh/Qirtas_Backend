@@ -49,6 +49,9 @@ export interface WireBranch {
   name: string;
   address: string | null;
   contact_info: string | null;
+  /** Both null until an admin places the branch on the map. */
+  latitude: number | null;
+  longitude: number | null;
   status: 'active' | 'temporarily_closed' | 'closed';
   is_default: boolean;
   /**
@@ -77,6 +80,8 @@ export function toWireBranch(row: BranchRow, facts?: BranchRetirementFacts): Wir
     name: row.name,
     address: row.address,
     contact_info: row.contact_info,
+    latitude: row.latitude === null ? null : Number(row.latitude),
+    longitude: row.longitude === null ? null : Number(row.longitude),
     status: row.status,
     is_default: row.is_default,
     archived_at: row.archived_at?.toISOString() ?? null,
@@ -177,17 +182,44 @@ export const branchesFilterQuerySchema = z
   .strict();
 export type BranchesFilterQuery = z.infer<typeof branchesFilterQuerySchema>;
 
-export const createBranchBodySchema = z.object({
-  name: z.string().trim().min(1).max(150),
-  address: z.string().trim().max(2000).optional(),
-  contact_info: optionalSyrianPhoneSchema,
-});
+const latitudeSchema = z.coerce.number().min(-90).max(90);
+const longitudeSchema = z.coerce.number().min(-180).max(180);
+
+/** Both or neither — half a coordinate places nothing (the DB CHECK says the same). */
+const bothOrNeither = (v: { latitude?: number | null; longitude?: number | null }): boolean =>
+  (v.latitude === undefined) === (v.longitude === undefined);
+
+const COORDINATES_MESSAGE = { message: 'latitude and longitude must be sent together' };
+
+export const createBranchBodySchema = z
+  .object({
+    name: z.string().trim().min(1).max(150),
+    address: z.string().trim().max(2000).optional(),
+    contact_info: optionalSyrianPhoneSchema,
+    latitude: latitudeSchema.optional(),
+    longitude: longitudeSchema.optional(),
+  })
+  .refine(bothOrNeither, COORDINATES_MESSAGE);
 export type CreateBranchBody = z.infer<typeof createBranchBodySchema>;
 
-export const updateBranchBodySchema = z.object({
-  name: z.string().trim().min(1).max(150).optional(),
-  address: z.string().trim().max(2000).nullable().optional(),
-  contact_info: nullableSyrianPhoneSchema,
-  status: z.enum(['active', 'temporarily_closed', 'closed']).optional(),
-});
+export const updateBranchBodySchema = z
+  .object({
+    name: z.string().trim().min(1).max(150).optional(),
+    address: z.string().trim().max(2000).nullable().optional(),
+    contact_info: nullableSyrianPhoneSchema,
+    status: z.enum(['active', 'temporarily_closed', 'closed']).optional(),
+    /** `null` on both clears the placement. */
+    latitude: latitudeSchema.nullable().optional(),
+    longitude: longitudeSchema.nullable().optional(),
+  })
+  .refine(bothOrNeither, COORDINATES_MESSAGE);
+
+/** `POST /branches/nearest` — a POST so coordinates never sit in a URL the request logger records. */
+export const nearestBranchBodySchema = z
+  .object({
+    latitude: latitudeSchema.optional(),
+    longitude: longitudeSchema.optional(),
+  })
+  .refine((v) => (v.latitude === undefined) === (v.longitude === undefined), COORDINATES_MESSAGE);
+export type NearestBranchBody = z.infer<typeof nearestBranchBodySchema>;
 export type UpdateBranchBody = z.infer<typeof updateBranchBodySchema>;

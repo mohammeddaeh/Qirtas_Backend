@@ -1,4 +1,4 @@
-import { accountStore } from '../ports/account-store.js';
+import type { AuthRealm } from '../realm.js';
 import type { AuthProvider, ProviderIdentity } from '../ports/auth-provider.js';
 import { verifyPassword, hashPassword } from '../services/password.service.js';
 
@@ -33,8 +33,11 @@ class LocalAuthProvider implements AuthProvider<LocalCredentials> {
    * So a miss verifies the supplied password against a throwaway hash. The work
    * is wasted deliberately; the timing is the product.
    */
-  async authenticate(credentials: LocalCredentials): Promise<ProviderIdentity | null> {
-    const account = await accountStore().findByEmail(credentials.email);
+  async authenticate(
+    realm: AuthRealm,
+    credentials: LocalCredentials,
+  ): Promise<ProviderIdentity | null> {
+    const account = await realm.store.findByEmail(credentials.email);
 
     if (!account) {
       await verifyPassword(credentials.password, await decoyHash());

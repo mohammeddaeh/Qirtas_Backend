@@ -37,6 +37,28 @@ const envSchema = z.object({
   RATE_LIMIT_STORE: z.enum(['memory', 'postgres']).default('memory'),
 
   /**
+   * How many reverse proxies sit in front of this server (0 = none).
+   *
+   * Every per-IP limiter reads `req.ip`. Behind a proxy that is the PROXY's
+   * address unless Express is told to look past it — so with this unset, every
+   * customer in the country shares one registration bucket and the fifth
+   * sign-up of the hour locks everybody out. Set it to the real hop count
+   * (1 for a single nginx / load balancer); never higher than the truth, or a
+   * client can forge its own address with `X-Forwarded-For`.
+   */
+  TRUST_PROXY_HOPS: z.coerce.number().int().min(0).max(5).default(0),
+
+  /**
+   * Sign-ups per IP per hour. Two numbers because two populations:
+   * employees register rarely and each one lands in an admin's review queue
+   * (so the tight default protects a human's attention), while shoppers sit
+   * behind carrier-grade NAT and office networks where dozens share one
+   * address (so a tight cap would refuse real customers after the first few).
+   */
+  STAFF_REGISTER_RATE_LIMIT: z.coerce.number().int().min(1).default(5),
+  CUSTOMER_REGISTER_RATE_LIMIT: z.coerce.number().int().min(1).default(30),
+
+  /**
    * Comma-separated browser origins allowed to call this API, e.g.
    * `https://admin.qirtas.sy,https://qirtas.sy`.
    *

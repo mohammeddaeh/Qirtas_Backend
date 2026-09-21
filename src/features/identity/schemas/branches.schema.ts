@@ -1,9 +1,12 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   serial,
   varchar,
   text,
   boolean,
+  numeric,
+  check,
   timestamp,
   pgEnum,
   uniqueIndex,
@@ -24,6 +27,14 @@ export const branchesTable = pgTable(
     name: varchar('name', { length: 150 }).notNull(),
     address: text('address'),
     contact_info: text('contact_info'),
+    /**
+     * Where the branch physically is — lets the app open on the branch nearest
+     * a visitor (`POST /branches/nearest`). Both or neither: half a coordinate
+     * places nothing, and the CHECK below refuses it. Null is legitimate (the
+     * admin has not placed it yet) and only means "never auto-picked".
+     */
+    latitude: numeric('latitude', { precision: 9, scale: 6 }),
+    longitude: numeric('longitude', { precision: 9, scale: 6 }),
     status: branchStatusEnum('status').notNull().default('active'),
     /**
      * When `status` last changed — set by the service on every status
@@ -63,7 +74,13 @@ export const branchesTable = pgTable(
   // (production_readiness.md §B1). Two branches sharing a name are
   // indistinguishable in every picker, staff row and report, and the mistake
   // only surfaces after people have been assigned to the wrong one.
-  (table) => [uniqueIndex('branches_name_unique_idx').on(table.name)],
+  (table) => [
+    uniqueIndex('branches_name_unique_idx').on(table.name),
+    check(
+      'branches_coordinates_chk',
+      sql`(${table.latitude} IS NULL) = (${table.longitude} IS NULL) AND (${table.latitude} IS NULL OR (${table.latitude} BETWEEN -90 AND 90 AND ${table.longitude} BETWEEN -180 AND 180))`,
+    ),
+  ],
 );
 
 export type BranchRow = typeof branchesTable.$inferSelect;

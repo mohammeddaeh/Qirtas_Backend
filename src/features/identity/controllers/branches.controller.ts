@@ -1,3 +1,4 @@
+import type { NearestBranchBody } from '../dtos/branches.dto.js';
 import type { Request, Response } from 'express';
 import { ok, created } from '../../../core/http/response.js';
 import { toPaginationParams } from '../../../core/pagination/pagination.js';
@@ -15,6 +16,10 @@ export async function listBranches(req: Request, res: Response): Promise<void> {
 export async function listSelfRegisterableBranches(_req: Request, res: Response): Promise<void> {
   const branches = await branchesService.listSelfRegisterableBranches();
   ok(res, branches);
+}
+
+export async function resolveNearestBranch(req: Request, res: Response): Promise<void> {
+  ok(res, await branchesService.resolveNearestBranch(req.body as NearestBranchBody));
 }
 
 export async function getBranchById(req: Request, res: Response): Promise<void> {

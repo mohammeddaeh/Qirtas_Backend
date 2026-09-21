@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../../core/http/async-handler.js';
 import { validate } from '../../../core/validation/validate.js';
-import { requireAuth } from '../../../core/http/require-actor.js';
+import { requireSignedIn } from '../../../core/http/require-customer.js';
 import { publicRoute } from '../../../core/http/route-marker.js';
 import { passwordResetRateLimit } from '../../../core/middleware/password-reset-rate-limit.js';
 import { verificationRateLimit } from '../../../core/middleware/verification-rate-limit.js';
@@ -38,7 +38,7 @@ export const authRouter = Router();
 authRouter.post('/refresh', publicRoute, asyncHandler(authController.refresh));
 
 /** The caller's own devices. No permission needed — these are their sessions, not anyone else's. */
-authRouter.get('/sessions', requireAuth, asyncHandler(authController.listSessions));
+authRouter.get('/sessions', requireSignedIn, asyncHandler(authController.listSessions));
 
 /**
  * Ends one of the caller's own sessions. Scoped to the actor by the service,
@@ -47,7 +47,7 @@ authRouter.get('/sessions', requireAuth, asyncHandler(authController.listSession
  */
 authRouter.delete(
   '/sessions/:id',
-  requireAuth,
+  requireSignedIn,
   validate(sessionIdParamsSchema, 'params'),
   asyncHandler(authController.revokeSession),
 );
@@ -55,7 +55,7 @@ authRouter.delete(
 /** "Sign out my other devices" — spares the caller's own session. Registered before `/sessions/:id` would matter only for GET; kept adjacent for readability. */
 authRouter.post(
   '/sessions/revoke-others',
-  requireAuth,
+  requireSignedIn,
   asyncHandler(authController.revokeOtherSessions),
 );
 
@@ -67,7 +67,7 @@ authRouter.post(
 
 authRouter.post(
   '/verify-email',
-  requireAuth,
+  requireSignedIn,
   validate(verifyEmailBodySchema, 'body'),
   verificationRateLimit,
   asyncHandler(authController.verifyEmail),
@@ -75,7 +75,7 @@ authRouter.post(
 
 authRouter.post(
   '/resend-verification',
-  requireAuth,
+  requireSignedIn,
   verificationRateLimit,
   asyncHandler(authController.resendVerification),
 );
@@ -110,7 +110,7 @@ authRouter.post(
  */
 authRouter.post(
   '/change-password',
-  requireAuth,
+  requireSignedIn,
   validate(changePasswordBodySchema, 'body'),
   asyncHandler(authController.changePassword),
 );

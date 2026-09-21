@@ -4,6 +4,7 @@ import { toPaginationParams } from '../../../core/pagination/pagination.js';
 import { requireActorId, buildActorContext } from '../../../core/http/require-actor.js';
 import { resetLoginRateLimit } from '../../../core/middleware/login-rate-limit.js';
 import type * as authService from '../../../core/auth/services/auth.service.js';
+import { loginAny } from '../../../core/auth/login-dispatch.js';
 import * as usersService from '../services/users.service.js';
 import type {
   RegisterStaffBody,
@@ -107,7 +108,10 @@ export async function bootstrapSuperAdmin(req: Request, res: Response): Promise<
 
 export async function login(req: Request, res: Response): Promise<void> {
   const body = req.body as LoginBody;
-  const result = await usersService.login(body, originOf(req));
+  // One endpoint for every population: the server resolves the realm from the
+  // address (see `core/auth/login-dispatch.ts`). Staff keep the exact shape they
+  // always got, plus `account_type`.
+  const result = await loginAny(body, originOf(req));
   // Only on success, and only after it: clearing the counter is what keeps a
   // legitimate user from being punished by their own earlier typos, and doing
   // it before the attempt is judged would clear it for failures too.

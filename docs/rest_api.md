@@ -885,3 +885,90 @@ Accept-language: ar | en
 فحص حياة بسيط، خارج نطاق `/api/v1` عمداً. رد: `{status:true, message:"OK", data:{uptime}}`.
 
 > ✅ **Auth حقيقي مفعّل** (2026-07-23) — كل endpoint تتطلب "actor" (منشئ دور، مقرر تسجيل، ناقل تعيين...) تعمل الآن فعلياً: مرّر `Authorization: Bearer <token>` (من `POST /login`) وإلا `401 Unauthorized`. راجع §7 أعلاه لتفاصيل آلية التحقق (`core/middleware/auth.ts`).
+
+---
+
+## 17. حسابات الزبائن وطبقات الوصول (2026-09-20)
+
+> التخطيط والقرارات: [`docs/reference/customer_accounts.md`](../../docs/reference/customer_accounts.md) §12–13.
+
+### الدخول الموحَّد — `POST /users/login` يخدم كل الفئات
+
+الشخص لا يعرف أنه «موظف» أو «زبون». الخادم يحلّ الفئة (realm) من البريد عبر جدول `account_emails` ويسلّم الطلب لدخول تلك الفئة. **الرد يحمل `account_type`** — هو ما يقرّر به العميل أين يهبط:
+
+| `account_type` | جسم `data` |
+|---|---|
+| `staff` | نفس الشكل القديم تماماً (`user` · `token` · `session_id` · `permission_keys` · `is_super_admin`) + الحقل الجديد |
+| `customer` | `{ account_type, customer: WireCustomer, token, session_id }` |
+
+- توكن الزبون يبدأ بـ`c_` ويُحلّ بجدول جلسات الزبائن وحده. **توكن زبون على مسار موظفين = `401`** بلا أي شرط مكتوب — لأنه لا يوجد بجدول جلسات الموظفين.
+- بريد مجهول وكلمة مرور خاطئة يعطيان نفس `401 invalid_credentials` بنفس الزمن.
+
+### `WireCustomer`
+`id · first_name · last_name · full_name · email · phone · address · image · status (active|suspended|disabled) · customer_type (retail|wholesale) · wholesale_status (pending|approved|rejected|null) · preferred_branch_id · email_verified · email_verified_at · created_at`
+
+### Endpoints
+
+| Method | Path | الحماية | ملاحظات |
+|---|---|---|---|
+| POST | `/customers/register` | عام + `registerRateLimit` | `201` بنفس شكل دخول الزبون (جلسة فوراً). الحساب `active` والبريد **غير موثَّق** إن كان التحقق مفعّلاً. لا حقل `customer_type`/`status` بالجسم عمداً |
+| GET | `/customers/me` | `requireCustomer` | مسموح لغير الموثَّق |
+| PATCH | `/customers/me` | `requireCustomer` | `first_name · last_name · phone · address · preferred_branch_id` (حقل واحد على الأقل) |
+| POST | `/auth/verify-email` · `/auth/resend-verification` · `/auth/change-password` · `GET/DELETE /auth/sessions…` · `POST /auth/refresh` · `POST /users/logout` | `requireSignedIn` | **تعمل على فئة التوكن** (موظف أو زبون) |
+| POST | `/auth/forgot-password` · `/auth/reset-password` | عام | الفئة تُحلّ من البريد؛ بريد مجهول = no-op صامت كما كان |
+
+### طبقات الوصول بالخادم
+
+| الحارس | العلامة (`check:permissions`) | يمرّر |
+|---|---|---|
+| `publicRoute` | `public` | الضيف |
+| `requireSignedIn` | `authenticated` | أي حساب |
+| `requireCustomer` | `customer` | زبون (موثَّق أو لا) |
+| `requireVerifiedCustomer` | `verified` | زبون ببريد موثَّق. غيره → `403` + `message_key: email_verification_required` (+`data.email_verified:false`) |
+| `requirePermission(k)` | `permission` | موظف بصلاحية |
+
+**`email_verification_required` مفتاح مخصّص لا 403 عام**: ردّ العميل الصحيح عليه فتح شاشة الرمز، لا عرض خطأ. **كل مسار شراء/طلب/طلب جملة يجب أن يحمل `requireVerifiedCustomer`** — ولا يمكن نسيان الحارس بالكامل لأن `check:permissions` يفشل على أي مسار بلا تصنيف.
+
+### ما لا يزال مؤجَّلاً
+الدخول بالجوال/OTP · طابور موافقة الجملة · حذف زبون (يجب أن يستدعي `accountEmails.release`).
+
+### الفرع التلقائي بالموقع (2026-09-20)
+
+`POST /branches/nearest` — **عام** (الضيف بلا جلسة). الجسم: `{ latitude?, longitude? }` (معاً أو لا شيء، وإلا `422`). الرد: `{ branch: WireBranch, resolved_by: "location" | "default", distance_km: number | null }`.
+
+- بإحداثيات: أقرب فرع `active` غير مؤرشف **له إحداثيات**. بلا إحداثيات مرسَلة، أو بلا أي فرع موضوع على الخريطة: الفرع `is_default` مع `resolved_by: "default"`.
+- لا فرع صالح أصلاً ← `404`.
+- `WireBranch` صار يحمل `latitude` و`longitude` (`number | null`). ويقبلهما إنشاء الفرع وتعديله معاً؛ `null` على الاثنين يمسح الموضع.
+- الإحداثيات لا تُخزَّن ولا تُسجَّل. (POST لهذا السبب: سجل الطلبات يكتب الـURL.)
+
+### إدارة الزبائن — للموظف (2026-09-20)
+
+| Method | Path | الصلاحية | ملاحظات |
+|---|---|---|---|
+| GET | `/customers` | `customers.view` | مُصفَّحة (`page`/`limit`) + `status` · `customer_type` · `email_verified` · `search` (اسم كامل أو بريد أو هاتف) · `sort_by` (`created_at`|`first_name`) · `sort_dir`. المؤرشفون مستبعَدون دائماً |
+| GET | `/customers/:id` | `customers.view` | `WireCustomer` |
+| POST | `/customers/:id/suspend` · `/disable` · `/reactivate` | `customers.manage` (حسّاس) | يردّ الحساب **بحالته الجديدة**. يسري **بأول طلب تالٍ للزبون** (الوسيط يعيد `canSignIn` بكل طلب ويُسقط جلسة المرفوض) فلا مسح جلسات هنا. إعادة تطبيق الحالة الحالية = `200` بلا كتابة ولا تدقيق |
+
+كل فعل يُدقَّق بـ`customer.suspend|disable|reactivate` على الهدف `customer:<id>` — بسجل **الموظفين** (`audit_log_entries`) لأن الفاعل موظف؛ أما نشاط الزبون نفسه فبـ`customer_activity_log`.
+
+**ترتيب المسارات**: `/me` قبل `/:id` بالراوتر وإلا ابتلع `/:id` كلمة `me` كمعرّف غير رقمي.
+
+### الجملة والدعم والأرشفة (2026-09-20)
+
+**`WireCustomer` أُضيف له**: `wholesale_requested_at` · `wholesale_decided_at` · `wholesale_rejection_reason` · `archived_at`.
+
+| Method | Path | الحماية | ملاحظات |
+|---|---|---|---|
+| POST | `/customers/me/wholesale-request` | **`requireVerifiedCustomer`** | أول مسار بالنظام يحمل الحارس الموثَّق. غير الموثَّق ← `403 email_verification_required`. يحوّل `wholesale_status` إلى `pending` **ويبقى `customer_type = retail`** حتى القرار. مفتوح/معتمد ← `409 wholesale_request_not_allowed`. المرفوض يستطيع إعادة الطلب (يُمسح سبب الرفض) |
+| POST | `/customers/:id/wholesale/decide` | `customers.wholesale` (حسّاس) | `{decision: approve|reject, reason}` — **الرفض بلا سبب `422`**. غير المعلَّق `409 wholesale_not_pending`. الموافقة تجعل النوع `wholesale` |
+| GET | `/customers?wholesale_status=pending` | `customers.view` | طابور الجملة. و`?archived=true` يُرجع المؤرشفين **وحدهم** |
+| POST | `/customers/:id/archive` · `/unarchive` | `records.archive` | الأرشفة **تفرض `disabled`**، والإخراج لا يعيد التفعيل (خطوة منفصلة). أي كتابة على مؤرشف `409 customer_archived` |
+| DELETE | `/customers/:id` | `customers.manage` | **للمعطَّل فقط** (`409 customer_delete_requires_disabled`). يحرّر البريد بنفس المعاملة، ويبقى لقطة `{email, full_name}` بالتدقيق |
+| POST | `/customers/:id/resend-verification` · `/password-reset` | `customers.manage` | **الرمز يصل بريد الزبون وحده** — الأدمن لا يراه ولا يضبط كلمة مرور. ردودها صادقة (تهدئة `429`، موثَّق `409`) لأن السائل موظف مسجَّل |
+| GET | `/customers/:id/activity` | `customers.view` | من `customer_activity_log` (دخول · فشل · توثيق · طلب جملة) |
+
+### حسابي وحماية بيانات التواصل (2026-09-20)
+
+- `DELETE /customers/me` — `requireCustomer`، الجسم `{password}`. كلمة مرور خاطئة `422 current_password_wrong` **لا 401**. يمحو الحساب وجلساته ورموزه ويحرّر البريد؛ يبقى `customer.self_deleted` بسجل النشاط.
+- **بيانات التواصل**: `email` و`phone` بـ`GET /customers` و`GET /customers/:id` **مقنَّعان** (`l***@domain` · `*******222`) ما لم يحمل الموظف `customers.contact`. والبحث (`search`) لا يصل للبريد/الهاتف عمّن لا يحملها. الأفعال (تعليق…) تردّ نفس الحساب بنفس السياسة.
+- **متغيّرات بيئة جديدة**: `TRUST_PROXY_HOPS` (0 = بلا proxy) · `STAFF_REGISTER_RATE_LIMIT` (5) · `CUSTOMER_REGISTER_RATE_LIMIT` (30).

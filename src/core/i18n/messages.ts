@@ -84,9 +84,36 @@ export const MESSAGES = {
     en: 'This verification code is invalid or has expired',
     ar: 'رمز التأكيد غير صالح أو انتهت صلاحيته',
   },
+  // A customer reached a purchase-tier route with an unproven address. The
+  // client keys on this to open the code screen, so it must stay distinct from
+  // any generic 403.
+  email_verification_required: {
+    en: 'Confirm your email address to continue',
+    ar: 'أكِّد بريدك الإلكتروني للمتابعة',
+  },
   verification_already_verified: {
     en: 'This email address is already confirmed',
     ar: 'هذا البريد الإلكتروني مؤكَّد بالفعل',
+  },
+  wholesale_request_not_allowed: {
+    en: 'A wholesale request is already open or approved for this account',
+    ar: 'يوجد طلب جملة مفتوح أو معتمد لهذا الحساب',
+  },
+  wholesale_not_pending: {
+    en: 'This account has no pending wholesale request',
+    ar: 'لا يوجد طلب جملة قيد المراجعة لهذا الحساب',
+  },
+  customer_archived: {
+    en: 'This customer is archived. Restore it before changing it.',
+    ar: 'هذا الزبون مؤرشف. أعد تفعيله قبل التعديل.',
+  },
+  customer_delete_requires_disabled: {
+    en: 'Only a disabled customer can be deleted',
+    ar: 'لا يُحذف إلا حساب زبون معطَّل',
+  },
+  customer_not_archived: {
+    en: 'This customer is not archived',
+    ar: 'هذا الزبون غير مؤرشف',
   },
   verification_resend_cooldown: {
     en: 'A code was just sent — please wait before requesting another',

@@ -1,7 +1,7 @@
 import { env } from '../config/env.js';
 import { logger } from '../logger/logger.js';
 import { setEmailSender, type EmailSender } from './ports/email-sender.js';
-import { setAccountStore, type AccountStore } from './ports/account-store.js';
+import { registerRealm, type AuthRealm } from './realm.js';
 import { setSecurityEventSink, type SecurityEventSink } from './ports/security-event-sink.js';
 import { registerAuthProvider } from './ports/auth-provider.js';
 import { localAuthProvider } from './providers/local-auth.provider.js';
@@ -20,16 +20,20 @@ import * as sessionService from './services/session.service.js';
  */
 
 export interface AuthComposition {
-  accountStore: AccountStore;
+  /** Every population that can sign in. Staff is always required; each realm brings its own store and tables. */
+  realms: AuthRealm[];
   securityEventSink?: SecurityEventSink;
   /** Overrides transport selection entirely — used by tests to capture mail instead of sending it. */
   emailSender?: EmailSender;
 }
 
+let realmsToSweep: AuthRealm[] = [];
+
 const SESSION_SWEEP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 export function configureAuth(composition: AuthComposition): void {
-  setAccountStore(composition.accountStore);
+  for (const realm of composition.realms) registerRealm(realm);
+  realmsToSweep = composition.realms;
 
   if (composition.securityEventSink) {
     setSecurityEventSink(composition.securityEventSink);
@@ -56,8 +60,7 @@ export function configureAuth(composition: AuthComposition): void {
  */
 function selectEmailSender(): EmailSender {
   const useSmtp =
-    env.MAIL_TRANSPORT === 'smtp' ||
-    (env.MAIL_TRANSPORT === 'auto' && env.SMTP_HOST.length > 0);
+    env.MAIL_TRANSPORT === 'smtp' || (env.MAIL_TRANSPORT === 'auto' && env.SMTP_HOST.length > 0);
 
   if (useSmtp) {
     if (env.SMTP_HOST.length === 0) {
@@ -92,8 +95,10 @@ function selectEmailSender(): EmailSender {
  */
 function startSessionSweep(): void {
   setInterval(() => {
-    void sessionService.purgeExpired().catch((err: unknown) => {
-      logger.warn({ err }, 'Session sweep failed — will retry on the next interval');
-    });
+    void Promise.all(realmsToSweep.map((r) => sessionService.purgeExpired(r))).catch(
+      (err: unknown) => {
+        logger.warn({ err }, 'Session sweep failed — will retry on the next interval');
+      },
+    );
   }, SESSION_SWEEP_INTERVAL_MS).unref();
 }

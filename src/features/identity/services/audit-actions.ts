@@ -36,6 +36,17 @@ export const AUDIT = {
   userUnarchive: 'user.unarchive',
   userDelete: 'user.delete',
 
+  // — Customers (admin actions on a shopper's account) —
+  customerSuspend: 'customer.suspend',
+  customerDisable: 'customer.disable',
+  customerReactivate: 'customer.reactivate',
+  customerWholesaleDecide: 'customer.wholesale.decide',
+  customerArchive: 'customer.archive',
+  customerUnarchive: 'customer.unarchive',
+  customerDelete: 'customer.delete',
+  customerVerificationResend: 'customer.verification.resend',
+  customerPasswordResetSend: 'customer.password_reset.send',
+
   // — Assignments (where a person actually sits) —
   assignmentCreate: 'assignment.create',
   assignmentTransfer: 'assignment.transfer',
@@ -66,6 +77,7 @@ export type AuditAction = (typeof AUDIT)[keyof typeof AUDIT];
 export const target = {
   user: (id: number) => `user:${id}`,
   branch: (id: number) => `branch:${id}`,
+  customer: (id: number) => `customer:${id}`,
   role: (id: number) => `role:${id}`,
   assignment: (id: number) => `assignment:${id}`,
 } as const;

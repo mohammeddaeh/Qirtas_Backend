@@ -247,6 +247,31 @@ const PERMISSIONS: SeedPermission[] = [
     is_sensitive: false,
     display: { ar: 'عرض العملاء', en: 'View Customers' },
   },
+  {
+    // تعليق حساب زبون أو تعطيله أو إعادة تفعيله. مفتاح منفصل عن العرض: من يرى
+    // الزبائن (خدمة العملاء، مدير الفرع) ليس بالضرورة من يوقف حساباً.
+    key: 'customers.manage',
+    module: 'customers',
+    is_sensitive: true,
+    display: { ar: 'إدارة حالة الزبائن', en: 'Manage Customer Status' },
+  },
+  {
+    // قرار طلبات الجملة. مفتاح ثالث لا يُدمج بـ`manage`: منح سعر الجملة قرار تجاري
+    // (خصم دائم) لا إجراء دعم، ومن يعلّق حساباً ليس بالضرورة من يمنح أسعاراً.
+    key: 'customers.wholesale',
+    module: 'customers',
+    is_sensitive: true,
+    display: { ar: 'قرار طلبات الجملة', en: 'Decide Wholesale Requests' },
+  },
+  {
+    // قراءة بريد الزبائن وهواتفهم. دليل الزبائن **عالمي** (الزبون لا ينتمي لفرع)،
+    // و`customers.view` وحده يكفي لعمل القائمة — أما وسيلة الوصول للناس فمفتاحها
+    // هذا، فمدير فرع دمشق لا يحمل هواتف زبائن حلب.
+    key: 'customers.contact',
+    module: 'customers',
+    is_sensitive: true,
+    display: { ar: 'عرض بيانات تواصل الزبائن', en: 'View Customer Contact Details' },
+  },
 ];
 
 /**
@@ -403,6 +428,8 @@ const ROLES: SeedRole[] = [
       'orders.delivery.update',
       'orders.manage_issues',
       'customers.view',
+      // مدير الفرع يقرّر طلبات الجملة (قرار تجاري بحدود فرعه) ولا يقرأ بيانات تواصل.
+      'customers.wholesale',
       'reports.operational.view',
     ],
   },
@@ -457,7 +484,8 @@ const ROLES: SeedRole[] = [
     category: 'operational',
     level: 20,
     is_system_default: true,
-    permissionKeys: ['orders.view', 'orders.manage_issues', 'customers.view'],
+    // خدمة العملاء تكلّم الزبائن — فهي التي تحتاج بيانات التواصل.
+    permissionKeys: ['orders.view', 'orders.manage_issues', 'customers.view', 'customers.contact'],
   },
 ];
 

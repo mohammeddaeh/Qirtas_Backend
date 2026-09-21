@@ -6,6 +6,7 @@ import { usersTable, type UserRow, type NewUserRow } from '../schemas/users.sche
 import { userRoleAssignmentsTable } from '../schemas/user-role-assignments.schema.js';
 import type { PaginationParams } from '../../../core/pagination/pagination.js';
 import type { UsersFilterQuery } from '../dtos/users.dto.js';
+import * as accountEmails from '../../../core/auth/repositories/account-emails.repository.js';
 
 const sortColumns = {
   created_at: usersTable.created_at,
@@ -114,17 +115,29 @@ export async function countAll(): Promise<number> {
  * object, which is why it is checked first and named in the refusal.
  */
 export async function deleteById(id: number): Promise<void> {
-  await db.delete(usersTable).where(eq(usersTable.id, id));
+  await db.transaction(async (tx) => {
+    await tx.delete(usersTable).where(eq(usersTable.id, id));
+    await accountEmails.release(tx, 'staff', id);
+  });
 }
 
 export async function insert(data: NewUserRow): Promise<UserRow> {
-  const rows = await db.insert(usersTable).values(data).returning();
-  const row = rows[0];
-  if (!row) throw new Error('Insert did not return a row');
-  return row;
+  // The cross-realm email claim commits with the row it describes — see
+  // `account_emails`. A duplicate in either realm rolls both back (23505).
+  return db.transaction(async (tx) => {
+    const rows = await tx.insert(usersTable).values(data).returning();
+    const row = rows[0];
+    if (!row) throw new Error('Insert did not return a row');
+    await accountEmails.claim(tx, 'staff', row.email, row.id);
+    return row;
+  });
 }
 
 export async function update(id: number, data: Partial<NewUserRow>): Promise<UserRow | undefined> {
-  const rows = await db.update(usersTable).set(data).where(eq(usersTable.id, id)).returning();
-  return rows[0];
+  return db.transaction(async (tx) => {
+    const rows = await tx.update(usersTable).set(data).where(eq(usersTable.id, id)).returning();
+    const row = rows[0];
+    if (row && data.email !== undefined) await accountEmails.move(tx, 'staff', id, row.email);
+    return row;
+  });
 }

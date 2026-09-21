@@ -1,10 +1,7 @@
 import { and, eq, ne, lt, gt, desc } from 'drizzle-orm';
 import { db } from '../../db/client.js';
-import {
-  sessionsTable,
-  type SessionRow,
-  type NewSessionRow,
-} from '../schemas/sessions.schema.js';
+import type { SessionRow, NewSessionRow } from '../schemas/sessions.schema.js';
+import type { AuthRealm } from '../realm.js';
 
 /**
  * Data access for sessions. No policy lives here — expiry rules, rotation
@@ -12,27 +9,33 @@ import {
  * only reads and writes rows.
  *
  * Moved from features/identity together with the schema (see that file's note).
+ *
+ * Every function takes the [AuthRealm] first: the realm owns the table, so a
+ * token from one population can only ever be looked up in that population's rows.
  */
 
-export async function insert(data: NewSessionRow): Promise<SessionRow> {
-  const rows = await db.insert(sessionsTable).values(data).returning();
+export async function insert(realm: AuthRealm, data: NewSessionRow): Promise<SessionRow> {
+  const rows = await db.insert(realm.sessions).values(data).returning();
   const row = rows[0];
   if (!row) throw new Error('Insert did not return a row');
   return row;
 }
 
 /** Lookup is by digest — the plaintext token is never stored, so it is never searched for. */
-export async function findByTokenHash(tokenHash: string): Promise<SessionRow | undefined> {
+export async function findByTokenHash(
+  realm: AuthRealm,
+  tokenHash: string,
+): Promise<SessionRow | undefined> {
   const rows = await db
     .select()
-    .from(sessionsTable)
-    .where(eq(sessionsTable.token_hash, tokenHash))
+    .from(realm.sessions)
+    .where(eq(realm.sessions.token_hash, tokenHash))
     .limit(1);
   return rows[0];
 }
 
-export async function findById(id: number): Promise<SessionRow | undefined> {
-  const rows = await db.select().from(sessionsTable).where(eq(sessionsTable.id, id)).limit(1);
+export async function findById(realm: AuthRealm, id: number): Promise<SessionRow | undefined> {
+  const rows = await db.select().from(realm.sessions).where(eq(realm.sessions.id, id)).limit(1);
   return rows[0];
 }
 
@@ -44,16 +47,19 @@ export async function findById(id: number): Promise<SessionRow | undefined> {
  * sweep: a user opening this screen must not be shown a device that cannot
  * actually be used, and the sweep runs on a timer, not on their schedule.
  */
-export async function findActiveByUserId(userId: number): Promise<SessionRow[]> {
+export async function findActiveByUserId(realm: AuthRealm, userId: number): Promise<SessionRow[]> {
   return db
     .select()
-    .from(sessionsTable)
-    .where(and(eq(sessionsTable.user_id, userId), gt(sessionsTable.expires_at, new Date())))
-    .orderBy(desc(sessionsTable.last_active_at));
+    .from(realm.sessions)
+    .where(and(eq(realm.sessions.user_id, userId), gt(realm.sessions.expires_at, new Date())))
+    .orderBy(desc(realm.sessions.last_active_at));
 }
 
-export async function touchLastActive(id: number): Promise<void> {
-  await db.update(sessionsTable).set({ last_active_at: new Date() }).where(eq(sessionsTable.id, id));
+export async function touchLastActive(realm: AuthRealm, id: number): Promise<void> {
+  await db
+    .update(realm.sessions)
+    .set({ last_active_at: new Date() })
+    .where(eq(realm.sessions.id, id));
 }
 
 /**
@@ -63,24 +69,25 @@ export async function touchLastActive(id: number): Promise<void> {
  * first sign-in, so a session that rotates forever still dies on schedule.
  */
 export async function rotateToken(
+  realm: AuthRealm,
   id: number,
   tokenHash: string,
   rotatedAt: Date,
 ): Promise<SessionRow | undefined> {
   const rows = await db
-    .update(sessionsTable)
+    .update(realm.sessions)
     .set({ token_hash: tokenHash, last_rotated_at: rotatedAt, last_active_at: rotatedAt })
-    .where(eq(sessionsTable.id, id))
+    .where(eq(realm.sessions.id, id))
     .returning();
   return rows[0];
 }
 
-export async function deleteById(id: number): Promise<void> {
-  await db.delete(sessionsTable).where(eq(sessionsTable.id, id));
+export async function deleteById(realm: AuthRealm, id: number): Promise<void> {
+  await db.delete(realm.sessions).where(eq(realm.sessions.id, id));
 }
 
-export async function deleteByTokenHash(tokenHash: string): Promise<void> {
-  await db.delete(sessionsTable).where(eq(sessionsTable.token_hash, tokenHash));
+export async function deleteByTokenHash(realm: AuthRealm, tokenHash: string): Promise<void> {
+  await db.delete(realm.sessions).where(eq(realm.sessions.token_hash, tokenHash));
 }
 
 /**
@@ -96,26 +103,26 @@ export async function deleteByTokenHash(tokenHash: string): Promise<void> {
  * changed nothing for them.
  */
 export async function deleteAllByUserId(
+  realm: AuthRealm,
   userId: number,
   exceptSessionId?: number,
 ): Promise<number> {
   const rows = await db
-    .delete(sessionsTable)
+    .delete(realm.sessions)
     .where(
       exceptSessionId === undefined
-        ? eq(sessionsTable.user_id, userId)
-        : and(eq(sessionsTable.user_id, userId), ne(sessionsTable.id, exceptSessionId)),
+        ? eq(realm.sessions.user_id, userId)
+        : and(eq(realm.sessions.user_id, userId), ne(realm.sessions.id, exceptSessionId)),
     )
-    .returning({ id: sessionsTable.id });
+    .returning({ id: realm.sessions.id });
   return rows.length;
 }
 
 /** Drops rows past their hard deadline. Idle expiry is handled per-request; this catches sessions nobody comes back to. */
-export async function deleteExpired(): Promise<number> {
+export async function deleteExpired(realm: AuthRealm): Promise<number> {
   const rows = await db
-    .delete(sessionsTable)
-    .where(lt(sessionsTable.expires_at, new Date()))
-    .returning({ id: sessionsTable.id });
+    .delete(realm.sessions)
+    .where(lt(realm.sessions.expires_at, new Date()))
+    .returning({ id: realm.sessions.id });
   return rows.length;
 }
-

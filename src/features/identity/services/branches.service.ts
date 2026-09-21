@@ -1,3 +1,4 @@
+import { pickNearest } from './nearest-branch.js';
 import { NotFoundError, BusinessError, ForbiddenError } from '../../../core/http/api-error.js';
 import {
   paginated,
@@ -55,6 +56,56 @@ export async function listBranches(
 export async function listSelfRegisterableBranches(): Promise<WireBranch[]> {
   const rows = await branchesRepository.findSelfRegisterable();
   return rows.map((row) => toWireBranch(row));
+}
+
+/**
+ * How the app decides which branch to open on — the server half of "appears
+ * automatically by location, editable after sign-in".
+ *
+ * `resolved_by` says which rule produced the answer, because the client must
+ * word them differently: a location match is "the nearest branch to you", the
+ * default is "our main branch" — telling someone the default is nearest is a
+ * lie that shows prices from a branch they cannot reach.
+ *
+ * Coordinates are used for this one comparison and never stored or logged.
+ */
+export interface ResolvedBranch {
+  branch: WireBranch;
+  resolved_by: 'location' | 'default';
+  /** Straight-line distance; present only for a location match. */
+  distance_km: number | null;
+}
+
+export async function resolveNearestBranch(body: {
+  latitude?: number | undefined;
+  longitude?: number | undefined;
+}): Promise<ResolvedBranch> {
+  const candidates = await branchesRepository.findAutoSelectable();
+
+  if (body.latitude !== undefined && body.longitude !== undefined) {
+    const located = candidates.map((row) => ({
+      row,
+      id: row.id,
+      latitude: row.latitude === null ? null : Number(row.latitude),
+      longitude: row.longitude === null ? null : Number(row.longitude),
+    }));
+    const pick = pickNearest(located, { latitude: body.latitude, longitude: body.longitude });
+    if (pick) {
+      return {
+        branch: toWireBranch(pick.branch.row),
+        resolved_by: 'location',
+        distance_km: Math.round(pick.distanceKm * 10) / 10,
+      };
+    }
+  }
+
+  // No coordinates sent, or no branch is placed on the map yet: the default is
+  // the answer, and it says so.
+  const fallback = candidates.find((row) => row.is_default);
+  if (!fallback) {
+    throw new NotFoundError('No branch is available right now');
+  }
+  return { branch: toWireBranch(fallback), resolved_by: 'default', distance_km: null };
 }
 
 export async function getBranchById(id: number): Promise<WireBranch> {
@@ -298,6 +349,9 @@ export async function createBranch(
     name: body.name,
     address: body.address,
     contact_info: body.contact_info,
+    ...(body.latitude !== undefined && body.longitude !== undefined
+      ? { latitude: body.latitude.toFixed(6), longitude: body.longitude.toFixed(6) }
+      : {}),
   });
   await auditService.record(actor, AUDIT.branchCreate, target.branch(row.id), null, {
     name: row.name,
@@ -356,6 +410,12 @@ export async function updateBranch(
     ...(body.name !== undefined ? { name: body.name } : {}),
     ...(body.address !== undefined ? { address: body.address } : {}),
     ...(body.contact_info !== undefined ? { contact_info: body.contact_info } : {}),
+    ...(body.latitude !== undefined && body.longitude !== undefined
+      ? {
+          latitude: body.latitude === null ? null : body.latitude.toFixed(6),
+          longitude: body.longitude === null ? null : body.longitude.toFixed(6),
+        }
+      : {}),
     // Stamped only on a real transition — re-saving the same status must not
     // reset the clock, or a branch could stay "recently paused" forever by
     // being edited.

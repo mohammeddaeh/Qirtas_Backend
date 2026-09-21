@@ -23,7 +23,10 @@
 import { pool } from './client.js';
 import { configureAuth } from '../auth/composition.js';
 import type { EmailDeliveryResult, EmailSender } from '../auth/ports/email-sender.js';
-import { qirtasAccountStore } from '../../features/identity/repositories/account-store.impl.js';
+import { staffAuthRealm } from '../../features/identity/auth-realm.js';
+import { customerAuthRealm } from '../../features/customers/auth-realm.js';
+import { customerActivitySink } from '../../features/customers/repositories/customer-activity-sink.impl.js';
+import { sinkByRealm } from '..//auth/ports/security-event-sink.js';
 import { auditLogSecurityEventSink } from '../../features/identity/repositories/security-event-sink.impl.js';
 import { seedCore } from './seed-core.js';
 import { bootstrapSuperAdminIfMissing } from './bootstrap-super-admin.js';
@@ -154,8 +157,11 @@ async function main(): Promise<void> {
   //
   // Same three lines as src/app.ts, with the transport overridden — see above.
   configureAuth({
-    accountStore: qirtasAccountStore,
-    securityEventSink: auditLogSecurityEventSink,
+    realms: [staffAuthRealm, customerAuthRealm],
+    securityEventSink: sinkByRealm({
+      staff: auditLogSecurityEventSink,
+      customer: customerActivitySink,
+    }),
     emailSender: seedEmailSender,
   });
 

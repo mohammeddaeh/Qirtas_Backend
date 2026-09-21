@@ -8,6 +8,8 @@ import { hashPassword } from '../../../core/auth/services/password.service.js';
 import * as authService from '../../../core/auth/services/auth.service.js';
 import { isEmailVerificationEnabled } from '../../../core/auth/config/auth-config.js';
 import { qirtasAccountStore } from '../repositories/account-store.impl.js';
+import { staffAuthRealm } from '../auth-realm.js';
+import { realmForToken } from '../../../core/auth/realm.js';
 import * as usersRepository from '../repositories/users.repository.js';
 import * as rolesRepository from '../repositories/roles.repository.js';
 import * as auditLogRepository from '../repositories/audit-log-entries.repository.js';
@@ -481,7 +483,7 @@ export async function registerStaff(
 
   // After the row exists, never before: a code that reaches the user but not
   // the database is unverifiable, while the reverse costs one resend.
-  await authService.sendEmailVerification(account, origin);
+  await authService.sendEmailVerification(staffAuthRealm, account, origin);
 
   // ## Why registration hands back a session
   //
@@ -888,6 +890,7 @@ export interface CurrentUserResult {
  */
 export async function login(body: LoginBody, origin: authService.RequestOrigin): Promise<LoginResult> {
   const { account, session, token } = await authService.signIn(
+    staffAuthRealm,
     { email: body.email, password: body.password },
     { ...origin, deviceInfo: body.device_info ?? origin.deviceInfo },
   );
@@ -956,7 +959,8 @@ export async function getUserPermissions(userId: number): Promise<string[]> {
 
 /** Ends the current session only — other concurrent sessions for the same user are untouched (multi-session is allowed by design). Delegated so the logout security event is recorded in one place. */
 export async function logout(token: string, origin: authService.RequestOrigin): Promise<void> {
-  await authService.signOut(token, origin);
+  // Any realm's token can end its own session here — the prefix names the table.
+  await authService.signOut(realmForToken(token) ?? staffAuthRealm, token, origin);
 }
 
 /**

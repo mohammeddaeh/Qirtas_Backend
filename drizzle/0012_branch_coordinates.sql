@@ -1,0 +1,3 @@
+ALTER TABLE "branches" ADD COLUMN "latitude" numeric(9, 6);--> statement-breakpoint
+ALTER TABLE "branches" ADD COLUMN "longitude" numeric(9, 6);--> statement-breakpoint
+ALTER TABLE "branches" ADD CONSTRAINT "branches_coordinates_chk" CHECK (("branches"."latitude" IS NULL) = ("branches"."longitude" IS NULL) AND ("branches"."latitude" IS NULL OR ("branches"."latitude" BETWEEN -90 AND 90 AND "branches"."longitude" BETWEEN -180 AND 180)));

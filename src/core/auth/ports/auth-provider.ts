@@ -28,6 +28,7 @@
  */
 
 import type { AuthAccount } from './account-store.js';
+import type { AuthRealm } from '../realm.js';
 
 /** What a successful proof yields. */
 export interface ProviderIdentity {
@@ -62,7 +63,7 @@ export interface AuthProvider<TCredentials = unknown> {
    * client on purpose). Exceptions stay for genuine faults — an unreachable
    * identity provider, a malformed configuration.
    */
-  authenticate(credentials: TCredentials): Promise<ProviderIdentity | null>;
+  authenticate(realm: AuthRealm, credentials: TCredentials): Promise<ProviderIdentity | null>;
 }
 
 /**

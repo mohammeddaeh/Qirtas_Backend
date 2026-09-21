@@ -1,11 +1,18 @@
 import type { Request, Response } from 'express';
 import { ok, noContentOk } from '../../../core/http/response.js';
-import { requireActorId } from '../../../core/http/require-actor.js';
+import { actorOf } from '../../../core/http/require-customer.js';
 import { BusinessError, NotFoundError, UnauthorizedError } from '../../../core/http/api-error.js';
 import * as authService from '../../../core/auth/services/auth.service.js';
-import { accountStore } from '../../../core/auth/ports/account-store.js';
+import { getRealm, realmForToken } from '../../../core/auth/realm.js';
+import { realmForEmail } from '../../../core/auth/login-dispatch.js';
 import { isEmailVerificationEnabled } from '../../../core/auth/config/auth-config.js';
-import { toWireSession, type ChangePasswordBody, type ForgotPasswordBody, type ResetPasswordBody, type VerifyEmailBody } from '../dtos/auth.dto.js';
+import {
+  toWireSession,
+  type ChangePasswordBody,
+  type ForgotPasswordBody,
+  type ResetPasswordBody,
+  type VerifyEmailBody,
+} from '../dtos/auth.dto.js';
 
 /**
  * HTTP surface for the authentication engine.
@@ -43,7 +50,11 @@ export async function refresh(req: Request, res: Response): Promise<void> {
   const token = header?.startsWith('Bearer ') ? header.slice('Bearer '.length) : null;
   if (!token) throw new UnauthorizedError('Authentication required', 'authentication_required');
 
-  const result = await authService.refresh(token, originOf(req));
+  const tokenRealm = realmForToken(token);
+  if (!tokenRealm)
+    throw new UnauthorizedError('Authentication required', 'authentication_required');
+
+  const result = await authService.refresh(tokenRealm, token, originOf(req));
   ok(res, {
     token: result.token,
     rotated: result.rotated,
@@ -52,19 +63,24 @@ export async function refresh(req: Request, res: Response): Promise<void> {
 }
 
 export async function listSessions(req: Request, res: Response): Promise<void> {
-  const actorId = requireActorId(req);
-  const sessions = await authService.listSessions(actorId);
-  ok(res, sessions.map((s) => toWireSession(s, req.session?.id ?? null)));
+  const { id: actorId, realm: realmId } = actorOf(req);
+  const realm = getRealm(realmId);
+  const sessions = await authService.listSessions(realm, actorId);
+  ok(
+    res,
+    sessions.map((s) => toWireSession(s, req.session?.id ?? null)),
+  );
 }
 
 export async function revokeSession(req: Request, res: Response): Promise<void> {
-  const actorId = requireActorId(req);
+  const { id: actorId, realm: realmId } = actorOf(req);
+  const realm = getRealm(realmId);
   const { id } = req.params as unknown as { id: number };
 
   // Revoking the current session is logout; the client should call that
   // instead, but refusing outright would be pedantic — the intent is
   // unambiguous either way.
-  const revoked = await authService.revokeSession(actorId, id, originOf(req));
+  const revoked = await authService.revokeSession(realm, actorId, id, originOf(req));
   // A session that does not exist and one belonging to somebody else answer
   // identically, so iterating ids cannot reveal which are live.
   if (!revoked) throw new NotFoundError('This session no longer exists');
@@ -73,26 +89,33 @@ export async function revokeSession(req: Request, res: Response): Promise<void> 
 }
 
 export async function revokeOtherSessions(req: Request, res: Response): Promise<void> {
-  const actorId = requireActorId(req);
+  const { id: actorId, realm: realmId } = actorOf(req);
+  const realm = getRealm(realmId);
   const currentSessionId = req.session?.id;
   if (currentSessionId === undefined) {
     throw new UnauthorizedError('Authentication required', 'authentication_required');
   }
 
-  const count = await authService.revokeOtherSessions(actorId, currentSessionId, originOf(req));
+  const count = await authService.revokeOtherSessions(
+    realm,
+    actorId,
+    currentSessionId,
+    originOf(req),
+  );
   ok(res, { sessions_revoked: count }, 'Other sessions signed out');
 }
 
 // ── Email verification ───────────────────────────────────────────────────────
 
 export async function verifyEmail(req: Request, res: Response): Promise<void> {
-  const actorId = requireActorId(req);
+  const { id: actorId, realm: realmId } = actorOf(req);
+  const realm = getRealm(realmId);
   const { code } = req.body as VerifyEmailBody;
 
-  const account = await accountStore().findById(actorId);
+  const account = await realm.store.findById(actorId);
   if (!account) throw new UnauthorizedError('Authentication required', 'authentication_required');
 
-  await authService.verifyEmail(account, code, originOf(req));
+  await authService.verifyEmail(realm, account, code, originOf(req));
 
   // Returns the account's NEW state rather than 200-with-nothing.
   //
@@ -107,7 +130,7 @@ export async function verifyEmail(req: Request, res: Response): Promise<void> {
   // Only the three fields `core/auth` legitimately owns travel here. The full
   // user record belongs to `features/identity`, and reaching for it would put
   // an authorization-shaped payload on an authentication endpoint.
-  const updated = await accountStore().findById(actorId);
+  const updated = await realm.store.findById(actorId);
   ok(
     res,
     {
@@ -120,7 +143,8 @@ export async function verifyEmail(req: Request, res: Response): Promise<void> {
 }
 
 export async function resendVerification(req: Request, res: Response): Promise<void> {
-  const actorId = requireActorId(req);
+  const { id: actorId, realm: realmId } = actorOf(req);
+  const realm = getRealm(realmId);
 
   if (!isEmailVerificationEnabled()) {
     throw new BusinessError(
@@ -130,7 +154,7 @@ export async function resendVerification(req: Request, res: Response): Promise<v
     );
   }
 
-  const account = await accountStore().findById(actorId);
+  const account = await realm.store.findById(actorId);
   if (!account) throw new UnauthorizedError('Authentication required', 'authentication_required');
 
   if (account.emailVerifiedAt !== null) {
@@ -141,7 +165,7 @@ export async function resendVerification(req: Request, res: Response): Promise<v
     );
   }
 
-  const result = await authService.sendEmailVerification(account, originOf(req));
+  const result = await authService.sendEmailVerification(realm, account, originOf(req));
 
   // Reported honestly here, unlike in the password-reset flow: this endpoint is
   // authenticated, so telling the caller how long to wait reveals nothing they
@@ -181,7 +205,7 @@ export async function resendVerification(req: Request, res: Response): Promise<v
 
 export async function forgotPassword(req: Request, res: Response): Promise<void> {
   const { email } = req.body as ForgotPasswordBody;
-  await authService.requestPasswordReset(email, originOf(req));
+  await authService.requestPasswordReset(await realmForEmailOrStaff(email), email, originOf(req));
 
   // Always the same answer, registered address or not — see the service for
   // why. The message is deliberately conditional-free prose: "if an account
@@ -192,6 +216,7 @@ export async function forgotPassword(req: Request, res: Response): Promise<void>
 export async function resetPassword(req: Request, res: Response): Promise<void> {
   const body = req.body as ResetPasswordBody;
   await authService.resetPassword(
+    await realmForEmailOrStaff(body.email),
     { email: body.email, code: body.code, newPassword: body.new_password },
     originOf(req),
   );
@@ -199,10 +224,12 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
 }
 
 export async function changePassword(req: Request, res: Response): Promise<void> {
-  const actorId = requireActorId(req);
+  const { id: actorId, realm: realmId } = actorOf(req);
+  const realm = getRealm(realmId);
   const body = req.body as ChangePasswordBody;
 
   const result = await authService.changePassword(
+    realm,
     {
       accountId: actorId,
       currentPassword: body.current_password,
@@ -217,4 +244,11 @@ export async function changePassword(req: Request, res: Response): Promise<void>
   );
 
   ok(res, { sessions_revoked: result.sessionsRevoked }, 'Password changed');
+}
+
+/**
+ * The realm whose reset flow an address belongs to. Unknown addresses fall to staff, where the flow is a silent no-op — the same answer a real address gets, so the endpoint stays no membership oracle.
+ */
+async function realmForEmailOrStaff(email: string) {
+  return getRealm((await realmForEmail(email)) ?? 'staff');
 }

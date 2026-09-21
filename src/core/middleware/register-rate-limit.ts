@@ -1,7 +1,7 @@
 import type { NextFunction, Request, Response } from 'express';
+import { env } from '../config/env.js';
 import { RateLimiter } from '../security/rate-limiter.js';
 
-const MAX_ATTEMPTS = 5;
 const WINDOW_MS = 60 * 60 * 1000; // 1 hour
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -25,16 +25,20 @@ const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
  * front — otherwise every request resolves to the proxy and this collapses into
  * a single shared bucket.
  */
-const ipLimiter = new RateLimiter(
-  MAX_ATTEMPTS,
-  WINDOW_MS,
-  'Too many registration attempts — please try again later',
-  'too_many_register_attempts',
-);
+function makeLimiter(max: number): RateLimiter {
+  const limiter = new RateLimiter(
+    max,
+    WINDOW_MS,
+    'Too many registration attempts — please try again later',
+    'too_many_register_attempts',
+  );
+  // `void` because the sweep is fire-and-forget maintenance.
+  setInterval(() => void limiter.sweepExpired(), SWEEP_INTERVAL_MS).unref();
+  return limiter;
+}
 
-// `void` because the sweep is fire-and-forget maintenance: a failed delete is
-// retried by the next tick, and awaiting it here would have nowhere to report.
-setInterval(() => void ipLimiter.sweepExpired(), SWEEP_INTERVAL_MS).unref();
+const staffLimiter = makeLimiter(env.STAFF_REGISTER_RATE_LIMIT);
+const customerLimiter = makeLimiter(env.CUSTOMER_REGISTER_RATE_LIMIT);
 
 /**
  * Async since the store may be shared (`RATE_LIMIT_STORE=postgres`).
@@ -44,15 +48,19 @@ setInterval(() => void ipLimiter.sweepExpired(), SWEEP_INTERVAL_MS).unref();
  * through while the `RateLimitError` surfaced separately as an unhandled
  * rejection — the guard would appear to exist and stop nothing.
  */
-export async function registerRateLimit(
-  req: Request,
-  _res: Response,
-  next: NextFunction,
-): Promise<void> {
-  try {
-    await ipLimiter.consume(`register-ip:${req.ip ?? 'unknown'}`);
-    next();
-  } catch (err) {
-    next(err);
-  }
+function guard(limiter: RateLimiter, prefix: string) {
+  return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await limiter.consume(`${prefix}:${req.ip ?? 'unknown'}`);
+      next();
+    } catch (err) {
+      next(err);
+    }
+  };
 }
+
+/** Employee self-registration — tight: each success occupies an admin's review queue. */
+export const registerRateLimit = guard(staffLimiter, 'register-ip');
+
+/** Shopper sign-up — looser, and separate: shoppers share addresses (CGNAT, offices) and must not drain the employees' bucket or the reverse. */
+export const customerRegisterRateLimit = guard(customerLimiter, 'customer-register-ip');

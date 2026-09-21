@@ -29,6 +29,8 @@
  * identifiers (`session_id`, `email`) and never the secrets themselves.
  */
 
+import type { RealmId } from '../realm.js';
+
 /**
  * The catalogue of authentication events.
  *
@@ -79,6 +81,8 @@ export type AuthEventName = (typeof AUTH_EVENT)[keyof typeof AUTH_EVENT];
 
 export interface SecurityEvent {
   event: AuthEventName;
+  /** Which population the event is about. `accountId` is only meaningful together with this: staff id 7 and customer id 7 are different people. */
+  realm: RealmId;
   /** The account the event is ABOUT. Null when unknown — a failed login against an unregistered address. */
   accountId: number | null;
   /**
@@ -132,4 +136,18 @@ export async function recordSecurityEvent(event: SecurityEvent): Promise<void> {
   } catch {
     /* deliberately swallowed — see the doc above */
   }
+}
+
+/**
+ * Sends each event to the sink registered for its realm.
+ *
+ * A realm with no entry is dropped rather than failing — same stance as the
+ * default sink: auditing must never break authentication.
+ */
+export function sinkByRealm(sinks: Partial<Record<RealmId, SecurityEventSink>>): SecurityEventSink {
+  return {
+    async record(event: SecurityEvent): Promise<void> {
+      await sinks[event.realm]?.record(event);
+    },
+  };
 }

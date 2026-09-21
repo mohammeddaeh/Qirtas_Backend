@@ -23,8 +23,12 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 export type RouteAccessKind =
   /** Deliberately reachable without a token — login, register, bootstrap-super-admin. */
   | 'public'
-  /** Any signed-in account. No permission required. */
+  /** Any signed-in account, staff or customer. No permission required. */
   | 'authenticated'
+  /** A signed-in **customer** (any email-verification state). Browsing-plus tier: account, cart, profile. */
+  | 'customer'
+  /** A signed-in customer whose **email is proven** — the tier every purchase-like action requires. */
+  | 'verified'
   /** Requires [RouteAccess.keys]. */
   | 'permission';
 

@@ -1,5 +1,5 @@
 /**
- * The only thing an application must implement to use this authentication
+ * The only thing an application must implement per realm to use this authentication
  * engine.
  *
  * ## Why this port exists at all
@@ -128,30 +128,4 @@ export interface AccountStore {
 
   /** See [SignInDecision]. Consulted on every sign-in AND on every request by the auth middleware. */
   canSignIn(account: AuthAccount): Promise<SignInDecision> | SignInDecision;
-}
-
-/**
- * The wiring point.
- *
- * Set once at composition time (src/app.ts) before any route is served.
- * A module-level slot rather than a DI container because this project has no
- * container and does not need one for a single binding — but the indirection is
- * real: no file under `core/auth/` imports a concrete store.
- */
-let store: AccountStore | undefined;
-
-export function setAccountStore(implementation: AccountStore): void {
-  store = implementation;
-}
-
-export function accountStore(): AccountStore {
-  if (!store) {
-    // Loud rather than a silent null-deref twenty frames deeper: this can only
-    // fail at boot, and only because composition forgot a line.
-    throw new Error(
-      'AccountStore has not been configured. Call setAccountStore(...) during ' +
-        'application composition (see src/app.ts) before serving any request.',
-    );
-  }
-  return store;
 }

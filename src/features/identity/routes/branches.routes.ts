@@ -10,6 +10,7 @@ import {
   createBranchBodySchema,
   updateBranchBodySchema,
   branchesFilterQuerySchema,
+  nearestBranchBodySchema,
 } from '../dtos/branches.dto.js';
 import * as branchesController from '../controllers/branches.controller.js';
 
@@ -35,6 +36,15 @@ branchesRouter.get(
   '/self-registerable',
   publicRoute,
   asyncHandler(branchesController.listSelfRegisterableBranches),
+);
+
+// Public, for the same reason as `/self-registerable`: a guest has no session.
+// POST so the coordinates travel in the body — the request logger records URLs.
+branchesRouter.post(
+  '/nearest',
+  publicRoute,
+  validate(nearestBranchBodySchema, 'body'),
+  asyncHandler(branchesController.resolveNearestBranch),
 );
 
 branchesRouter.get(

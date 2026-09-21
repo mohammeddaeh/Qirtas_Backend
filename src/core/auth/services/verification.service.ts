@@ -1,6 +1,7 @@
 import { authConfig } from '../config/auth-config.js';
 import { generateCode, hashToken, tokenHashEquals } from './token.service.js';
 import * as tokensRepository from '../repositories/verification-tokens.repository.js';
+import type { AuthRealm } from '../realm.js';
 import type { VerificationPurpose } from '../schemas/verification-tokens.schema.js';
 
 /**
@@ -48,6 +49,7 @@ export interface IssuedCode {
  * remaining wait.
  */
 export async function secondsUntilResendAllowed(
+  realm: AuthRealm,
   userId: number,
   purpose: VerificationPurpose,
 ): Promise<number> {
@@ -56,7 +58,7 @@ export async function secondsUntilResendAllowed(
       ? authConfig.verification.resendCooldownSeconds
       : authConfig.passwordReset.resendCooldownSeconds;
 
-  const latest = await tokensRepository.findLatest(userId, purpose);
+  const latest = await tokensRepository.findLatest(realm, userId, purpose);
   if (!latest) return 0;
 
   const elapsedSeconds = (Date.now() - latest.created_at.getTime()) / 1000;
@@ -72,11 +74,12 @@ export async function secondsUntilResendAllowed(
  * attempt budgets against the same account.
  */
 export async function issueCode(
+  realm: AuthRealm,
   userId: number,
   purpose: VerificationPurpose,
 ): Promise<IssuedCode> {
   const now = new Date();
-  await tokensRepository.consumeAllPending(userId, purpose, now);
+  await tokensRepository.consumeAllPending(realm, userId, purpose, now);
 
   const ttlMinutes =
     purpose === 'email_verify'
@@ -86,7 +89,7 @@ export async function issueCode(
   const code = generateCode();
   const expiresAt = new Date(now.getTime() + ttlMinutes * MINUTE_MS);
 
-  await tokensRepository.insert({
+  await tokensRepository.insert(realm, {
     user_id: userId,
     purpose,
     token_hash: hashToken(code),
@@ -108,8 +111,7 @@ export async function issueCode(
 export type VerificationFailure = 'no_pending' | 'expired' | 'mismatch' | 'attempts_exhausted';
 
 export type VerificationOutcome =
-  | { ok: true }
-  | { ok: false; reason: VerificationFailure; attemptsRemaining?: number };
+  { ok: true } | { ok: false; reason: VerificationFailure; attemptsRemaining?: number };
 
 /**
  * Spends [code] against [userId]'s outstanding token for [purpose].
@@ -124,11 +126,12 @@ export type VerificationOutcome =
  * badly on their behalf, turning a defence into an attack.
  */
 export async function verifyCode(
+  realm: AuthRealm,
   userId: number,
   purpose: VerificationPurpose,
   code: string,
 ): Promise<VerificationOutcome> {
-  const pending = await tokensRepository.findPending(userId, purpose);
+  const pending = await tokensRepository.findPending(realm, userId, purpose);
   // Covers both "never issued" and "already expired" — `findPending` filters
   // expiry out, so an expired code is indistinguishable from none, which is
   // also how the caller must present it.
@@ -140,7 +143,7 @@ export async function verifyCode(
       : authConfig.passwordReset.maxAttempts;
 
   if (pending.attempts >= maxAttempts) {
-    await tokensRepository.consumeAllPending(userId, purpose, new Date());
+    await tokensRepository.consumeAllPending(realm, userId, purpose, new Date());
     return { ok: false, reason: 'attempts_exhausted' };
   }
 
@@ -152,15 +155,15 @@ export async function verifyCode(
   const normalized = code.replace(/\s+/g, '').toUpperCase();
 
   if (!tokenHashEquals(pending.token_hash, hashToken(normalized))) {
-    const attempts = await tokensRepository.incrementAttempts(pending.id);
+    const attempts = await tokensRepository.incrementAttempts(realm, pending.id);
     if (attempts >= maxAttempts) {
-      await tokensRepository.consumeAllPending(userId, purpose, new Date());
+      await tokensRepository.consumeAllPending(realm, userId, purpose, new Date());
       return { ok: false, reason: 'attempts_exhausted', attemptsRemaining: 0 };
     }
     return { ok: false, reason: 'mismatch', attemptsRemaining: maxAttempts - attempts };
   }
 
-  const consumed = await tokensRepository.consumeIfPending(pending.id, new Date());
+  const consumed = await tokensRepository.consumeIfPending(realm, pending.id, new Date());
   // Lost the race against a simultaneous request carrying the same valid code.
   // Reported as a failure rather than a success: exactly one caller may be told
   // it spent this code, and it was the other one.
@@ -171,8 +174,9 @@ export async function verifyCode(
 
 /** Invalidates any outstanding code for [purpose] — used when the flow it belonged to is settled another way (e.g. the user changes their password while a reset is in flight). */
 export async function invalidatePending(
+  realm: AuthRealm,
   userId: number,
   purpose: VerificationPurpose,
 ): Promise<void> {
-  await tokensRepository.consumeAllPending(userId, purpose, new Date());
+  await tokensRepository.consumeAllPending(realm, userId, purpose, new Date());
 }

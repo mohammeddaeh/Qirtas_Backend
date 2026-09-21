@@ -2,6 +2,7 @@ import { authConfig } from '../config/auth-config.js';
 import { generateSessionToken, hashToken } from './token.service.js';
 import * as sessionsRepository from '../repositories/sessions.repository.js';
 import type { SessionRow } from '../schemas/sessions.schema.js';
+import type { AuthRealm } from '../realm.js';
 
 /**
  * Every rule about how long a session lives, when it rotates and when it dies.
@@ -38,15 +39,21 @@ export interface IssuedSession {
   token: string;
 }
 
-export async function createSession(params: {
-  userId: number;
-  provider: string;
-  deviceInfo?: string | null;
-}): Promise<IssuedSession> {
-  const token = generateSessionToken();
+export async function createSession(
+  realm: AuthRealm,
+  params: {
+    userId: number;
+    provider: string;
+    deviceInfo?: string | null;
+  },
+): Promise<IssuedSession> {
+  // The prefix names the realm, so the auth middleware can probe the one right
+  // table instead of every realm's. It is part of the hashed value — a token
+  // cannot be moved between realms by editing its prefix.
+  const token = realm.tokenPrefix + generateSessionToken();
   const now = new Date();
 
-  const session = await sessionsRepository.insert({
+  const session = await sessionsRepository.insert(realm, {
     user_id: params.userId,
     token_hash: hashToken(token),
     provider: params.provider,
@@ -67,8 +74,7 @@ export async function createSession(params: {
 export type SessionRejection = 'unknown' | 'idle' | 'expired';
 
 export type SessionLookup =
-  | { ok: true; session: SessionRow }
-  | { ok: false; reason: SessionRejection };
+  { ok: true; session: SessionRow } | { ok: false; reason: SessionRejection };
 
 /**
  * Resolves a presented bearer token to a live session, deleting it if it has
@@ -89,24 +95,24 @@ export type SessionLookup =
  * few milliseconds more precise; failing on it would turn a slow database into
  * a signed-out user.
  */
-export async function resolveToken(token: string): Promise<SessionLookup> {
-  const session = await sessionsRepository.findByTokenHash(hashToken(token));
+export async function resolveToken(realm: AuthRealm, token: string): Promise<SessionLookup> {
+  const session = await sessionsRepository.findByTokenHash(realm, hashToken(token));
   if (!session) return { ok: false, reason: 'unknown' };
 
   const now = Date.now();
 
   if (session.expires_at.getTime() <= now) {
-    await sessionsRepository.deleteById(session.id);
+    await sessionsRepository.deleteById(realm, session.id);
     return { ok: false, reason: 'expired' };
   }
 
   const idleMs = now - session.last_active_at.getTime();
   if (idleMs > authConfig.session.idleTimeoutMinutes * MINUTE_MS) {
-    await sessionsRepository.deleteById(session.id);
+    await sessionsRepository.deleteById(realm, session.id);
     return { ok: false, reason: 'idle' };
   }
 
-  void sessionsRepository.touchLastActive(session.id).catch(() => {
+  void sessionsRepository.touchLastActive(realm, session.id).catch(() => {
     /* best-effort activity tracking — never blocks or fails a request */
   });
 
@@ -145,8 +151,11 @@ export interface RotationResult {
  * Rejects rather than rotates an already-dead session: rotation must never be a
  * way to revive something the timeouts have ended.
  */
-export async function rotateSession(token: string): Promise<RotationResult | null> {
-  const lookup = await resolveToken(token);
+export async function rotateSession(
+  realm: AuthRealm,
+  token: string,
+): Promise<RotationResult | null> {
+  const lookup = await resolveToken(realm, token);
   if (!lookup.ok) return null;
 
   const { session } = lookup;
@@ -156,9 +165,14 @@ export async function rotateSession(token: string): Promise<RotationResult | nul
     return { session, token, rotated: false };
   }
 
-  const nextToken = generateSessionToken();
+  const nextToken = realm.tokenPrefix + generateSessionToken();
   const now = new Date();
-  const updated = await sessionsRepository.rotateToken(session.id, hashToken(nextToken), now);
+  const updated = await sessionsRepository.rotateToken(
+    realm,
+    session.id,
+    hashToken(nextToken),
+    now,
+  );
 
   // The row vanished between the lookup and the update — a concurrent logout or
   // revocation. Treated as a rejected rotation, never as a silent new session.
@@ -168,8 +182,8 @@ export async function rotateSession(token: string): Promise<RotationResult | nul
 }
 
 /** Ends the session identified by [token] — the calling device only. Silent when the token is already unknown; logout is idempotent by nature. */
-export async function revokeByToken(token: string): Promise<void> {
-  await sessionsRepository.deleteByTokenHash(hashToken(token));
+export async function revokeByToken(realm: AuthRealm, token: string): Promise<void> {
+  await sessionsRepository.deleteByTokenHash(realm, hashToken(token));
 }
 
 /**
@@ -179,10 +193,14 @@ export async function revokeByToken(token: string): Promise<void> {
  * the two are deliberately indistinguishable, so that passing arbitrary ids
  * cannot be used to learn which ones are live.
  */
-export async function revokeById(userId: number, sessionId: number): Promise<boolean> {
-  const session = await sessionsRepository.findById(sessionId);
+export async function revokeById(
+  realm: AuthRealm,
+  userId: number,
+  sessionId: number,
+): Promise<boolean> {
+  const session = await sessionsRepository.findById(realm, sessionId);
   if (!session || session.user_id !== userId) return false;
-  await sessionsRepository.deleteById(sessionId);
+  await sessionsRepository.deleteById(realm, sessionId);
   return true;
 }
 
@@ -195,17 +213,18 @@ export async function revokeById(userId: number, sessionId: number): Promise<boo
  * session no longer does; that caller passes no exception.
  */
 export async function revokeAllForUser(
+  realm: AuthRealm,
   userId: number,
   exceptSessionId?: number,
 ): Promise<number> {
-  return sessionsRepository.deleteAllByUserId(userId, exceptSessionId);
+  return sessionsRepository.deleteAllByUserId(realm, userId, exceptSessionId);
 }
 
-export function listSessions(userId: number): Promise<SessionRow[]> {
-  return sessionsRepository.findActiveByUserId(userId);
+export function listSessions(realm: AuthRealm, userId: number): Promise<SessionRow[]> {
+  return sessionsRepository.findActiveByUserId(realm, userId);
 }
 
 /** Housekeeping for sessions whose owners never return — the per-request path already removes the ones that are presented. */
-export function purgeExpired(): Promise<number> {
-  return sessionsRepository.deleteExpired();
+export function purgeExpired(realm: AuthRealm): Promise<number> {
+  return sessionsRepository.deleteExpired(realm);
 }

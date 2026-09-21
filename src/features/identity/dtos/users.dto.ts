@@ -234,8 +234,9 @@ export const userIdParamsSchema = z.object({
 
 /**
  * Self-registration — the single entry point for every internal account.
- * account_type discriminates the branch: customer registration is handled by
- * the (future) storefront/customer feature, not this module.
+ * Staff only. Customers register through `POST /customers/register`
+ * (features/customers) — a different table, lifecycle and body; this schema
+ * has no discriminator field on purpose.
  */
 export const registerStaffBodySchema = z.object({
   first_name: z.string().trim().min(1).max(100),

@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import { accountStore } from '../auth/ports/account-store.js';
+import { realmForToken } from '../auth/realm.js';
 import * as sessionService from '../auth/services/session.service.js';
 import * as sessionsRepository from '../auth/repositories/sessions.repository.js';
 
@@ -8,6 +8,14 @@ declare global {
   namespace Express {
     interface Request {
       user: { id: number } | null;
+      /**
+       * The signed-in **customer**, when the token belongs to the customer realm.
+       *
+       * Deliberately a separate property from `user`: everything that reads
+       * `req.user` (permissions, RBAC, audit) assumes a staff account, and a
+       * customer id in that slot would be looked up as an employee.
+       */
+      customer: { id: number } | null;
       /**
        * The session backing `user`, when there is one.
        *
@@ -55,6 +63,7 @@ declare global {
  */
 export async function auth(req: Request, _res: Response, next: NextFunction): Promise<void> {
   req.user = null;
+  req.customer = null;
   req.session = null;
 
   const header = req.header('Authorization');
@@ -64,30 +73,40 @@ export async function auth(req: Request, _res: Response, next: NextFunction): Pr
     return;
   }
 
-  const lookup = await sessionService.resolveToken(token);
+  // The token's prefix names its realm, so exactly one sessions table is
+  // probed. A customer token sent to a staff-only route still resolves — to
+  // `req.customer`, which `requireAuth` does not read — so it is a 401 there.
+  const realm = realmForToken(token);
+  if (!realm) {
+    next();
+    return;
+  }
+
+  const lookup = await sessionService.resolveToken(realm, token);
   if (!lookup.ok) {
     next();
     return;
   }
 
-  const account = await accountStore().findById(lookup.session.user_id);
+  const account = await realm.store.findById(lookup.session.user_id);
   if (!account) {
     // The account vanished under a live session — only reachable through a
     // hard delete, which this system permits solely for users with zero
     // history. The orphan session is removed rather than left to the sweep.
-    await sessionsRepository.deleteById(lookup.session.id);
+    await sessionsRepository.deleteById(realm, lookup.session.id);
     next();
     return;
   }
 
-  const decision = await accountStore().canSignIn(account);
+  const decision = await realm.store.canSignIn(account);
   if (!decision.allowed) {
-    await sessionsRepository.deleteById(lookup.session.id);
+    await sessionsRepository.deleteById(realm, lookup.session.id);
     next();
     return;
   }
 
-  req.user = { id: account.id };
+  if (realm.id === 'staff') req.user = { id: account.id };
+  else req.customer = { id: account.id };
   req.session = { id: lookup.session.id, token };
   next();
 }

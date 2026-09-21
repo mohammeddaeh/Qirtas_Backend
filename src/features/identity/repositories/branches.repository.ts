@@ -96,6 +96,19 @@ export function findSelfRegisterable(): Promise<BranchRow[]> {
 }
 
 /**
+ * Branches a visitor can be opened on automatically: in service (`active` — a
+ * temporarily closed branch must not be the one silently chosen for someone)
+ * and not archived.
+ */
+export function findAutoSelectable(): Promise<BranchRow[]> {
+  return db
+    .select()
+    .from(branchesTable)
+    .where(and(sql`${branchesTable.archived_at} IS NULL`, eq(branchesTable.status, 'active')))
+    .orderBy(asc(branchesTable.id));
+}
+
+/**
  * Name lookup for the uniqueness guard — searches archived rows too, and must.
  *
  * `branches_name_unique_idx` is a plain unique index, not partial on

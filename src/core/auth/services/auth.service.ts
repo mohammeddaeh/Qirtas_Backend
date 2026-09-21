@@ -1,6 +1,7 @@
 import { BusinessError, ForbiddenError, UnauthorizedError } from '../../http/api-error.js';
 import type { Lang } from '../../i18n/messages.js';
-import { accountStore, type AuthAccount } from '../ports/account-store.js';
+import type { AuthAccount } from '../ports/account-store.js';
+import type { AuthRealm } from '../realm.js';
 import { emailSender, type EmailDeliveryFailure } from '../ports/email-sender.js';
 import { getAuthProvider } from '../ports/auth-provider.js';
 import { AUTH_EVENT, recordSecurityEvent } from '../ports/security-event-sink.js';
@@ -61,6 +62,7 @@ export interface SignInResult {
  * requests. The client already branches on `data.account_status`.
  */
 export async function signIn(
+  realm: AuthRealm,
   credentials: { email: string; password: string },
   origin: RequestOrigin,
 ): Promise<SignInResult> {
@@ -69,10 +71,11 @@ export async function signIn(
     throw new BusinessError(500, 'Local authentication is not configured', 'auth_provider_missing');
   }
 
-  const identity = await provider.authenticate(credentials);
+  const identity = await provider.authenticate(realm, credentials);
 
   if (!identity) {
     await recordSecurityEvent({
+      realm: realm.id,
       event: AUTH_EVENT.loginFailed,
       // Null on purpose: the account may not exist, and pretending otherwise
       // would mean looking it up — which is the lookup this path avoids.
@@ -85,10 +88,11 @@ export async function signIn(
   }
 
   const { account } = identity;
-  const decision = await accountStore().canSignIn(account);
+  const decision = await realm.store.canSignIn(account);
 
   if (!decision.allowed) {
     await recordSecurityEvent({
+      realm: realm.id,
       event: AUTH_EVENT.loginRefused,
       accountId: account.id,
       email: account.email,
@@ -111,16 +115,17 @@ export async function signIn(
   // than inside the provider so the write happens once, on the one path that
   // has both the identity and the store.
   if (identity.emailVerifiedByProvider && account.emailVerifiedAt === null) {
-    await accountStore().markEmailVerified(account.id, new Date());
+    await realm.store.markEmailVerified(account.id, new Date());
   }
 
-  const { session, token } = await sessionService.createSession({
+  const { session, token } = await sessionService.createSession(realm, {
     userId: account.id,
     provider: provider.id,
     deviceInfo: origin.deviceInfo,
   });
 
   await recordSecurityEvent({
+    realm: realm.id,
     event: AUTH_EVENT.loginSuccess,
     accountId: account.id,
     email: account.email,
@@ -133,12 +138,17 @@ export async function signIn(
 }
 
 /** Ends the calling device's session only. Idempotent: an already-dead token is not an error, because the user's intent is satisfied either way. */
-export async function signOut(token: string, origin: RequestOrigin): Promise<void> {
-  const lookup = await sessionService.resolveToken(token);
-  await sessionService.revokeByToken(token);
+export async function signOut(
+  realm: AuthRealm,
+  token: string,
+  origin: RequestOrigin,
+): Promise<void> {
+  const lookup = await sessionService.resolveToken(realm, token);
+  await sessionService.revokeByToken(realm, token);
 
   if (lookup.ok) {
     await recordSecurityEvent({
+      realm: realm.id,
       event: AUTH_EVENT.logout,
       accountId: lookup.session.user_id,
       ipAddress: origin.ipAddress,
@@ -160,14 +170,19 @@ export interface RefreshResult {
  * A dead session is a 401 rather than a silent new session: refresh must never
  * become a way to revive what the timeouts or a revocation already ended.
  */
-export async function refresh(token: string, origin: RequestOrigin): Promise<RefreshResult> {
-  const result = await sessionService.rotateSession(token);
+export async function refresh(
+  realm: AuthRealm,
+  token: string,
+  origin: RequestOrigin,
+): Promise<RefreshResult> {
+  const result = await sessionService.rotateSession(realm, token);
   if (!result) {
     throw new UnauthorizedError('Your session has expired', 'session_expired');
   }
 
   if (result.rotated) {
     await recordSecurityEvent({
+      realm: realm.id,
       event: AUTH_EVENT.sessionRotated,
       accountId: result.session.user_id,
       ipAddress: origin.ipAddress,
@@ -217,22 +232,28 @@ export interface VerificationSendResult {
 }
 
 export async function sendEmailVerification(
+  realm: AuthRealm,
   account: AuthAccount,
   origin: RequestOrigin,
 ): Promise<VerificationSendResult> {
   if (!isEmailVerificationEnabled()) return { sent: false };
   if (account.emailVerifiedAt !== null) return { sent: false };
 
-  const wait = await verificationService.secondsUntilResendAllowed(account.id, 'email_verify');
+  const wait = await verificationService.secondsUntilResendAllowed(
+    realm,
+    account.id,
+    'email_verify',
+  );
   if (wait > 0) return { sent: false, retryAfterSeconds: wait };
 
-  const { code } = await verificationService.issueCode(account.id, 'email_verify');
+  const { code } = await verificationService.issueCode(realm, account.id, 'email_verify');
   const delivery = await emailSender().send(buildVerifyEmail(account.email, origin.lang, code));
 
   // Recorded from the delivery result, not from having reached this line. The
   // audit log is read to answer "did we send it?" — an entry written whatever
   // happened answers that question wrongly, and confidently.
   await recordSecurityEvent({
+    realm: realm.id,
     event: delivery.ok ? AUTH_EVENT.emailVerificationSent : AUTH_EVENT.emailVerificationSendFailed,
     accountId: account.id,
     email: account.email,
@@ -254,16 +275,18 @@ export async function sendEmailVerification(
  * in the security log, where it genuinely differs.
  */
 export async function verifyEmail(
+  realm: AuthRealm,
   account: AuthAccount,
   code: string,
   origin: RequestOrigin,
 ): Promise<void> {
   if (account.emailVerifiedAt !== null) return; // already proven — idempotent, not an error
 
-  const outcome = await verificationService.verifyCode(account.id, 'email_verify', code);
+  const outcome = await verificationService.verifyCode(realm, account.id, 'email_verify', code);
 
   if (!outcome.ok) {
     await recordSecurityEvent({
+      realm: realm.id,
       event: AUTH_EVENT.emailVerificationFailed,
       accountId: account.id,
       email: account.email,
@@ -277,9 +300,10 @@ export async function verifyEmail(
     );
   }
 
-  await accountStore().markEmailVerified(account.id, new Date());
+  await realm.store.markEmailVerified(account.id, new Date());
 
   await recordSecurityEvent({
+    realm: realm.id,
     event: AUTH_EVENT.emailVerified,
     accountId: account.id,
     email: account.email,
@@ -306,11 +330,15 @@ export async function verifyEmail(
  * "please wait 40 seconds" answer confirms a code was recently sent, which
  * confirms the account exists.
  */
-export async function requestPasswordReset(email: string, origin: RequestOrigin): Promise<void> {
-  const account = await accountStore().findByEmail(email);
+export async function requestPasswordReset(
+  realm: AuthRealm,
+  email: string,
+  origin: RequestOrigin,
+): Promise<void> {
+  const account = await realm.store.findByEmail(email);
   if (!account) return;
 
-  const decision = await accountStore().canSignIn(account);
+  const decision = await realm.store.canSignIn(account);
   if (!decision.allowed && decision.reasonKey !== 'account_pending_approval') {
     // A pending account is a legitimate password-reset subject: it can sign in
     // to see its own status, so it must be able to recover the password that
@@ -319,10 +347,14 @@ export async function requestPasswordReset(email: string, origin: RequestOrigin)
     return;
   }
 
-  const wait = await verificationService.secondsUntilResendAllowed(account.id, 'password_reset');
+  const wait = await verificationService.secondsUntilResendAllowed(
+    realm,
+    account.id,
+    'password_reset',
+  );
   if (wait > 0) return;
 
-  const { code } = await verificationService.issueCode(account.id, 'password_reset');
+  const { code } = await verificationService.issueCode(realm, account.id, 'password_reset');
   const delivery = await emailSender().send(
     buildPasswordResetEmail(account.email, origin.lang, code),
   );
@@ -334,6 +366,7 @@ export async function requestPasswordReset(email: string, origin: RequestOrigin)
   // is. So the operator learns the mail failed, and the requester learns
   // exactly what an unregistered address learns.
   await recordSecurityEvent({
+    realm: realm.id,
     event: delivery.ok ? AUTH_EVENT.passwordResetRequested : AUTH_EVENT.passwordResetSendFailed,
     accountId: account.id,
     email: account.email,
@@ -351,6 +384,7 @@ export async function requestPasswordReset(email: string, origin: RequestOrigin)
  * mean the reset changed nothing for exactly the person it was aimed at.
  */
 export async function resetPassword(
+  realm: AuthRealm,
   params: { email: string; code: string; newPassword: string },
   origin: RequestOrigin,
 ): Promise<void> {
@@ -358,13 +392,19 @@ export async function resetPassword(
     throw new BusinessError(422, 'This reset code is invalid or has expired', 'reset_code_invalid');
   };
 
-  const account = await accountStore().findByEmail(params.email);
+  const account = await realm.store.findByEmail(params.email);
   // Identical to a wrong code, for the reason given in `requestPasswordReset`.
   if (!account) invalid();
 
-  const outcome = await verificationService.verifyCode(account!.id, 'password_reset', params.code);
+  const outcome = await verificationService.verifyCode(
+    realm,
+    account!.id,
+    'password_reset',
+    params.code,
+  );
   if (!outcome.ok) {
     await recordSecurityEvent({
+      realm: realm.id,
       event: AUTH_EVENT.passwordResetFailed,
       accountId: account!.id,
       email: account!.email,
@@ -374,10 +414,11 @@ export async function resetPassword(
     invalid();
   }
 
-  await accountStore().updatePasswordHash(account!.id, await hashPassword(params.newPassword));
-  const revoked = await sessionService.revokeAllForUser(account!.id);
+  await realm.store.updatePasswordHash(account!.id, await hashPassword(params.newPassword));
+  const revoked = await sessionService.revokeAllForUser(realm, account!.id);
 
   await recordSecurityEvent({
+    realm: realm.id,
     event: AUTH_EVENT.passwordResetCompleted,
     accountId: account!.id,
     email: account!.email,
@@ -404,6 +445,7 @@ export async function resetPassword(
  * change was routine or a response to something.
  */
 export async function changePassword(
+  realm: AuthRealm,
   params: {
     accountId: number;
     currentPassword: string;
@@ -413,7 +455,7 @@ export async function changePassword(
   },
   origin: RequestOrigin,
 ): Promise<{ sessionsRevoked: number }> {
-  const account = await accountStore().findById(params.accountId);
+  const account = await realm.store.findById(params.accountId);
   if (!account) throw new UnauthorizedError('Authentication required', 'authentication_required');
 
   const valid = await verifyPassword(params.currentPassword, account.passwordHash);
@@ -429,17 +471,18 @@ export async function changePassword(
     );
   }
 
-  await accountStore().updatePasswordHash(account.id, await hashPassword(params.newPassword));
+  await realm.store.updatePasswordHash(account.id, await hashPassword(params.newPassword));
 
   // Any reset in flight is void: the owner has just proven they know the
   // current password, so an outstanding code can only be someone else's attempt.
-  await verificationService.invalidatePending(account.id, 'password_reset');
+  await verificationService.invalidatePending(realm, account.id, 'password_reset');
 
   const sessionsRevoked = params.revokeOtherSessions
-    ? await sessionService.revokeAllForUser(account.id, params.currentSessionId)
+    ? await sessionService.revokeAllForUser(realm, account.id, params.currentSessionId)
     : 0;
 
   await recordSecurityEvent({
+    realm: realm.id,
     event: AUTH_EVENT.passwordChanged,
     accountId: account.id,
     email: account.email,
@@ -453,8 +496,8 @@ export async function changePassword(
 
 // ── Session management ───────────────────────────────────────────────────────
 
-export function listSessions(accountId: number): Promise<SessionRow[]> {
-  return sessionService.listSessions(accountId);
+export function listSessions(realm: AuthRealm, accountId: number): Promise<SessionRow[]> {
+  return sessionService.listSessions(realm, accountId);
 }
 
 /**
@@ -464,14 +507,16 @@ export function listSessions(accountId: number): Promise<SessionRow[]> {
  * same 404, so iterating ids cannot be used to discover which are live.
  */
 export async function revokeSession(
+  realm: AuthRealm,
   accountId: number,
   sessionId: number,
   origin: RequestOrigin,
 ): Promise<boolean> {
-  const revoked = await sessionService.revokeById(accountId, sessionId);
+  const revoked = await sessionService.revokeById(realm, accountId, sessionId);
   if (!revoked) return false;
 
   await recordSecurityEvent({
+    realm: realm.id,
     event: AUTH_EVENT.sessionRevoked,
     accountId,
     ipAddress: origin.ipAddress,
@@ -483,13 +528,15 @@ export async function revokeSession(
 
 /** "Sign out my other devices" — spares the caller's own session, because signing yourself out while securing your account reads as a malfunction. */
 export async function revokeOtherSessions(
+  realm: AuthRealm,
   accountId: number,
   currentSessionId: number,
   origin: RequestOrigin,
 ): Promise<number> {
-  const count = await sessionService.revokeAllForUser(accountId, currentSessionId);
+  const count = await sessionService.revokeAllForUser(realm, accountId, currentSessionId);
 
   await recordSecurityEvent({
+    realm: realm.id,
     event: AUTH_EVENT.sessionRevokedAll,
     accountId,
     ipAddress: origin.ipAddress,

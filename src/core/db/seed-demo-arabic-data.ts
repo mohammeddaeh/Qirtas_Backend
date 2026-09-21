@@ -103,6 +103,33 @@ const BRANCH_DEFS: BranchDef[] = [
   { name: 'فرع السويداء - المركز', address: 'شارع المركز، السويداء', contact_info: '0991234567' },
 ];
 
+/**
+ * Where each demo branch is, so "nearest branch" (`POST /branches/nearest`) has
+ * something to compare against. Neighbourhood-level, not surveyed.
+ *
+ * Backfilled onto branches that already exist: without coordinates a branch is
+ * never chosen by location, and the whole feature falls back to the default with
+ * no error — which reads as "location is broken", not "nobody placed the
+ * branches".
+ */
+const BRANCH_COORDINATES: Record<string, { latitude: number; longitude: number }> = {
+  'فرع دمشق - المزة': { latitude: 33.5, longitude: 36.25 },
+  'فرع دمشق - أبو رمانة': { latitude: 33.5178, longitude: 36.2823 },
+  'فرع دمشق - المالكي': { latitude: 33.523, longitude: 36.279 },
+  'فرع حلب - الفرقان': { latitude: 36.21, longitude: 37.135 },
+  'فرع حلب - الجميلية': { latitude: 36.212, longitude: 37.144 },
+  'فرع حلب - الشهباء': { latitude: 36.23, longitude: 37.11 },
+  'فرع حمص - الوعر': { latitude: 34.73, longitude: 36.67 },
+  'فرع حمص - الإنشاءات': { latitude: 34.74, longitude: 36.715 },
+  'فرع اللاذقية - الزراعة': { latitude: 35.52, longitude: 35.78 },
+  'فرع اللاذقية - الشيخ ضاهر': { latitude: 35.529, longitude: 35.785 },
+  'فرع طرطوس - الكورنيش': { latitude: 34.889, longitude: 35.883 },
+  'فرع درعا - المركز': { latitude: 32.625, longitude: 36.105 },
+  'فرع دير الزور - الجورة': { latitude: 35.335, longitude: 40.145 },
+  'فرع الحسكة - المركز': { latitude: 36.5, longitude: 40.75 },
+  'فرع السويداء - المركز': { latitude: 32.709, longitude: 36.566 },
+};
+
 // ── Users — generated from name pools so the list stays large without being
 // unreadable; each entry still resolves to one deterministic definition. ──
 
@@ -306,7 +333,17 @@ async function ensureBranches(actor: RequestActorContext): Promise<number[]> {
   const ids: number[] = [];
   for (const def of BRANCH_DEFS) {
     const found = byName.get(def.name);
+    const where = BRANCH_COORDINATES[def.name];
     if (found && found.status !== 'closed') {
+      // Backfill: a demo branch seeded before coordinates existed stays unplaced
+      // forever otherwise, because this loop skips anything already present.
+      if (where && found.latitude === null) {
+        await branchesRepository.update(found.id, {
+          latitude: where.latitude.toFixed(6),
+          longitude: where.longitude.toFixed(6),
+        });
+        logger.info(`Placed branch on the map: ${found.name}`);
+      }
       ids.push(found.id);
       continue;
     }
@@ -314,6 +351,7 @@ async function ensureBranches(actor: RequestActorContext): Promise<number[]> {
       name: def.name,
       address: def.address,
       contact_info: def.contact_info,
+      ...(where ? where : {}),
     });
     if (def.status && def.status !== 'active') {
       await branchesService.updateBranch(actor, created.id, { status: def.status });
