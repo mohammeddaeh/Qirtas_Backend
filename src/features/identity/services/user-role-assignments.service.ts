@@ -5,6 +5,7 @@ import * as usersRepository from '../repositories/users.repository.js';
 import * as branchesRepository from '../repositories/branches.repository.js';
 import type { UserRoleAssignmentRow } from '../schemas/user-role-assignments.schema.js';
 import * as auditService from './audit.service.js';
+import { canGrantRoleLevel } from '../authority-level.js';
 import { AUDIT, target } from './audit-actions.js';
 import type { RequestActorContext } from '../../../core/http/require-actor.js';
 import {
@@ -56,13 +57,21 @@ export async function listEndedForUser(userId: number): Promise<WireUserRoleAssi
   );
 }
 
-async function assertActorOutranksRole(actorUserId: number, roleId: number): Promise<void> {
+/**
+ * Refuses to hand out a role at or above the actor's own authority.
+ *
+ * Exported because assignment and transfer were the only callers, while two
+ * other paths also grant a role: an admin creating an account with one
+ * (`createUserByAdmin`) and approving a registration (`decideRegistration`).
+ * Neither checked, so `users.create` or `users.approve` alone could mint a
+ * super admin with a password the actor chose.
+ */
+export async function assertActorOutranksRole(actorUserId: number, roleId: number): Promise<void> {
   const role = await rolesRepository.findById(roleId);
   if (!role) throw new NotFoundError('Role not found');
   if (role.level === null) return;
   const actorLevel = await assignmentsRepository.findHighestAuthorityLevel(actorUserId);
-  if (actorLevel === null) return;
-  if (role.level <= actorLevel) {
+  if (!canGrantRoleLevel(actorLevel, role.level)) {
     throw new ForbiddenError(
       'Cannot assign a role at or above your own authority level',
       undefined,

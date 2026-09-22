@@ -149,6 +149,16 @@ const envSchema = z.object({
     .enum(['true', 'false'])
     .optional()
     .transform((v) => (v === undefined ? undefined : v === 'true')),
+  /**
+   * Whether staff may **enroll** a second factor at all (`true`/`false`).
+   * Unset = **closed** — the app has no MFA screens yet, and an account
+   * enrolled through the API would be locked out of it. `MFA_ENFORCE=true`
+   * opens enrollment too. See `core/auth/mfa/enrollment-gate.ts`.
+   */
+  MFA_ENABLED: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
 
   // ── Mail transport ────────────────────────────────────────────────────────
   // These ARE secrets (SMTP_PASS especially) and are read only by

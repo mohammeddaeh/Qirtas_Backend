@@ -4,6 +4,7 @@ import { actorOf } from '../../../core/http/require-customer.js';
 import { BusinessError, NotFoundError, UnauthorizedError } from '../../../core/http/api-error.js';
 import * as notificationsService from '../../../core/notifications/notifications.service.js';
 import * as mfaService from '../../../core/auth/mfa/mfa.service.js';
+import { assertMfaEnrollmentOpen } from '../../../core/auth/mfa/enrollment-gate.js';
 import { verifyPassword } from '../../../core/auth/services/password.service.js';
 import * as authService from '../../../core/auth/services/auth.service.js';
 import { getRealm, realmForToken } from '../../../core/auth/realm.js';
@@ -281,6 +282,7 @@ export async function mfaStatus(req: Request, res: Response): Promise<void> {
 }
 
 export async function mfaSetup(req: Request, res: Response): Promise<void> {
+  assertMfaEnrollmentOpen();
   const { realm, id } = mfaActor(req);
   const account = await getRealm(realm).store.findById(id);
   if (!account) throw new UnauthorizedError('Authentication required', 'authentication_required');
@@ -288,6 +290,9 @@ export async function mfaSetup(req: Request, res: Response): Promise<void> {
 }
 
 export async function mfaConfirm(req: Request, res: Response): Promise<void> {
+  // Gated too: a setup begun while enrollment was open must not complete after
+  // it closed.
+  assertMfaEnrollmentOpen();
   const { realm, id } = mfaActor(req);
   const { code } = req.body as MfaCodeBody;
   ok(res, { recovery_codes: await mfaService.confirmEnrollment(realm, id, code) });
@@ -327,6 +332,7 @@ export async function registerPushToken(req: Request, res: Response): Promise<vo
     token: body.token,
     platform: body.platform,
     language: body.language ?? null,
+    sessionId: req.session?.id ?? null,
   });
   ok(res, null);
 }

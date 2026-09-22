@@ -7,6 +7,7 @@ import { userRoleAssignmentsTable } from '../schemas/user-role-assignments.schem
 import type { PaginationParams } from '../../../core/pagination/pagination.js';
 import type { UsersFilterQuery } from '../dtos/users.dto.js';
 import * as accountEmails from '../../../core/auth/repositories/account-emails.repository.js';
+import * as pushTokens from '../../../core/notifications/repositories/push-tokens.repository.js';
 
 const sortColumns = {
   created_at: usersTable.created_at,
@@ -118,6 +119,7 @@ export async function deleteById(id: number): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.delete(usersTable).where(eq(usersTable.id, id));
     await accountEmails.release(tx, 'staff', id);
+    await pushTokens.removeAllForAccount(tx, 'staff', id);
   });
 }
 

@@ -486,6 +486,7 @@ export async function changeEmail(
   await sessionService.revokeAllForUser(
     customerAuthRealm,
     customerId,
+    'email_changed',
     currentSessionId ?? undefined,
   );
   await customersRepository.logActivity({

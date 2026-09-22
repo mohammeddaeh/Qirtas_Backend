@@ -9,6 +9,7 @@ import * as userRoleAssignmentsRepository from '../repositories/user-role-assign
 import * as permissionsService from './permissions.service.js';
 import * as auditService from './audit.service.js';
 import type { RequestActorContext } from './audit.service.js';
+import { canGrantRoleLevel } from '../authority-level.js';
 import { AUDIT, target } from './audit-actions.js';
 import {
   toWireRole,
@@ -259,22 +260,54 @@ function assertNotArchived(role: { archived_at: Date | null }): void {
 }
 
 /**
- * Privilege-escalation guard: an actor cannot create/edit/assign a role at a
- * level equal to or higher (numerically lower-or-equal) than their own
- * highest-authority level. Actors with no active assignment (e.g. Setup
- * Wizard bootstrap) are exempt — there is nothing to escalate from yet.
+ * Privilege-escalation guard: an actor cannot create/edit a role at a level
+ * equal to or higher (numerically lower-or-equal) than their own
+ * highest-authority level — `canGrantRoleLevel`, the same rule assignment uses.
+ *
+ * Actors with no level used to be exempt ("nothing to escalate from yet"), but
+ * no path without an actor reaches here — bootstrap inserts directly — so the
+ * exemption only ever served someone holding `roles.edit` on a level-less role,
+ * who could then create a level-0 role.
  */
 async function assertActorOutranks(actorUserId: number, targetLevel: number | null): Promise<void> {
   if (targetLevel === null) return; // Auditor-style roles carry no authority level to compare against.
   const actorLevel = await userRoleAssignmentsRepository.findHighestAuthorityLevel(actorUserId);
-  if (actorLevel === null) return;
-  if (targetLevel <= actorLevel) {
+  if (!canGrantRoleLevel(actorLevel, targetLevel)) {
     throw new ForbiddenError(
       'Cannot create or modify a role at or above your own authority level',
       undefined,
       'role_edit_above_actor_level',
     );
   }
+}
+
+/**
+ * Refuses to put on a role any key the actor does not hold themselves — only
+ * the keys **added** by this call are judged.
+ *
+ * Without it `roles.edit` was a master key: add `users.manage` (or anything)
+ * to a role below you, assign that role to yourself (allowed — it is below
+ * you), and you hold it. Same rule as per-account overrides
+ * (`core/authz/override-rules.ts`): nobody hands out a key they could not use.
+ * Keys already on the role pass untouched, or a role granted more by someone
+ * senior would become uneditable by anyone below them.
+ */
+async function assertActorHoldsAddedKeys(
+  actorUserId: number,
+  requested: readonly string[],
+  existing: readonly string[],
+): Promise<void> {
+  const already = new Set(existing);
+  const added = requested.filter((key) => !already.has(key));
+  if (added.length === 0) return;
+  const held = new Set(await userRoleAssignmentsRepository.findAllEffectivePermissionKeys(actorUserId));
+  const notHeld = added.filter((key) => !held.has(key));
+  if (notHeld.length === 0) return;
+  throw new ForbiddenError(
+    `You cannot grant a permission you do not hold: ${notHeld.join(', ')}`,
+    { keys: notHeld },
+    'role_key_not_held',
+  );
 }
 
 export async function createRole(
@@ -308,6 +341,9 @@ export async function createRole(
 
   await assertActorOutranks(actorUserId, level);
   await permissionsService.assertPermissionKeysExist(permissionKeys);
+  // A new role has nothing "already on it" — cloning included: copying a role
+  // you could not have built is the same grant.
+  await assertActorHoldsAddedKeys(actorUserId, permissionKeys, []);
 
   if (!body.force) {
     const duplicate = await rolesRepository.findActiveRoleIdWithExactPermissionSet(permissionKeys);
@@ -439,6 +475,11 @@ export async function updateRolePermissions(
   assertNotArchived(role);
   await assertActorOutranks(actor.userId, role.level);
   await permissionsService.assertPermissionKeysExist(body.permission_keys);
+  await assertActorHoldsAddedKeys(
+    actor.userId,
+    body.permission_keys,
+    await rolesRepository.findPermissionKeys(roleId),
+  );
 
   // The same role-explosion warning `createRole` raises, and for the same
   // reason: the rule is about the resulting STATE — two active roles with

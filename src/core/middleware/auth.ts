@@ -2,12 +2,20 @@ import type { NextFunction, Request, Response } from 'express';
 import { realmForToken } from '../auth/realm.js';
 import * as sessionService from '../auth/services/session.service.js';
 import * as sessionsRepository from '../auth/repositories/sessions.repository.js';
+import { UnauthorizedError } from '../http/api-error.js';
+import { sessionRevokedError } from '../auth/session-revoked-error.js';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
-      user: { id: number } | null;
+      /**
+       * The signed-in **staff** account. `status` is carried because a staff
+       * session is admitted before approval (`pending_*`, `rejected` — see
+       * `canSignIn`), and `requireApprovedStaff` needs to tell those apart
+       * without a second lookup.
+       */
+      user: { id: number; status: string } | null;
       /**
        * The signed-in **customer**, when the token belongs to the customer realm.
        *
@@ -48,8 +56,13 @@ declare global {
  * the same time, so the same dead session is not re-evaluated on every
  * subsequent request.
  *
- * **This middleware never rejects a request.** An absent, invalid or expired
- * token simply leaves `req.user = null`. Enforcement stays entirely at
+ * **This middleware rejects exactly two cases**, both to tell the device WHY:
+ * a live session whose account the application no longer admits (condition
+ * 3) — 401 with the refusal's `message_key` (`account_suspended`/
+ * `account_disabled`), once, as the session is deleted; and a token whose
+ * session was ended on purpose — 401 `session_revoked` with
+ * `data.revoke_reason`, read from `session_tombstones`. An absent, invalid or expired token simply leaves
+ * `req.user = null`. Enforcement stays entirely at
  * `requireAuth()`/`requireActorId()`/`requirePermission()`, so a route's shape
  * says whether it is public — rather than that fact being spread between here
  * and there.
@@ -84,6 +97,14 @@ export async function auth(req: Request, _res: Response, next: NextFunction): Pr
 
   const lookup = await sessionService.resolveToken(realm, token);
   if (!lookup.ok) {
+    // Ended on purpose (another device, a password change, an administrator):
+    // the device is told which, instead of the same bare 401 an expiry gets.
+    // Every retry gets the same answer — the tombstone is read, not consumed —
+    // until the session's own deadline would have ended it anyway.
+    if (lookup.reason === 'revoked') {
+      next(sessionRevokedError(lookup.revokeReason));
+      return;
+    }
     next();
     return;
   }
@@ -101,11 +122,27 @@ export async function auth(req: Request, _res: Response, next: NextFunction): Pr
   const decision = await realm.store.canSignIn(account);
   if (!decision.allowed) {
     await sessionsRepository.deleteById(realm, lookup.session.id);
-    next();
+    // Answered here, with the reason, instead of continuing as anonymous.
+    //
+    // Continuing dropped the one fact the client needed: the next guard saw no
+    // account and answered a bare `authentication_required`, the client's
+    // refresh then failed on a session that no longer existed, and a suspended
+    // person read "your session has ended, sign in again" — learning the real
+    // reason only by trying to sign in. The session is deleted first, so this
+    // is said once; every later request with that token is simply unknown.
+    //
+    // 401 rather than the 403 sign-in uses: this *ends* a session, and 401 is
+    // what the client treats as "the session is over".
+    next(
+      new UnauthorizedError(
+        decision.reason ?? 'This account can no longer sign in',
+        decision.reasonKey ?? 'authentication_required',
+      ),
+    );
     return;
   }
 
-  if (realm.id === 'staff') req.user = { id: account.id };
+  if (realm.id === 'staff') req.user = { id: account.id, status: account.status };
   else req.customer = { id: account.id };
   req.session = { id: lookup.session.id, token };
   next();

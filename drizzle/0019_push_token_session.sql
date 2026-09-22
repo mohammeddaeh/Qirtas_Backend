@@ -1,0 +1,1 @@
+ALTER TABLE "device_push_tokens" ADD COLUMN "session_id" integer;

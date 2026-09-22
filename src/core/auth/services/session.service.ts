@@ -1,6 +1,7 @@
 import { authConfig } from '../config/auth-config.js';
 import { generateSessionToken, hashToken } from './token.service.js';
 import * as sessionsRepository from '../repositories/sessions.repository.js';
+import * as tombstonesRepository from '../repositories/session-tombstones.repository.js';
 import type { SessionRow } from '../schemas/sessions.schema.js';
 import type { AuthRealm } from '../realm.js';
 
@@ -70,11 +71,28 @@ export async function createSession(
   return { session, token };
 }
 
-/** Why a presented token was not accepted. Callers translate this into a response; the distinction never reaches the client verbatim. */
-export type SessionRejection = 'unknown' | 'idle' | 'expired';
+/** Why a presented token was not accepted. Callers translate this into a response; only `revoked` reaches the client, with its [SessionRevokeReason]. */
+export type SessionRejection = 'unknown' | 'idle' | 'expired' | 'revoked';
+
+/**
+ * Why a session was ended **on purpose** — what the signed-out device is told.
+ * Recorded as a tombstone (`session_tombstones`) because the row itself is gone.
+ */
+export type SessionRevokeReason =
+  /** The owner ended it from another of their devices ("this device" or "all others"). */
+  | 'signed_out_elsewhere'
+  /** The owner changed their password and chose to end the other sessions. */
+  | 'password_changed'
+  /** A password reset — every session ends, whoever held it. */
+  | 'password_reset'
+  /** The account's email changed; the other sessions ended with it. */
+  | 'email_changed'
+  /** An administrator acted on the account (today: a second-factor reset). */
+  | 'admin_reset';
 
 export type SessionLookup =
-  { ok: true; session: SessionRow } | { ok: false; reason: SessionRejection };
+  | { ok: true; session: SessionRow }
+  | { ok: false; reason: SessionRejection; revokeReason?: SessionRevokeReason };
 
 /**
  * Resolves a presented bearer token to a live session, deleting it if it has
@@ -96,8 +114,16 @@ export type SessionLookup =
  * a signed-out user.
  */
 export async function resolveToken(realm: AuthRealm, token: string): Promise<SessionLookup> {
-  const session = await sessionsRepository.findByTokenHash(realm, hashToken(token));
-  if (!session) return { ok: false, reason: 'unknown' };
+  const tokenHash = hashToken(token);
+  const session = await sessionsRepository.findByTokenHash(realm, tokenHash);
+  if (!session) {
+    // Unknown to the sessions table — but maybe ended on purpose, in which case
+    // the device is owed the reason rather than a bare 401.
+    const revokeReason = await tombstonesRepository.findReason(realm, tokenHash);
+    return revokeReason
+      ? { ok: false, reason: 'revoked', revokeReason: revokeReason as SessionRevokeReason }
+      : { ok: false, reason: 'unknown' };
+  }
 
   const now = Date.now();
 
@@ -200,6 +226,11 @@ export async function revokeById(
 ): Promise<boolean> {
   const session = await sessionsRepository.findById(realm, sessionId);
   if (!session || session.user_id !== userId) return false;
+  await tombstonesRepository.insertMany(
+    realm,
+    [{ tokenHash: session.token_hash, expiresAt: session.expires_at }],
+    'signed_out_elsewhere' satisfies SessionRevokeReason,
+  );
   await sessionsRepository.deleteById(realm, sessionId);
   return true;
 }
@@ -215,9 +246,28 @@ export async function revokeById(
 export async function revokeAllForUser(
   realm: AuthRealm,
   userId: number,
+  reason: SessionRevokeReason,
   exceptSessionId?: number,
 ): Promise<number> {
-  return sessionsRepository.deleteAllByUserId(realm, userId, exceptSessionId);
+  // [reason] is required, not defaulted: every caller ends sessions for a
+  // different reason and the device is told which. A default would be the
+  // reason nobody chose.
+  const ended = await sessionsRepository.deleteAllByUserId(realm, userId, exceptSessionId);
+  await tombstonesRepository.insertMany(
+    realm,
+    ended.map((r) => ({ tokenHash: r.token_hash, expiresAt: r.expires_at })),
+    reason,
+  );
+  return ended.length;
+}
+
+/** Why [token]'s session was ended on purpose, if it was — for paths that resolve the token themselves (refresh). */
+export async function revokeReasonFor(
+  realm: AuthRealm,
+  token: string,
+): Promise<SessionRevokeReason | undefined> {
+  const reason = await tombstonesRepository.findReason(realm, hashToken(token));
+  return reason as SessionRevokeReason | undefined;
 }
 
 export function listSessions(realm: AuthRealm, userId: number): Promise<SessionRow[]> {
@@ -225,6 +275,8 @@ export function listSessions(realm: AuthRealm, userId: number): Promise<SessionR
 }
 
 /** Housekeeping for sessions whose owners never return — the per-request path already removes the ones that are presented. */
-export function purgeExpired(realm: AuthRealm): Promise<number> {
+export async function purgeExpired(realm: AuthRealm): Promise<number> {
+  // Tombstones die with the deadline of the session they explain.
+  await tombstonesRepository.deleteExpired();
   return sessionsRepository.deleteExpired(realm);
 }

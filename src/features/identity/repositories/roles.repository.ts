@@ -41,12 +41,16 @@ export function findMany(
   );
   if (filter.category !== undefined) conditions.push(eq(rolesTable.category, filter.category));
   if (filter.is_active !== undefined) conditions.push(eq(rolesTable.is_active, filter.is_active));
-  if (filter.assignable === true && actorLevel !== null && actorLevel !== undefined) {
-    // Mirrors assertActorOutranksRole exactly: a role is assignable when it
-    // carries no level, or sits strictly BELOW the actor's (lower = higher
-    // authority, so "below" means a greater number).
+  if (filter.assignable === true && actorLevel !== undefined) {
+    // Mirrors `canGrantRoleLevel` exactly: a role is assignable when it carries
+    // no level, or sits strictly BELOW the actor's (lower = higher authority,
+    // so "below" means a greater number). An actor with no level of their own
+    // grants only level-less roles — the catalogue used to show them every
+    // role, matching a guard that let them assign every role.
     conditions.push(
-      sql`(${rolesTable.level} IS NULL OR ${rolesTable.level} > ${actorLevel})` as SQL,
+      actorLevel === null
+        ? (sql`${rolesTable.level} IS NULL` as SQL)
+        : (sql`(${rolesTable.level} IS NULL OR ${rolesTable.level} > ${actorLevel})` as SQL),
     );
   }
 

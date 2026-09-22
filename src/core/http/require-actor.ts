@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import { UnauthorizedError } from './api-error.js';
+import { ForbiddenError, UnauthorizedError } from './api-error.js';
 import { markAccess } from './route-marker.js';
 
 /**
@@ -50,3 +50,36 @@ export function buildActorContext(req: Request, actorUserId: number): RequestAct
     branchContext: null,
   };
 }
+
+/**
+ * A signed-in staff account that has been **approved** — `requireAuth` plus
+ * `status === 'active'`.
+ *
+ * ## Why `requireAuth` was not enough
+ *
+ * A staff session is admitted before approval on purpose: `pending_verification`,
+ * `pending_approval` and `rejected` accounts sign in so they can enter their
+ * code, watch their request and resubmit (`canSignIn`). The stated rule was
+ * that such a session "unlocks nothing" — true of every `requirePermission`
+ * route, because an unapproved account holds no assignment. But `requireAuth`
+ * means *any* staff session, so the routes guarded by it alone (the branch
+ * list, the permission catalogue, data export) answered an applicant the
+ * organisation had not accepted — or had just rejected.
+ *
+ * `requireAuth` is left as it is: the account's own routes (`/users/me`,
+ * resubmission) are exactly what an applicant needs.
+ */
+export function requireApprovedStaff(req: Request, _res: Response, next: NextFunction): void {
+  requireActorId(req);
+  if (req.user?.status !== 'active') {
+    throw new ForbiddenError(
+      'This account has not been approved yet',
+      { account_status: req.user?.status },
+      'account_not_approved',
+    );
+  }
+  next();
+}
+
+// Still "any signed-in member" to the permission checker — no key is involved.
+markAccess(requireApprovedStaff, { kind: 'authenticated' });

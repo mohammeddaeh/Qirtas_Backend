@@ -24,6 +24,7 @@ export * from '../auth/schemas/sessions.schema.js';
 export * from '../auth/schemas/verification-tokens.schema.js';
 export * from '../auth/schemas/account-emails.schema.js';
 export * from '../auth/schemas/mfa.schema.js';
+export * from '../auth/schemas/session-tombstones.schema.js';
 export * from '../notifications/schemas/device-push-tokens.schema.js';
 export * from '../../features/customers/schemas/customers.schema.js';
 export * from '../../features/customers/schemas/customer-addresses.schema.js';

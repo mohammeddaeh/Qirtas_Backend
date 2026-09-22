@@ -106,16 +106,21 @@ export async function deleteAllByUserId(
   realm: AuthRealm,
   userId: number,
   exceptSessionId?: number,
-): Promise<number> {
-  const rows = await db
+): Promise<Array<{ id: number; token_hash: string; expires_at: Date }>> {
+  // Returns what was ended, not a count: the caller records a tombstone per
+  // session, keyed by the hash the device will present next.
+  return db
     .delete(realm.sessions)
     .where(
       exceptSessionId === undefined
         ? eq(realm.sessions.user_id, userId)
         : and(eq(realm.sessions.user_id, userId), ne(realm.sessions.id, exceptSessionId)),
     )
-    .returning({ id: realm.sessions.id });
-  return rows.length;
+    .returning({
+      id: realm.sessions.id,
+      token_hash: realm.sessions.token_hash,
+      expires_at: realm.sessions.expires_at,
+    });
 }
 
 /** Drops rows past their hard deadline. Idle expiry is handled per-request; this catches sessions nobody comes back to. */

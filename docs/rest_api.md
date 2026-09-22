@@ -130,14 +130,17 @@ Accept-language: ar | en
 
 ### 7.1a إبطال فوري عند تعطيل/تعليق المستخدم (`users.status`)
 
-✅ **مفعّل** (2026-07-27) — كل طلب مُصادَق يتحقق أيضاً من `users.status` لصاحب الجلسة (`JOIN` مباشر بـ`core/middleware/auth.ts`)، ليس فقط من وجود التوكن. أي حالة غير `active` (`suspended`/`disabled`/`rejected`/`pending_approval`) تُعامَل مطابقة تماماً لتوكن غير موجود (`req.user = null` → `401` عبر `requireAuth`/`requirePermission`)، **مع حذف صفّ الجلسة من `sessions` بنفس اللحظة** (تنظيف استباقي، يمنع إعادة نفس الفحص الفاشل لاحقاً). هذا يسد فجوة كانت موجودة سابقاً: قبل هذا التاريخ، تعطيل مستخدم (`POST /:id/disable`) لم يكن يفعل شيئاً لجلسته النشطة الحالية — كان يبقى قادراً على العمل حتى انتهاء TTL (افتراضياً 7 أيام). الآن: أول طلب تالٍ من المستخدم المُعطَّل (أي endpoint) يُرفض فوراً. مصدر القرار الكامل: [docs/reference/session_permission_integrity.md](../../docs/reference/session_permission_integrity.md) §5/§10.
+✅ **مفعّل** (2026-07-27) — كل طلب مُصادَق يتحقق أيضاً من `users.status` لصاحب الجلسة (`JOIN` مباشر بـ`core/middleware/auth.ts`)، ليس فقط من وجود التوكن. أي حالة غير `active` (`suspended`/`disabled`/`rejected`/`pending_approval`) تُعامَل مطابقة تماماً لتوكن غير موجود (`req.user = null` → `401` عبر `requireAuth`/`requirePermission`)، **مع حذف صفّ الجلسة من `sessions` بنفس اللحظة** (تنظيف استباقي، يمنع إعادة نفس الفحص الفاشل لاحقاً). هذا يسد فجوة كانت موجودة سابقاً: قبل هذا التاريخ، تعطيل مستخدم (`POST /:id/disable`) لم يكن يفعل شيئاً لجلسته النشطة الحالية — كان يبقى قادراً على العمل حتى انتهاء TTL (افتراضياً 7 أيام). الآن: أول طلب تالٍ من المستخدم المُعطَّل (أي endpoint) يُرفض فوراً.
+
+**تحديث 2026-09-22 — الرفض يحمل سببه**: الحالة تُقرأ عبر `AccountStore.canSignIn` (للموظف والزبون)، و`pending_approval`/`rejected` **مسموح لها** بالجلسة (شاشة الانتظار داخل التطبيق). والطلب الأول بعد الرفض لم يعد يُكمل كمجهول: يردّ `401` بـ`message_key: account_suspended | account_disabled` **مرة واحدة** (الجلسة تُحذف معه)، **حتى على المسار العام**. كان يُكمل كمجهول فيصل العميلَ `authentication_required` عارياً، ويقرأ المعلَّق «انتهت جلستك» ولا يعرف السبب إلا بمحاولة دخول. العميل يُنهي الجلسة **بلا محاولة تجديد** ويعرض السبب. **والإنهاء المتعمَّد كذلك** (2026-09-22، `session_tombstones`): توكن جلسةٍ أُبطلت عمداً يُجاب `401 session_revoked` + `data.revoke_reason` ∈ `signed_out_elsewhere` (من جهاز آخر) · `password_changed` · `password_reset` · `email_changed` · `admin_reset` (إعادة ضبط MFA بيد أدمن) — بكل طلب وبـ`POST /auth/refresh` معاً، حتى الموعد النهائي الأصلي للجلسة. الانتهاء بالمهلة والخروج المختار يبقيان 401 عادياً. مصدر القرار الكامل: [docs/reference/session_permission_integrity.md](../../docs/reference/session_permission_integrity.md) §5/§10.
 
 ### 7.2 حماية كل Endpoint — ثلاث مستويات
 
 | المستوى | الدالة | يعني |
 |---|---|---|
 | **عام (Public)** | لا شيء | لا يتطلب توكن إطلاقاً — فقط `POST /register`, `POST /login`, `POST /bootstrap-super-admin`, `POST /logout` |
-| **مسجّل دخول فقط** | `requireAuth` | يتطلب توكن صالح، بدون فحص صلاحية محدّدة — تُستخدم لعمليات القراءة (`GET`) بمعظمها |
+| **مسجّل دخول فقط** | `requireAuth` | يتطلب توكن موظف صالح **بأي حالة يُسمح لها بالجلسة** (بما فيها `pending_*`/`rejected`) — لمسارات الحساب نفسه (`/users/me`، إعادة الإرسال) |
+| **موظف معتمَد** (2026-09-22) | `requireApprovedStaff` | كالسابق **و** `status === 'active'`، وإلا `403 account_not_approved`. على `GET /branches` · `GET /branches/:id` · `GET /permissions` · `/data-transfer/*` — كانت `requireAuth` فكان المتقدّم (بل المرفوض) يقرأ فروع المنظمة وكتالوج صلاحياتها ويصدّر بياناتها |
 | **صلاحية محدّدة (RBAC)** | `requirePermission('<key>')` | يتطلب توكن صالح **و** أن يملك اليوزر المفتاح المطلوب ضمن اتحاد (union) صلاحيات كل تعييناته الفعّالة (`findAllEffectivePermissionKeys`, `user-role-assignments.repository.ts`) — Allow-only، بدون تقييد فرع لعمليات identity نفسها (branch-agnostic) |
 
 **مفاتيح صلاحيات identity الجديدة** (أُضيفت للكتالوج 2026-07-23 — `core/db/seed.ts`، Super Admin يملكها تلقائياً):
@@ -512,6 +515,22 @@ Accept-language: ar | en
 ```
 
 عند الموافقة: `role_id`/`branch_id`/`ownership_percentage` اختيارية — تفتراضياً تُستخدم القيم المطلوبة أصلاً وقت التسجيل، والأدمن يقدر يغيّرها بالكامل قبل التفعيل.
+
+**`PUT /:id/overrides`** (`users.access`) — body `{ "overrides": [{ "key", "effect": "allow"|"deny", "note"? }] }`، يستبدل المجموعة كاملة. **قيود الكاتب (2026-09-22)** — كان المفتاح وحده يكفي، فمن يملكه يمنح نفسه أي صلاحية، ويسحب صلاحيات السوبر أدمن، ويعطي صلاحيات لحساب `pending_approval` متجاوزاً الموافقة. كلها `403` بـ`message_key`:
+
+| `message_key` | متى |
+|---|---|
+| `user_root_protected` | الهدف حساب جذري محمي والكاتب ليس صاحبه |
+| `override_target_outranks_actor` | للهدف مستوى سلطة والكاتب لا يعلوه (أو بلا مستوى) — نفس قاعدة إسناد الدور. الكتابة على النفس مستثناة |
+| `override_target_not_active` | `allow` **جديد** على حساب غير `active` (الـ`deny` مسموح دائماً) |
+| `override_key_not_held` | `allow` **جديد** بمفتاح لا يملكه الكاتب؛ `data.keys` يسمّيها |
+| `authz_self_lockout` | (قائم) حظر `users.access`/`roles.edit` عن النفس |
+
+«جديد» = غير موجود كـ`allow` بالمجموعة الحالية: إعادة إرسال استثناء منحه غيرك لا تُرفض، وإلا صار الحساب غير قابل للتعديل ممن هو دون مانحه.
+
+**قاعدة المستوى على كل مسار يمنح دوراً (2026-09-22)** — `canGrantRoleLevel` (`features/identity/authority-level.ts`): دورٌ بمستوى لا يمنحه إلا من يعلوه **بصرامة**، و**من لا مستوى له لا يمنح دوراً ذا مستوى** (كان يُعفى، فدور بلا سلطة يملك `users.access` يُسند «المدير العام»). تُطبَّق الآن على: إنشاء تعيين · النقل · **`POST /users`** (إنشاء حساب بدور) · **`decide-registration`** (الموافقة — حتى على الدور الذي طلبه المتقدّم) · إنشاء/تعديل/أرشفة دور. الأول والثاني كانا بلا فحص: `users.create` أو `users.approve` وحدهما صنعا مديراً عاماً بكلمة مرور يختارها المنفّذ. الرفض `403 role_above_actor_level` (و`role_edit_above_actor_level` لتعديل الدور). و`GET /roles?assignable=true` يعكس القاعدة نفسها حرفياً.
+
+**`PUT /roles/:id/permissions` و`POST /roles`**: `403 role_key_not_held` لمفتاح **مضاف** لا يملكه المنفّذ (`data.keys`). كان `roles.edit` مفتاحاً شاملاً: أضف `users.manage` لدور أدنى منك ثم أسنده لنفسك. الاستنساخ يُحسب إضافة كاملة.
 
 ### Authentication & Sessions — `/api/v1/auth` ✅ جديد 2026-08-11
 
@@ -1009,7 +1028,7 @@ Accept-language: ar | en
 - `POST /users/login` — قد يردّ الآن `{account_type:'staff', mfa_required:true, mfa_token}` (بلا `token`) لمن سجّل مصادقة. ردّ الجلسة الكاملة وردّ `GET /users/me` يحملان **`mfa_setup_required: bool`**.
 - `POST /users/login/mfa` — عام. `{mfa_token, code, device_info?}` ← نفس جسم الدخول الكامل. `401 mfa_challenge_invalid` (منتهٍ/مزوَّر) · `401 mfa_code_invalid` · `429 mfa_locked` (5 أخطاء ← 15 دقيقة).
 - `GET /auth/mfa` — `{enrolled, required, recovery_codes_remaining}`.
-- `POST /auth/mfa/setup` — `{secret, otpauth_uri}` (السرّ base32 للإدخال اليدوي، والـURI لرمز QR). `409 mfa_already_enrolled`.
+- `POST /auth/mfa/setup` — `{secret, otpauth_uri}` (السرّ base32 للإدخال اليدوي، والـURI لرمز QR). `409 mfa_already_enrolled`. **`403 mfa_not_enabled`** (2026-09-22) ما لم يُضبط `MFA_ENABLED=true` أو `MFA_ENFORCE=true` — ونفسه على `/confirm`.
 - `POST /auth/mfa/confirm {code}` — `{recovery_codes:[10]}` **تُعرض مرة واحدة**.
 - `POST /auth/mfa/recovery-codes {code}` — رمز تطبيق أو استرداد ← عشرة جديدة، القديمة تُبطل.
 - `POST /auth/mfa/disable {password, code}` — `422 current_password_wrong` · `409 mfa_required_by_role`.

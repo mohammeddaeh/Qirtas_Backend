@@ -66,6 +66,10 @@ export const MESSAGES = {
   },
 
   // --- Sessions ------------------------------------------------------------
+  session_revoked: {
+    en: 'You were signed out of this device',
+    ar: 'تم تسجيل خروجك من هذا الجهاز',
+  },
   session_expired: {
     en: 'Your session has expired — please sign in again',
     ar: 'انتهت صلاحية جلستك — سجّل الدخول من جديد',
@@ -331,6 +335,30 @@ export const MESSAGES = {
   authz_self_lockout: {
     en: 'You cannot deny yourself a permission you need to manage access',
     ar: 'لا يمكنك حظر صلاحية عن نفسك تحتاجها لإدارة الصلاحيات',
+  },
+  role_key_not_held: {
+    en: 'You cannot give a role a permission you do not hold yourself',
+    ar: 'لا يمكنك إضافة صلاحية لدور وأنت لا تملكها',
+  },
+  mfa_not_enabled: {
+    en: 'Two-factor authentication is not available yet',
+    ar: 'المصادقة الثنائية غير متاحة بعد',
+  },
+  account_not_approved: {
+    en: 'This account has not been approved yet',
+    ar: 'لم تتم الموافقة على هذا الحساب بعد',
+  },
+  override_key_not_held: {
+    en: 'You cannot grant a permission you do not hold yourself',
+    ar: 'لا يمكنك منح صلاحية لا تملكها أنت',
+  },
+  override_target_outranks_actor: {
+    en: 'You cannot change the permissions of an account at or above your own authority level',
+    ar: 'لا يمكنك تعديل صلاحيات حساب بمستوى سلطة مساوٍ لمستواك أو أعلى منه',
+  },
+  override_target_not_active: {
+    en: 'Permissions can only be granted to an active account',
+    ar: 'لا تُمنح الصلاحيات إلا لحساب نشط',
   },
   ownership_sum_exceeded: {
     en: 'Ownership percentages for this scope would exceed 100%',

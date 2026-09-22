@@ -10,6 +10,7 @@ export async function upsert(params: {
   token: string;
   platform: string;
   language: string | null;
+  sessionId: number | null;
 }): Promise<void> {
   const now = new Date();
   await db
@@ -20,6 +21,7 @@ export async function upsert(params: {
       token: params.token,
       platform: params.platform,
       language: params.language,
+      session_id: params.sessionId,
     })
     .onConflictDoUpdate({
       target: devicePushTokensTable.token,
@@ -28,6 +30,7 @@ export async function upsert(params: {
         account_id: params.accountId,
         platform: params.platform,
         language: params.language,
+        session_id: params.sessionId,
         last_seen_at: now,
       },
     });
@@ -62,6 +65,26 @@ export async function removeOwned(
         eq(devicePushTokensTable.account_id, accountId),
       ),
     );
+}
+
+/**
+ * Every device of an account that is being **deleted** — run inside the delete
+ * transaction by the caller.
+ *
+ * There is no FK to cascade from (the row points at one of two tables), so
+ * without this the rows outlived the account. Self-delete is where it showed:
+ * the device a customer deleted their account on stayed registered to an id
+ * that no longer exists, and nothing ever removed it — no sign-out follows a
+ * deletion, and FCM only reports a token dead once the app is uninstalled.
+ */
+export async function removeAllForAccount(
+  tx: Pick<typeof db, 'delete'>,
+  realm: RealmId,
+  accountId: number,
+): Promise<void> {
+  await tx
+    .delete(devicePushTokensTable)
+    .where(and(eq(devicePushTokensTable.realm, realm), eq(devicePushTokensTable.account_id, accountId)));
 }
 
 /** FCM said these are dead (uninstalled / expired) — stop sending to them. */

@@ -1,6 +1,11 @@
-import { ForbiddenError } from '../../http/api-error.js';
+import { ForbiddenError, NotFoundError } from '../../http/api-error.js';
 import { isEnforced, listEnforcedPermissions } from '../registry.js';
 import * as overridesRepository from '../repositories/overrides.repository.js';
+import { assertOverrideAllowed } from '../override-rules.js';
+// Same composition-root-style exception the controller already takes — see
+// `overrides.controller.ts`.
+import * as usersRepository from '../../../features/identity/repositories/users.repository.js';
+import * as assignmentsRepository from '../../../features/identity/repositories/user-role-assignments.repository.js';
 
 /**
  * Per-account exceptions — read and write.
@@ -68,6 +73,27 @@ export async function replaceForUser(
   overrides: Array<{ key: string; effect: 'allow' | 'deny'; note?: string | null }>,
 ): Promise<void> {
   assertNoSelfLockout(actorUserId, userId, overrides);
+
+  const target = await usersRepository.findById(userId);
+  if (!target) throw new NotFoundError('User not found');
+
+  const [existing, actorKeys, actorLevel, targetLevel] = await Promise.all([
+    overridesRepository.findEffectsForUser(userId),
+    assignmentsRepository.findAllEffectivePermissionKeys(actorUserId),
+    assignmentsRepository.findHighestAuthorityLevel(actorUserId),
+    assignmentsRepository.findHighestAuthorityLevel(userId),
+  ]);
+
+  assertOverrideAllowed({
+    actorUserId,
+    target: { id: target.id, status: target.status, isRootProtected: target.is_root_protected },
+    actorKeys,
+    actorLevel,
+    targetLevel,
+    existing,
+    requested: overrides,
+  });
+
   await overridesRepository.replaceForUser(userId, overrides);
 }
 

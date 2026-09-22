@@ -6,7 +6,7 @@ import { publicRoute } from '../../../core/http/route-marker.js';
 import { requirePermission } from '../../../core/http/require-permission.js';
 import { loginRateLimit, mfaLoginRateLimit } from '../../../core/middleware/login-rate-limit.js';
 import { passwordResetRateLimit } from '../../../core/middleware/password-reset-rate-limit.js';
-import { registerRateLimit } from '../../../core/middleware/register-rate-limit.js';
+import { bootstrapRateLimit, registerRateLimit } from '../../../core/middleware/register-rate-limit.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 import {
   userIdParamsSchema,
@@ -188,6 +188,7 @@ usersRouter.post(
   '/bootstrap-super-admin',
   publicRoute,
   validate(bootstrapSuperAdminBodySchema, 'body'),
+  bootstrapRateLimit,
   asyncHandler(usersController.bootstrapSuperAdmin),
 );
 

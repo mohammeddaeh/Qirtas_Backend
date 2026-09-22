@@ -1,10 +1,11 @@
 import { logger } from '../logger/logger.js';
 import { isSupportedLang, type Lang } from '../i18n/messages.js';
-import type { RealmId } from '../auth/realm.js';
+import { getRealm, type RealmId } from '../auth/realm.js';
 import { emailSender } from '../auth/ports/email-sender.js';
 import * as tokensRepository from './repositories/push-tokens.repository.js';
 import { pushSender } from './ports/push-sender.js';
-import { notificationText, type NotificationEvent, type NotificationParams } from './events.js';
+import { NOTIFICATION, notificationText, type NotificationEvent, type NotificationParams } from './events.js';
+import * as sessionsRepository from '../auth/repositories/sessions.repository.js';
 
 /**
  * Tells a person about a decision on their account: **push to every device AND
@@ -53,8 +54,44 @@ async function deliver(params: NotifyParams): Promise<void> {
   await Promise.allSettled([sendPushes(params), sendEmail(params)]);
 }
 
+/**
+ * Whether a device still speaks for the account: the session that registered
+ * it is alive.
+ *
+ * A signed-out device used to keep receiving the account's pushes. A deliberate
+ * sign-out unregisters the device first; a session that *ended* — timed out,
+ * revoked from another device, reset with the password, refused on suspension —
+ * left the device registered, so whoever held the phone next read that
+ * account's decisions and their reasons.
+ *
+ * Checked at send time rather than by deleting rows at each place a session
+ * ends: those places are many (expiry is lazy, revocation, reset, the status
+ * refusal in `auth` middleware), and one forgotten would bring the leak back.
+ */
+async function sessionIsLive(realm: RealmId, sessionId: number | null): Promise<boolean> {
+  if (sessionId === null) return true;
+  const session = await sessionsRepository.findById(getRealm(realm), sessionId);
+  return session !== undefined && session.expires_at > new Date();
+}
+
+/**
+ * The one event a device receives after its session ended: a suspended
+ * person's session is deleted on their next request, and this is how their
+ * phone learns they may sign in again.
+ */
+const DELIVERED_WITHOUT_SESSION: ReadonlySet<NotificationEvent> = new Set([
+  NOTIFICATION.accountReactivated,
+]);
+
 async function sendPushes(params: NotifyParams): Promise<void> {
-  const devices = await tokensRepository.findByAccount(params.realm, params.accountId);
+  const registered = await tokensRepository.findByAccount(params.realm, params.accountId);
+  const devices = DELIVERED_WITHOUT_SESSION.has(params.event)
+    ? registered
+    : (
+        await Promise.all(
+          registered.map(async (d) => ((await sessionIsLive(params.realm, d.session_id)) ? d : null)),
+        )
+      ).filter((d): d is (typeof registered)[number] => d !== null);
   const dead: string[] = [];
   await Promise.all(
     devices.map(async (device) => {
@@ -93,6 +130,8 @@ export async function registerDevice(params: {
   token: string;
   platform: string;
   language: string | null;
+  /** `req.session.id` — which session speaks for this device (see [sessionIsLive]). */
+  sessionId: number | null;
 }): Promise<void> {
   await tokensRepository.upsert(params);
 }

@@ -1,7 +1,7 @@
 import express, { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../../http/async-handler.js';
-import { requireAuth } from '../../http/require-actor.js';
+import { requireApprovedStaff } from '../../http/require-actor.js';
 import { validate } from '../../validation/validate.js';
 import { uploadTransferFile } from '../middleware/upload.js';
 import * as controller from '../controllers/data-transfer.controller.js';
@@ -10,7 +10,7 @@ import * as controller from '../controllers/data-transfer.controller.js';
  * `/api/v1/data-transfer/*` — generic, and mounted once for every resource that
  * will ever exist in this application.
  *
- * `requireAuth` before `validate` on every route, matching the rule in
+ * `requireApprovedStaff` before `validate` on every route, matching the rule in
  * `core/http/require-actor.ts`: an anonymous caller is refused before their
  * input is parsed. None of these routes is ever public — an export is a bulk
  * read of somebody's data, which is the last thing to leave unauthenticated.
@@ -33,18 +33,18 @@ const resourceParamsSchema = z.object({
     .regex(/^[a-z0-9_-]+$/, 'Invalid resource name'),
 });
 
-dataTransferRouter.get('/resources', requireAuth, asyncHandler(controller.listResources));
+dataTransferRouter.get('/resources', requireApprovedStaff, asyncHandler(controller.listResources));
 
 dataTransferRouter.get(
   '/:resource/export',
-  requireAuth,
+  requireApprovedStaff,
   validate(resourceParamsSchema, 'params'),
   asyncHandler(controller.exportResource),
 );
 
 dataTransferRouter.get(
   '/:resource/template',
-  requireAuth,
+  requireApprovedStaff,
   validate(resourceParamsSchema, 'params'),
   asyncHandler(controller.downloadTemplate),
 );
@@ -68,9 +68,9 @@ dataTransferRouter.post(
   '/:resource/import',
   // Order matters: authentication, then the path check, then the body.
   // Parsing a 5 MB body before deciding the caller is anonymous does the work
-  // an attacker wanted done — `requireAuth` first means an unauthenticated
+  // an attacker wanted done — `requireApprovedStaff` first means an unauthenticated
   // flood is refused at the header.
-  requireAuth,
+  requireApprovedStaff,
   validate(resourceParamsSchema, 'params'),
   // Both parsers run, and each ignores the other's content type: JSON for the
   // edit loop, multipart for the first upload.

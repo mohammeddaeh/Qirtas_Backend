@@ -5,6 +5,7 @@ import { likeTerm } from '../../../core/db/like-term.js';
 import type { PaginationParams } from '../../../core/pagination/pagination.js';
 import type { CustomersFilterQuery } from '../dtos/customers.dto.js';
 import * as accountEmails from '../../../core/auth/repositories/account-emails.repository.js';
+import * as pushTokens from '../../../core/notifications/repositories/push-tokens.repository.js';
 import {
   customerActivityLogTable,
   customersTable,
@@ -132,7 +133,8 @@ export function findMany(
 /**
  * Destroys the row and its email claim in one transaction.
  *
- * Sessions and verification codes go with it (`ON DELETE CASCADE`); activity
+ * Sessions and verification codes go with it (`ON DELETE CASCADE`), push
+ * tokens explicitly (no FK to cascade from); activity
  * rows survive with `customer_id` nulled, so "someone tried to sign in as X"
  * stays findable after X is gone. Reachable only after the service has checked
  * the account is disabled — and, once orders exist, that nothing points at it.
@@ -141,6 +143,7 @@ export async function remove(id: number): Promise<void> {
   await db.transaction(async (tx) => {
     await tx.delete(customersTable).where(eq(customersTable.id, id));
     await accountEmails.release(tx, 'customer', id);
+    await pushTokens.removeAllForAccount(tx, 'customer', id);
   });
 }
 

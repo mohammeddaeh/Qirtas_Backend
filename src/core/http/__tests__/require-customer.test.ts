@@ -56,13 +56,13 @@ describe('realm selection by token prefix', () => {
 
 describe('access tiers', () => {
   it('staff is not a customer, and a customer is not staff', () => {
-    expect(actorOf(req({ user: { id: 1 }, customer: null })).realm).toBe('staff');
+    expect(actorOf(req({ user: { id: 1, status: 'active' }, customer: null })).realm).toBe('staff');
     expect(actorOf(req({ user: null, customer: { id: 2 } })).realm).toBe('customer');
     expect(() => actorOf(req({ user: null, customer: null }))).toThrow();
     // a staff session must not satisfy the customer tier
-    expect(() => requireCustomer(req({ user: { id: 1 }, customer: null }), {} as never, () => {})).toThrow();
+    expect(() => requireCustomer(req({ user: { id: 1, status: 'active' }, customer: null }), {} as never, () => {})).toThrow();
     // …and both realms satisfy "signed in"
-    expect(() => requireSignedIn(req({ user: { id: 1 }, customer: null }), {} as never, () => {})).not.toThrow();
+    expect(() => requireSignedIn(req({ user: { id: 1, status: 'active' }, customer: null }), {} as never, () => {})).not.toThrow();
   });
 
   it('classifies each guard so check:permissions can see it', () => {
@@ -88,7 +88,7 @@ describe('requireVerifiedCustomer', () => {
 
   it('does not let a staff session through the purchase gate', async () => {
     registerRealm(realmStub('customer', 'c_', new Date()));
-    const err = await run(requireVerifiedCustomer as never, req({ user: { id: 1 }, customer: null }));
+    const err = await run(requireVerifiedCustomer as never, req({ user: { id: 1, status: 'active' }, customer: null }));
     expect(err).toBeInstanceOf(Error);
   });
 });

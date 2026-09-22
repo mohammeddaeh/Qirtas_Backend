@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../../core/http/async-handler.js';
 import { validate } from '../../../core/validation/validate.js';
-import { requireAuth } from '../../../core/http/require-actor.js';
+import { requireApprovedStaff } from '../../../core/http/require-actor.js';
 import { publicRoute } from '../../../core/http/route-marker.js';
 import { requirePermission } from '../../../core/http/require-permission.js';
 import {
@@ -30,7 +30,7 @@ languagesRouter.get(
 
 languagesRouter.get(
   '/:code',
-  requireAuth,
+  requireApprovedStaff,
   validate(languageCodeParamsSchema, 'params'),
   asyncHandler(languagesController.getLanguageByCode),
 );

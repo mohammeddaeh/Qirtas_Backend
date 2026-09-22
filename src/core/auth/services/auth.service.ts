@@ -1,4 +1,5 @@
 import { BusinessError, ForbiddenError, UnauthorizedError } from '../../http/api-error.js';
+import { sessionRevokedError } from '../session-revoked-error.js';
 import type { Lang } from '../../i18n/messages.js';
 import type { AuthAccount } from '../ports/account-store.js';
 import type { AuthRealm } from '../realm.js';
@@ -241,6 +242,10 @@ export async function refresh(
 ): Promise<RefreshResult> {
   const result = await sessionService.rotateSession(realm, token);
   if (!result) {
+    // The same token must not get two different answers: a normal request
+    // says "revoked, because …", so the renewal of it says so too.
+    const revokeReason = await sessionService.revokeReasonFor(realm, token);
+    if (revokeReason) throw sessionRevokedError(revokeReason);
     throw new UnauthorizedError('Your session has expired', 'session_expired');
   }
 
@@ -490,7 +495,7 @@ export async function resetPassword(
   }
 
   await realm.store.updatePasswordHash(account!.id, await hashPassword(params.newPassword));
-  const revoked = await sessionService.revokeAllForUser(realm, account!.id);
+  const revoked = await sessionService.revokeAllForUser(realm, account!.id, 'password_reset');
 
   await recordSecurityEvent({
     realm: realm.id,
@@ -553,7 +558,7 @@ export async function changePassword(
   await verificationService.invalidatePending(realm, account.id, 'password_reset');
 
   const sessionsRevoked = params.revokeOtherSessions
-    ? await sessionService.revokeAllForUser(realm, account.id, params.currentSessionId)
+    ? await sessionService.revokeAllForUser(realm, account.id, 'password_changed', params.currentSessionId)
     : 0;
 
   await recordSecurityEvent({
@@ -608,7 +613,7 @@ export async function revokeOtherSessions(
   currentSessionId: number,
   origin: RequestOrigin,
 ): Promise<number> {
-  const count = await sessionService.revokeAllForUser(realm, accountId, currentSessionId);
+  const count = await sessionService.revokeAllForUser(realm, accountId, 'signed_out_elsewhere', currentSessionId);
 
   await recordSecurityEvent({
     realm: realm.id,

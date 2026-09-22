@@ -615,6 +615,9 @@ export async function createUserByAdmin(
   if (!role.is_active) {
     throw new BusinessError(422, 'Cannot assign an inactive role', 'role_inactive_unassignable');
   }
+  // This path grants a role too — without it, `users.create` alone created a
+  // super admin with a password the actor chose.
+  await assignmentsService.assertActorOutranksRole(actor.userId, role.id);
 
   if (body.ownership_percentage !== undefined) {
     const currentSum = await ownershipsRepository.sumActivePercentage(body.branch_id ?? null);
@@ -728,6 +731,10 @@ export async function decideRegistration(
     );
   const role = await rolesRepository.findById(roleId);
   if (!role) throw new NotFoundError('Role not found');
+  // Approval grants the role — the requested one included: the applicant chose
+  // it from the public catalogue, which says nothing about what THIS reviewer
+  // may hand out.
+  await assignmentsService.assertActorOutranksRole(decidedByUserId, role.id);
 
   const branchId = decision.branch_id !== undefined ? decision.branch_id : user.requested_branch_id;
   const ownershipPercentage =
@@ -790,8 +797,26 @@ export async function decideRegistration(
   return toWireUser(row);
 }
 
+/**
+ * Serialises bootstrap calls within this process.
+ *
+ * The check (`countAll() === 0`) and the insert are separate statements, so two
+ * calls arriving together on a fresh install both saw zero and both created a
+ * root-protected super admin — two accounts nobody can demote, suspend or
+ * delete. Queued here, the second call runs after the first has inserted and
+ * is refused. In-process is enough: bootstrap runs once, on a fresh install,
+ * before anything is scaled out.
+ */
+let bootstrapQueue: Promise<unknown> = Promise.resolve();
+
 /** First-run bootstrap — only callable while zero User rows exist at all. */
-export async function bootstrapSuperAdmin(body: BootstrapSuperAdminBody): Promise<WireUser> {
+export function bootstrapSuperAdmin(body: BootstrapSuperAdminBody): Promise<WireUser> {
+  const run = bootstrapQueue.then(() => bootstrapSuperAdminNow(body));
+  bootstrapQueue = run.catch(() => undefined);
+  return run;
+}
+
+async function bootstrapSuperAdminNow(body: BootstrapSuperAdminBody): Promise<WireUser> {
   const existingCount = await usersRepository.countAll();
   if (existingCount > 0) {
     throw new ForbiddenError(
@@ -1227,6 +1252,6 @@ export async function resetUserMfa(actor: RequestActorContext, userId: number): 
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
   await mfaService.clear('staff', userId);
-  await sessionService.revokeAllForUser(staffAuthRealm, userId);
+  await sessionService.revokeAllForUser(staffAuthRealm, userId, 'admin_reset');
   await auditService.record(actor, AUDIT.userMfaReset, target.user(userId), undefined, undefined);
 }

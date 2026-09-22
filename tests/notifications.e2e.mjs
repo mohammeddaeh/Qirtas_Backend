@@ -142,6 +142,29 @@ await call('POST', `/users/${userId}/suspend`, null, admin);
 await sleep(400);
 chk('a token re-registered by another account no longer notifies the first one', (await pushesTo('BBBBBB02')) === beforeMove);
 
+// ── a device whose session ENDED stops receiving — except reactivation ───────
+// (2026-09-22) A deliberate sign-out unregisters the device itself; a session
+// that ended some other way (here: revoked from another device) left it
+// registered, so whoever held the phone next read the account's decisions.
+const TOKEN_C = `CCCCCC03${'c'.repeat(40)}`;
+await call('POST', `/users/${userId}/reactivate`, null, admin);
+r = await call('POST', '/users/login', { email, password: 'Passw0rd!x' });
+const phoneSession = r.json?.data?.token;
+const phoneSessionId = r.json?.data?.session_id;
+await call('POST', '/auth/push-token', { token: TOKEN_C, platform: 'android', language: 'en' }, phoneSession);
+r = await call('POST', '/users/login', { email, password: 'Passw0rd!x' });
+const laptopSession = r.json?.data?.token;
+r = await call('DELETE', `/auth/sessions/${phoneSessionId}`, null, laptopSession);
+chk('the phone session is revoked from another device', r.status === 200 || r.status === 204, `${r.status}`);
+const beforeEnded = await pushesTo('CCCCCC03');
+await call('POST', `/users/${userId}/suspend`, null, admin);
+await sleep(400);
+chk('a device whose session ended gets no suspension push', (await pushesTo('CCCCCC03')) === beforeEnded);
+await call('POST', `/users/${userId}/reactivate`, null, admin);
+await sleep(400);
+chk('…but reactivation still reaches it — that is how the owner learns', (await pushesTo('CCCCCC03')) > beforeEnded);
+await call('POST', '/auth/push-token/remove', { token: TOKEN_C }, laptopSession);
+
 // cleanup: leave the account active and the admin device unregistered
 await call('POST', `/users/${userId}/reactivate`, null, admin);
 await call('POST', '/auth/push-token/remove', { token: TOKEN_B }, admin);

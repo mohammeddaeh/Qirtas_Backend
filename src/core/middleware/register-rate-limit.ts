@@ -64,3 +64,12 @@ export const registerRateLimit = guard(staffLimiter, 'register-ip');
 
 /** Shopper sign-up — looser, and separate: shoppers share addresses (CGNAT, offices) and must not drain the employees' bucket or the reverse. */
 export const customerRegisterRateLimit = guard(customerLimiter, 'customer-register-ip');
+
+/**
+ * First-run setup. It succeeds at most once per install, so a legitimate
+ * operator needs a handful of attempts; the limit is there because the route
+ * is public and hashes a password on every call — unbounded, it was free CPU
+ * for anyone who found it on a live server. Its own bucket: typos during
+ * setup must not use up an office's staff sign-ups, or the reverse.
+ */
+export const bootstrapRateLimit = guard(makeLimiter(5), 'bootstrap-ip');
