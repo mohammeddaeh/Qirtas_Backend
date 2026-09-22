@@ -1,6 +1,8 @@
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, desc } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findOneById } from '../../../core/db/crud-helpers.js';
+import { usersTable } from '../schemas/users.schema.js';
+import { branchesTable } from '../schemas/branches.schema.js';
 import {
   ownershipsTable,
   type OwnershipRow,
@@ -22,6 +24,59 @@ export async function findActiveByScope(branchScope: number | null): Promise<Own
 }
 
 /** Sum of active percentages for a scope, used by the 100%-cap guard (excludes a given ownership id when editing). */
+/** A row with the names it points at — see [WireOwnership.user_name]. */
+export interface OwnershipWithNamesRow {
+  row: OwnershipRow;
+  user_name: string;
+  branch_name: string | null;
+}
+
+/**
+ * Every active record, or one branch's. `branchScope` undefined = everything.
+ * `leftJoin` on branches: the all-branches scope has no branch to name.
+ */
+export async function findActiveWithNames(branchScope?: number): Promise<OwnershipWithNamesRow[]> {
+  const rows = await db
+    .select({
+      row: ownershipsTable,
+      first: usersTable.first_name,
+      last: usersTable.last_name,
+      branch: branchesTable.name,
+    })
+    .from(ownershipsTable)
+    .innerJoin(usersTable, eq(usersTable.id, ownershipsTable.user_id))
+    .leftJoin(branchesTable, eq(branchesTable.id, ownershipsTable.branch_scope))
+    .where(
+      and(
+        isActiveClause,
+        branchScope === undefined ? sql`true` : eq(ownershipsTable.branch_scope, branchScope),
+      ),
+    )
+    .orderBy(ownershipsTable.branch_scope, desc(ownershipsTable.percentage));
+  return rows.map((r) => ({
+    row: r.row,
+    user_name: `${r.first} ${r.last}`.trim(),
+    branch_name: r.branch,
+  }));
+}
+
+export async function findWithNamesById(id: number): Promise<OwnershipWithNamesRow | undefined> {
+  const rows = await db
+    .select({
+      row: ownershipsTable,
+      first: usersTable.first_name,
+      last: usersTable.last_name,
+      branch: branchesTable.name,
+    })
+    .from(ownershipsTable)
+    .innerJoin(usersTable, eq(usersTable.id, ownershipsTable.user_id))
+    .leftJoin(branchesTable, eq(branchesTable.id, ownershipsTable.branch_scope))
+    .where(eq(ownershipsTable.id, id))
+    .limit(1);
+  const r = rows[0];
+  return r && { row: r.row, user_name: `${r.first} ${r.last}`.trim(), branch_name: r.branch };
+}
+
 export async function sumActivePercentage(
   branchScope: number | null,
   excludingId?: number,

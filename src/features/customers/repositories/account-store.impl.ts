@@ -6,6 +6,7 @@ import type {
 } from '../../../core/auth/ports/account-store.js';
 import { BusinessError } from '../../../core/http/api-error.js';
 import type { CustomerRow } from '../schemas/customers.schema.js';
+import { TERMS_VERSION } from '../terms-version.js';
 import * as customersRepository from './customers.repository.js';
 
 /**
@@ -50,6 +51,8 @@ class CustomerAccountStore implements AccountStore {
       last_name?: string;
       phone?: string | null;
       preferred_branch_id?: number | null;
+      terms_accepted?: boolean;
+      language?: string | null;
     };
 
     try {
@@ -61,6 +64,10 @@ class CustomerAccountStore implements AccountStore {
         password_hash: data.passwordHash,
         email_verified_at: data.emailVerifiedAt,
         preferred_branch_id: profile.preferred_branch_id ?? null,
+        preferred_language: profile.language ?? null,
+        ...(profile.terms_accepted
+          ? { terms_accepted_at: new Date(), terms_version: TERMS_VERSION }
+          : {}),
       });
       return toAuthAccount(row);
     } catch (err) {

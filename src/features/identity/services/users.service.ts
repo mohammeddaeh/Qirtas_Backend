@@ -6,6 +6,10 @@ import {
 } from '../../../core/pagination/pagination.js';
 import { hashPassword } from '../../../core/auth/services/password.service.js';
 import * as authService from '../../../core/auth/services/auth.service.js';
+import * as sessionService from '../../../core/auth/services/session.service.js';
+import { notify, NOTIFICATION } from '../../../core/notifications/index.js';
+import * as mfaService from '../../../core/auth/mfa/mfa.service.js';
+import { mfaEnforced } from '../mfa-policy.js';
 import { isEmailVerificationEnabled } from '../../../core/auth/config/auth-config.js';
 import { qirtasAccountStore } from '../repositories/account-store.impl.js';
 import { staffAuthRealm } from '../auth-realm.js';
@@ -34,6 +38,7 @@ import {
   type LoginBody,
   type BootstrapSuperAdminBody,
   type UpdateUserBody,
+  type UpdateOwnProfileBody,
   type CreateUserByAdminBody,
   type UsersFilterQuery,
   type ResubmitRegistrationBody,
@@ -321,6 +326,45 @@ function assertNotArchived(row: UserRow): void {
  * status transitions go through suspend/disable/reactivate/decide-registration,
  * password change is a separate out-of-scope flow, neither is touched here.
  */
+/**
+ * An employee edits their own name, phone and address.
+ *
+ * The profile screen used to be read-only, so fixing a typo in one's own phone
+ * number meant asking an administrator — for a fact only the employee is
+ * qualified to correct. Audited like any other change to the record, with the
+ * actor and the target being the same person.
+ */
+export async function updateOwnProfile(
+  actor: RequestActorContext,
+  body: UpdateOwnProfileBody,
+): Promise<WireUser> {
+  const existing = await usersRepository.findById(actor.userId);
+  if (!existing) throw new NotFoundError('User not found');
+  assertNotArchived(existing);
+
+  const row = await usersRepository.update(actor.userId, {
+    ...(body.first_name !== undefined ? { first_name: body.first_name } : {}),
+    ...(body.last_name !== undefined ? { last_name: body.last_name } : {}),
+    ...(body.phone !== undefined ? { phone: body.phone } : {}),
+    ...(body.address !== undefined ? { address: body.address } : {}),
+  });
+  if (!row) throw new NotFoundError('User not found');
+
+  await auditService.record(
+    actor,
+    AUDIT.userUpdate,
+    target.user(actor.userId),
+    {
+      first_name: existing.first_name,
+      last_name: existing.last_name,
+      phone: existing.phone,
+      address: existing.address,
+    },
+    { first_name: row.first_name, last_name: row.last_name, phone: row.phone, address: row.address },
+  );
+  return toWireUser(row);
+}
+
 export async function updateUser(
   actor: RequestActorContext,
   id: number,
@@ -671,6 +715,7 @@ export async function decideRegistration(
       { status: user.status },
       { status: row.status, decision: 'reject', reason: decision.reason },
     );
+    notifyStaff(row, NOTIFICATION.registrationRejected, decision.reason);
     return toWireUser(row);
   }
 
@@ -741,6 +786,7 @@ export async function decideRegistration(
       ownership_percentage: ownershipPercentage ?? null,
     },
   );
+  notifyStaff(row, NOTIFICATION.registrationApproved);
   return toWireUser(row);
 }
 
@@ -824,6 +870,8 @@ export interface LoginResult {
   permission_keys: string[];
   /** See [CurrentUserResult.is_super_admin]. */
   is_super_admin: boolean;
+  /** See [CurrentUserResult.mfa_setup_required]. */
+  mfa_setup_required: boolean;
 }
 
 /** Shape shared by login() and getCurrentUser() — same {user, permission_keys} pair, minus the session-only fields (token/session_id). */
@@ -844,6 +892,13 @@ export interface CurrentUserResult {
    * of its own and cannot drift from the server's answer.
    */
   is_super_admin: boolean;
+
+  /**
+   * True when this account must have a second factor and has none yet: every
+   * endpoint except MFA setup answers 403 `mfa_setup_required`, so the client
+   * routes straight to the setup screen instead of discovering it one refusal at a time.
+   */
+  mfa_setup_required: boolean;
 
   /**
    * Every key this server enforces — present **only** when the caller asks
@@ -889,11 +944,61 @@ export interface CurrentUserResult {
  * on every request rather than only at sign-in.
  */
 export async function login(body: LoginBody, origin: authService.RequestOrigin): Promise<LoginResult> {
-  const { account, session, token } = await authService.signIn(
-    staffAuthRealm,
-    { email: body.email, password: body.password },
-    { ...origin, deviceInfo: body.device_info ?? origin.deviceInfo },
+  return buildLoginResult(
+    await authService.signIn(
+      staffAuthRealm,
+      { email: body.email, password: body.password },
+      { ...origin, deviceInfo: body.device_info ?? origin.deviceInfo },
+    ),
   );
+}
+
+/** What the sign-in endpoint answers when the password was right but a code is owed. */
+export interface MfaChallengeResult {
+  mfa_required: true;
+  mfa_token: string;
+}
+
+/**
+ * The endpoint's entry point: a session, or — for an account holding a second
+ * factor — a challenge to answer at `POST /users/login/mfa`. `login` above
+ * stays session-or-throw for the callers (registration) that cannot meet a challenge.
+ */
+export async function loginOrChallenge(
+  body: LoginBody,
+  origin: authService.RequestOrigin,
+): Promise<LoginResult | MfaChallengeResult> {
+  try {
+    return await login(body, origin);
+  } catch (error) {
+    if (error instanceof mfaService.SecondFactorRequired) {
+      return { mfa_required: true, mfa_token: error.challenge };
+    }
+    throw error;
+  }
+}
+
+export async function completeLogin(
+  body: { mfa_token: string; code: string; device_info?: string | undefined },
+  origin: authService.RequestOrigin,
+): Promise<LoginResult> {
+  return buildLoginResult(
+    await authService.completeSecondFactor(
+      staffAuthRealm,
+      { challenge: body.mfa_token, code: body.code },
+      { ...origin, deviceInfo: body.device_info ?? origin.deviceInfo },
+    ),
+  );
+}
+
+async function mfaSetupRequired(userId: number): Promise<boolean> {
+  if (!mfaEnforced()) return false;
+  if (await mfaService.isEnrolled('staff', userId)) return false;
+  return mfaService.isRequired('staff', userId);
+}
+
+async function buildLoginResult(signedIn: authService.SignInResult): Promise<LoginResult> {
+  const { account, session, token } = signedIn;
 
   const user = await usersRepository.findById(account.id);
   // The engine just authenticated against this row, so its absence here would
@@ -912,6 +1017,7 @@ export async function login(body: LoginBody, origin: authService.RequestOrigin):
     session_id: session.id,
     permission_keys: permissionKeys,
     is_super_admin: await rolesService.actorHoldsSuperAdmin(user.id),
+    mfa_setup_required: await mfaSetupRequired(user.id),
   };
 }
 
@@ -936,6 +1042,7 @@ export async function getCurrentUser(
     user: toWireUser(user),
     permission_keys: permissionKeys,
     is_super_admin: await rolesService.actorHoldsSuperAdmin(user.id),
+    mfa_setup_required: await mfaSetupRequired(user.id),
     ...(includeDeclared
       ? { declared_keys: listEnforcedPermissions().map((p) => p.key) }
       : {}),
@@ -972,6 +1079,19 @@ export async function logout(token: string, origin: authService.RequestOrigin): 
  * so suspending the only holder of a role in an operating branch empties that
  * role exactly as ending the assignment would.
  */
+/**
+ * Tells a staff member about a decision on their own account. Fire-and-forget by
+ * design (see `notify`): the admin's decision is already made and recorded, and
+ * a push provider being down must not turn it into an error.
+ */
+function notifyStaff(
+  user: UserRow,
+  event: (typeof NOTIFICATION)[keyof typeof NOTIFICATION],
+  reason?: string | null,
+): void {
+  notify({ realm: 'staff', accountId: user.id, email: user.email, event, reason });
+}
+
 export async function suspendUser(actor: RequestActorContext, userId: number): Promise<WireUser> {
   const user = await usersRepository.findById(userId);
   if (!user) throw new NotFoundError('User not found');
@@ -994,6 +1114,7 @@ export async function suspendUser(actor: RequestActorContext, userId: number): P
     { status: user.status },
     { status: row.status },
   );
+  notifyStaff(row, NOTIFICATION.accountSuspended);
   return toWireUser(row);
 }
 
@@ -1069,6 +1190,7 @@ export async function reactivateUser(
     { status: user.status },
     { status: row.status },
   );
+  notifyStaff(row, NOTIFICATION.accountReactivated);
   return toWireUser(row);
 }
 
@@ -1085,3 +1207,26 @@ export async function reactivateUser(
  * `/users/change-password` routes still exist and delegate to the same
  * service, so no client breaks on the move.
  */
+
+/**
+ * Removes another person's second factor (lost phone AND lost recovery codes).
+ *
+ * Also ends their sessions: whoever is holding an authenticator-less session for
+ * that account should not keep it. They re-enroll on the next sign-in if their
+ * role requires one. Refused on yourself — resetting your own factor with a
+ * stolen session is exactly the attack the factor exists to stop.
+ */
+export async function resetUserMfa(actor: RequestActorContext, userId: number): Promise<void> {
+  if (actor.userId === userId) {
+    throw new ForbiddenError(
+      'Reset of your own two-factor authentication is not allowed',
+      undefined,
+      'mfa_reset_self_forbidden',
+    );
+  }
+  const user = await usersRepository.findById(userId);
+  if (!user) throw new NotFoundError('User not found');
+  await mfaService.clear('staff', userId);
+  await sessionService.revokeAllForUser(staffAuthRealm, userId);
+  await auditService.record(actor, AUDIT.userMfaReset, target.user(userId), undefined, undefined);
+}

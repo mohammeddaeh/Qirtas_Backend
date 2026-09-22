@@ -1,5 +1,7 @@
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
+import { logger } from '../../../core/logger/logger.js';
 import * as authService from '../../../core/auth/services/auth.service.js';
+import * as sessionService from '../../../core/auth/services/session.service.js';
 import { hashPassword, verifyPassword } from '../../../core/auth/services/password.service.js';
 import { isEmailVerificationEnabled } from '../../../core/auth/config/auth-config.js';
 import type { CustomerRow } from '../schemas/customers.schema.js';
@@ -10,6 +12,7 @@ import {
   type Paginated,
   type PaginationParams,
 } from '../../../core/pagination/pagination.js';
+import { notify, NOTIFICATION } from '../../../core/notifications/index.js';
 import * as auditService from '../../identity/services/audit.service.js';
 import { AUDIT, target } from '../../identity/services/audit-actions.js';
 import * as branchesRepository from '../../identity/repositories/branches.repository.js';
@@ -24,6 +27,9 @@ import {
   type CustomersFilterQuery,
   applyContactPolicy,
   type DecideWholesaleBody,
+  type RevokeWholesaleBody,
+  type ChangeEmailBody,
+  maskEmail,
   type WireCustomerActivity,
 } from '../dtos/customers.dto.js';
 
@@ -60,6 +66,14 @@ export async function login(
 
   const row = await customersRepository.findById(account.id);
   if (!row) throw new NotFoundError('Customer not found');
+
+  // Keep the stored language in step with the app's — see the column's note.
+  // Best-effort: a failed write must never fail a sign-in that already succeeded.
+  if (row.preferred_language !== origin.lang) {
+    void customersRepository
+      .update(row.id, { preferred_language: origin.lang })
+      .catch((err: unknown) => logger.warn({ err }, 'Could not store preferred language'));
+  }
 
   return {
     account_type: 'customer',
@@ -98,11 +112,22 @@ export async function register(
       last_name: body.last_name,
       phone: body.phone ?? null,
       preferred_branch_id: body.preferred_branch_id ?? null,
+      terms_accepted: true,
+      language: origin.lang,
     },
   });
 
-  // After the row exists, never before (a code that reaches the user but not the database is unverifiable).
-  await authService.sendEmailVerification(customerAuthRealm, account, origin);
+  // Sent IN THE BACKGROUND. Registration used to wait for the mail server, so a
+  // slow SMTP (seconds) froze the sign-up screen — for something the customer
+  // does not need until they buy. The code is stored before this line and mailed
+  // after it, so a failed send costs one "resend" tap, never a broken account.
+  // The failure is logged (an operator must see a dead mail server), and swallowed
+  // (the customer must not be told their sign-up failed when it did not).
+  void authService
+    .sendEmailVerification(customerAuthRealm, account, origin)
+    .catch((err: unknown) => {
+      logger.warn({ err, customerId: account.id }, 'Verification email failed after sign-up');
+    });
 
   return login(
     { email: body.email, password: body.password, device_info: body.device_info },
@@ -127,7 +152,6 @@ export async function updateMe(
     ...(body.first_name !== undefined ? { first_name: body.first_name } : {}),
     ...(body.last_name !== undefined ? { last_name: body.last_name } : {}),
     ...(body.phone !== undefined ? { phone: body.phone } : {}),
-    ...(body.address !== undefined ? { address: body.address } : {}),
     ...(body.preferred_branch_id !== undefined
       ? { preferred_branch_id: body.preferred_branch_id }
       : {}),
@@ -216,6 +240,22 @@ export async function getCustomerById(id: number): Promise<WireCustomer> {
  * Re-applying the current status answers with the row and writes nothing: a
  * double-click must not fill the audit log with entries that changed nothing.
  */
+/** Fire-and-forget (see `notify`): the decision is already made and recorded. */
+function tellCustomer(
+  row: CustomerRow,
+  event: (typeof NOTIFICATION)[keyof typeof NOTIFICATION],
+  reason?: string | null,
+): void {
+  notify({
+    realm: 'customer',
+    accountId: row.id,
+    email: row.email,
+    lang: row.preferred_language,
+    event,
+    reason,
+  });
+}
+
 async function setStatus(
   actor: RequestActorContext,
   id: number,
@@ -240,6 +280,11 @@ async function setStatus(
     { status: before.status },
     { status: row.status },
   );
+  // Suspension and reactivation are worth telling; `disabled` is permanent
+  // offboarding — the person learns it by being unable to sign in, and a push
+  // "you are disabled" adds nothing they can act on.
+  if (next === 'suspended') tellCustomer(row, NOTIFICATION.accountSuspended);
+  if (next === 'active') tellCustomer(row, NOTIFICATION.accountReactivated);
   return toWireCustomer(row);
 }
 
@@ -332,6 +377,136 @@ export async function decideWholesale(
       ...(approve ? {} : { reason: row.wholesale_rejection_reason }),
     },
   );
+  tellCustomer(
+    row,
+    approve ? NOTIFICATION.wholesaleApproved : NOTIFICATION.wholesaleRejected,
+    row.wholesale_rejection_reason,
+  );
+  return toWireCustomer(row);
+}
+
+/**
+ * Withdraws an approved wholesale account — back to retail, no pending request.
+ *
+ * The admin could approve but never undo, so a wrong approval (or a customer who
+ * stopped qualifying) could only be fixed in the database. The reason is
+ * mandatory and lands in the audit log: taking a price away from someone who
+ * relies on it is the decision most likely to be asked about later.
+ */
+export async function revokeWholesale(
+  actor: RequestActorContext,
+  id: number,
+  body: RevokeWholesaleBody,
+): Promise<WireCustomer> {
+  const before = await customersRepository.findById(id);
+  if (!before) throw new NotFoundError('Customer not found');
+  assertNotArchived(before);
+  if (before.customer_type !== 'wholesale') {
+    throw new BusinessError(409, 'This account is not wholesale', 'wholesale_not_approved');
+  }
+
+  const row = await customersRepository.update(id, {
+    customer_type: 'retail',
+    wholesale_status: null,
+    wholesale_requested_at: null,
+    wholesale_decided_at: null,
+    wholesale_decided_by_user_id: null,
+    wholesale_rejection_reason: null,
+  });
+  if (!row) throw new NotFoundError('Customer not found');
+
+  await auditService.record(
+    actor,
+    AUDIT.customerWholesaleRevoke,
+    target.customer(id),
+    { customer_type: before.customer_type, wholesale_status: before.wholesale_status },
+    { customer_type: row.customer_type, wholesale_status: null, reason: body.reason },
+  );
+  tellCustomer(row, NOTIFICATION.wholesaleRevoked, body.reason);
+  return toWireCustomer(row);
+}
+
+/**
+ * The customer moves their account to another mailbox.
+ *
+ * What makes this safe rather than a takeover door:
+ * - **the password is asked again** (a stolen unlocked session alone is not
+ *   enough to hand the account to someone else's inbox);
+ * - the new address is **unverified** — purchasing stops until the code sent
+ *   THERE is entered, so a typo or a stranger's address cannot buy;
+ * - **every other session is ended**: whoever else holds a token loses it,
+ *   which is the point of changing an address after suspecting a compromise;
+ * - the uniqueness claim moves in one transaction (`account_emails`), so the
+ *   address cannot end up owned by two accounts, in either realm.
+ */
+export async function changeEmail(
+  customerId: number,
+  currentSessionId: number | null,
+  body: ChangeEmailBody,
+  origin: authService.RequestOrigin,
+): Promise<WireCustomer> {
+  const account = await customerAccountStore.findById(customerId);
+  if (!account) throw new NotFoundError('Customer not found');
+
+  // Only an address nobody has proven yet may be corrected. A VERIFIED address
+  // is the account's identity — it is where password resets go — so moving it is
+  // a takeover door with no legitimate everyday use; that person contacts
+  // support. The one real need is the typo at sign-up (`gmial.com`), where the
+  // customer is stuck at the code screen and would otherwise have to delete the
+  // account and start again.
+  if (account.emailVerifiedAt !== null) {
+    throw new BusinessError(
+      409,
+      'A verified email address cannot be changed here',
+      'email_change_not_allowed',
+    );
+  }
+  if (!(await verifyPassword(body.password, account.passwordHash))) {
+    throw new BusinessError(422, 'Your current password is incorrect', 'current_password_wrong');
+  }
+  if (body.email === account.email) {
+    throw new BusinessError(422, 'That is already your email address', 'email_unchanged');
+  }
+
+  let row;
+  try {
+    row = await customersRepository.update(customerId, {
+      email: body.email,
+      email_verified_at: null,
+    });
+  } catch (err) {
+    // The unique index (either table) is the only thing that holds under a race.
+    if (typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505') {
+      throw new BusinessError(409, 'An account with this email already exists', 'email_taken');
+    }
+    throw err;
+  }
+  if (!row) throw new NotFoundError('Customer not found');
+
+  await sessionService.revokeAllForUser(
+    customerAuthRealm,
+    customerId,
+    currentSessionId ?? undefined,
+  );
+  await customersRepository.logActivity({
+    customerId,
+    action: 'customer.email_changed',
+    // Masked: the log must not become a second copy of personal data.
+    details: { from: maskEmail(account.email), to: maskEmail(body.email) },
+    ipAddress: origin.ipAddress,
+    deviceInfo: origin.deviceInfo,
+  });
+
+  // Background, like sign-up: the code is stored before it is mailed, a failure
+  // costs a "resend" tap and is logged for the operator.
+  const fresh = await customerAccountStore.findById(customerId);
+  if (fresh) {
+    void authService
+      .sendEmailVerification(customerAuthRealm, fresh, origin, { ignoreCooldown: true })
+      .catch((err: unknown) =>
+        logger.warn({ err, customerId }, 'Verification email failed after email change'),
+      );
+  }
   return toWireCustomer(row);
 }
 
@@ -427,6 +602,20 @@ export async function deleteCustomer(actor: RequestActorContext, id: number): Pr
   );
 }
 
+/**
+ * The origin to use when mail is sent TO a customer BY someone else: same
+ * request facts, but the language the customer reads. Falls back to the
+ * request's when the customer has none stored yet.
+ */
+async function inCustomerLanguage(
+  customerId: number,
+  origin: authService.RequestOrigin,
+): Promise<authService.RequestOrigin> {
+  const row = await customersRepository.findById(customerId);
+  const stored = row?.preferred_language;
+  return stored === 'ar' || stored === 'en' ? { ...origin, lang: stored } : origin;
+}
+
 // ── Support actions: the admin triggers, the customer receives ────────────────
 
 /**
@@ -452,7 +641,11 @@ export async function resendVerification(
     );
   }
 
-  const result = await authService.sendEmailVerification(customerAuthRealm, account, origin);
+  const result = await authService.sendEmailVerification(
+    customerAuthRealm,
+    account,
+    await inCustomerLanguage(id, origin),
+  );
   if (!result.sent && result.retryAfterSeconds !== undefined) {
     throw new BusinessError(
       429,
@@ -485,7 +678,11 @@ export async function sendPasswordReset(
   const account = await customerAccountStore.findById(id);
   if (!account) throw new NotFoundError('Customer not found');
 
-  await authService.requestPasswordReset(customerAuthRealm, account.email, origin);
+  await authService.requestPasswordReset(
+    customerAuthRealm,
+    account.email,
+    await inCustomerLanguage(id, origin),
+  );
   await auditService.record(
     actor,
     AUDIT.customerPasswordResetSend,

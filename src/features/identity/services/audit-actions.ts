@@ -29,6 +29,7 @@ export const AUDIT = {
   userCreate: 'user.create',
   userUpdate: 'user.update',
   userSuspend: 'user.suspend',
+  userMfaReset: 'user.mfa.reset',
   userDisable: 'user.disable',
   userReactivate: 'user.reactivate',
   userRegistrationDecide: 'user.registration.decide',
@@ -41,6 +42,7 @@ export const AUDIT = {
   customerDisable: 'customer.disable',
   customerReactivate: 'customer.reactivate',
   customerWholesaleDecide: 'customer.wholesale.decide',
+  customerWholesaleRevoke: 'customer.wholesale.revoke',
   customerArchive: 'customer.archive',
   customerUnarchive: 'customer.unarchive',
   customerDelete: 'customer.delete',
@@ -51,6 +53,11 @@ export const AUDIT = {
   assignmentCreate: 'assignment.create',
   assignmentTransfer: 'assignment.transfer',
   assignmentEnd: 'assignment.end',
+
+  // — Ownership (who owns what share — financial, so every change is recorded) —
+  ownershipCreate: 'ownership.create',
+  ownershipRevise: 'ownership.revise',
+  ownershipEnd: 'ownership.end',
 
   // — Branches —
   branchCreate: 'branch.create',
@@ -80,4 +87,5 @@ export const target = {
   customer: (id: number) => `customer:${id}`,
   role: (id: number) => `role:${id}`,
   assignment: (id: number) => `assignment:${id}`,
+  ownership: (id: number) => `ownership:${id}`,
 } as const;

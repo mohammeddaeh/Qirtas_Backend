@@ -10,7 +10,9 @@ import { registerPermission } from '../../../core/authz/registry.js';
 import * as assignmentsRepository from '../../identity/repositories/user-role-assignments.repository.js';
 import type {
   CustomersFilterQuery,
+  ChangeEmailBody,
   DecideWholesaleBody,
+  RevokeWholesaleBody,
   DeleteMeBody,
   RegisterCustomerBody,
   UpdateCustomerProfileBody,
@@ -43,6 +45,20 @@ export async function getMe(req: Request, res: Response): Promise<void> {
 export async function updateMe(req: Request, res: Response): Promise<void> {
   const body = req.body as UpdateCustomerProfileBody;
   ok(res, await customersService.updateMe(requireCustomerId(req), body, originOf(req)));
+}
+
+export async function changeEmail(req: Request, res: Response): Promise<void> {
+  const body = req.body as ChangeEmailBody;
+  ok(
+    res,
+    await customersService.changeEmail(
+      requireCustomerId(req),
+      req.session?.id ?? null,
+      body,
+      originOf(req),
+    ),
+    'Email updated — confirm the new address to continue',
+  );
 }
 
 export async function deleteMe(req: Request, res: Response): Promise<void> {
@@ -154,4 +170,12 @@ export async function listActivity(req: Request, res: Response): Promise<void> {
   const { id } = req.params as unknown as { id: number };
   const query = req.query as unknown as { page: number; limit: number };
   ok(res, await customersService.listActivity(id, toPaginationParams(query)));
+}
+
+export async function revokeWholesale(req: Request, res: Response): Promise<void> {
+  const { id } = req.params as unknown as { id: number };
+  ok(
+    res,
+    await customersService.revokeWholesale(staffActor(req), id, req.body as RevokeWholesaleBody),
+  );
 }

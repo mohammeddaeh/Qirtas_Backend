@@ -4,6 +4,8 @@ import {
   createOwnershipBodySchema,
   listOwnershipsQuerySchema,
   ownershipResponseSchema,
+  ownershipIdParamsSchema,
+  revisePercentageBodySchema,
 } from './dtos/ownerships.dto.js';
 
 const tags = ['Ownerships'];
@@ -15,7 +17,7 @@ registry.registerPath({
   method: 'get',
   path: '/api/v1/ownerships',
   tags,
-  summary: 'List active ownership records, optionally filtered by branch scope',
+  summary: 'List active ownership records with names, optionally one branch only',
   request: { query: listOwnershipsQuerySchema },
   responses: {
     200: {
@@ -53,5 +55,29 @@ registry.registerPath({
         },
       },
     },
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/ownerships/{id}/revise',
+  tags,
+  summary: 'Resize a share (closes the record, opens a new one)',
+  request: { params: ownershipIdParamsSchema, body: jsonBody(revisePercentageBodySchema) },
+  responses: {
+    200: { description: 'The new record', ...jsonBody(successEnvelope(ownershipResponseSchema)) },
+    ...commonErrorResponses,
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/ownerships/{id}/end',
+  tags,
+  summary: 'Close a share (sold / withdrawn); the record stays as history',
+  request: { params: ownershipIdParamsSchema },
+  responses: {
+    200: { description: 'Closed', ...jsonBody(successEnvelope(z.null())) },
+    ...commonErrorResponses,
   },
 });

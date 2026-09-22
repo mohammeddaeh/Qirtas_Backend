@@ -10,6 +10,8 @@ import { buildPasswordResetEmail, buildVerifyEmail } from '../emails/auth-emails
 import * as sessionService from './session.service.js';
 import * as verificationService from './verification.service.js';
 import { hashPassword, verifyPassword } from './password.service.js';
+import * as mfaService from '../mfa/mfa.service.js';
+import { readChallenge } from '../mfa/challenge.js';
 import type { SessionRow } from '../schemas/sessions.schema.js';
 
 /**
@@ -118,9 +120,25 @@ export async function signIn(
     await realm.store.markEmailVerified(account.id, new Date());
   }
 
+  // Password proven and sign-in permitted; if the account holds a second factor
+  // no session opens yet — the caller gets a receipt good only for submitting a
+  // code (`completeSecondFactor`). Checked HERE, before any session row exists,
+  // so there is no half-authenticated state to leak or forget to guard.
+  const challenge = await mfaService.challengeIfEnrolled(realm.id, account.id);
+  if (challenge) throw new mfaService.SecondFactorRequired(challenge);
+
+  return openSession(realm, account, provider.id, origin);
+}
+
+async function openSession(
+  realm: AuthRealm,
+  account: AuthAccount,
+  providerId: string,
+  origin: RequestOrigin,
+): Promise<SignInResult> {
   const { session, token } = await sessionService.createSession(realm, {
     userId: account.id,
-    provider: provider.id,
+    provider: providerId,
     deviceInfo: origin.deviceInfo,
   });
 
@@ -131,10 +149,56 @@ export async function signIn(
     email: account.email,
     ipAddress: origin.ipAddress,
     deviceInfo: origin.deviceInfo,
-    details: { session_id: session.id, provider: provider.id },
+    details: { session_id: session.id, provider: providerId },
   });
 
   return { account, session, token };
+}
+
+/**
+ * Second half of a two-step sign-in: a challenge from `signIn` + a code.
+ *
+ * Re-checks `canSignIn` — five minutes passed since the password step, and an
+ * admin may have suspended the account in between.
+ */
+export async function completeSecondFactor(
+  realm: AuthRealm,
+  input: { challenge: string; code: string },
+  origin: RequestOrigin,
+): Promise<SignInResult> {
+  const claim = readChallenge(input.challenge);
+  if (!claim || claim.realm !== realm.id) {
+    throw new UnauthorizedError('The sign-in step expired. Start again.', 'mfa_challenge_invalid');
+  }
+  const account = await realm.store.findById(claim.accountId);
+  if (!account) {
+    throw new UnauthorizedError('The sign-in step expired. Start again.', 'mfa_challenge_invalid');
+  }
+  const decision = await realm.store.canSignIn(account);
+  if (!decision.allowed) {
+    throw new ForbiddenError(
+      decision.reason ?? 'Sign-in is not permitted for this account',
+      decision.data,
+      decision.reasonKey ?? 'sign_in_not_permitted',
+    );
+  }
+
+  try {
+    await mfaService.verifySecondFactor(realm.id, account.id, input.code);
+  } catch (error) {
+    await recordSecurityEvent({
+      realm: realm.id,
+      event: AUTH_EVENT.loginFailed,
+      accountId: account.id,
+      email: account.email,
+      ipAddress: origin.ipAddress,
+      deviceInfo: origin.deviceInfo,
+      details: { reason: 'mfa_code_invalid' },
+    });
+    throw error;
+  }
+
+  return openSession(realm, account, 'local', origin);
 }
 
 /** Ends the calling device's session only. Idempotent: an already-dead token is not an error, because the user's intent is satisfied either way. */
@@ -235,16 +299,27 @@ export async function sendEmailVerification(
   realm: AuthRealm,
   account: AuthAccount,
   origin: RequestOrigin,
+  options: {
+    /**
+     * Skip the resend cooldown — for ONE case only: the address itself just
+     * changed. The cooldown limits how often mail goes to an address; a NEW
+     * address has had none, and making its owner wait out the wait that belonged
+     * to the old one strands them on the code screen with nothing coming.
+     */
+    ignoreCooldown?: boolean;
+  } = {},
 ): Promise<VerificationSendResult> {
   if (!isEmailVerificationEnabled()) return { sent: false };
   if (account.emailVerifiedAt !== null) return { sent: false };
 
-  const wait = await verificationService.secondsUntilResendAllowed(
-    realm,
-    account.id,
-    'email_verify',
-  );
-  if (wait > 0) return { sent: false, retryAfterSeconds: wait };
+  if (options.ignoreCooldown !== true) {
+    const wait = await verificationService.secondsUntilResendAllowed(
+      realm,
+      account.id,
+      'email_verify',
+    );
+    if (wait > 0) return { sent: false, retryAfterSeconds: wait };
+  }
 
   const { code } = await verificationService.issueCode(realm, account.id, 'email_verify');
   const delivery = await emailSender().send(buildVerifyEmail(account.email, origin.lang, code));

@@ -848,13 +848,15 @@ Accept-language: ar | en
 
 | Method | Path                        | الحماية | ملاحظة                                                                                                     |
 | ------ | --------------------------- | --- | ------------------------------------------------------------------------------------------------------------ |
-| GET    | `/`                         | 🔒 مسجّل دخول | اللغات **الفعّالة فقط** — `code`/`name`/`is_rtl`/`version`. غير مُصفّحة عمداً (قائمة مرجعية صغيرة، نفس منطق `GET /permissions`). هذا ما يستطلعه التطبيق عند الإقلاع لمقارنة الإصدارات |
+| GET    | `/`                         | 🌐 عام (منذ 2026-09-21) | اللغات **الفعّالة فقط** — `code`/`name`/`is_rtl`/`version`. غير مُصفّحة عمداً (قائمة مرجعية صغيرة، نفس منطق `GET /permissions`). هذا ما يستطلعه التطبيق عند الإقلاع لمقارنة الإصدارات |
 | GET    | `/:code`                    | 🔒 مسجّل دخول | لغة واحدة (شاشة إدارة فقط — يشمل اللغات المُعطَّلة أيضاً)، أو 404                                          |
-| GET    | `/:code/translations`       | 🔒 مسجّل دخول | خريطة الترجمة الكاملة الحالية للغة: `{code, version, translations: {key: value}}` — **whole-file، بدون `since`/delta بهذا الإصدار الأول**. 404 لو الكود غير موجود **أو** اللغة معطّلة (نفس المعاملة، لا فرق للعميل) |
+| GET    | `/:code/translations`       | 🌐 عام (منذ 2026-09-21) | خريطة الترجمة الكاملة الحالية للغة: `{code, version, translations: {key: value}}` — **whole-file، بدون `since`/delta بهذا الإصدار الأول**. 404 لو الكود غير موجود **أو** اللغة معطّلة (نفس المعاملة، لا فرق للعميل) |
 | POST   | `/`                         | 🔑 `localization.manage` | إضافة لغة ديناميكية جديدة — `code` فريد، يُرفض 409 لو مكرر                                                |
 | PATCH  | `/:code`                    | 🔑 `localization.manage` | تعديل `name`/`is_rtl` فقط (لا يمس `version`/`is_active`)                                                  |
 | PUT    | `/:code/translations`       | 🔑 `localization.manage` | **Upsert جزئي**: يضيف/يحدّث فقط المفاتيح المُرسَلة، لا يمس مفاتيح أخرى موجودة. أي استدعاء ناجح يرفع `version` رقماً واحداً دائماً — هذا هو إشارة إبطال الكاش التي يستطلعها `GET /` |
 | POST   | `/:code/deactivate`         | 🔑 `localization.manage` | تعطيل (`is_active=false`) — لا حذف فعلي. اللغة تختفي فوراً من `GET /` وتُعامَل كـ404 بـ`GET /:code/translations` |
+
+> **لماذا صار المساران عامَّين (2026-09-21)**: كانا `requireAuth` = **موظف فقط**. الضيف يطلبهما بكل إقلاع فيُرفض بصمت (لا ترجمات مخصّصة له أبداً)، والزبون يُرفض `401` فيقرؤه العميل جلسة منتهية ويُخرجه **بكل تشغيل**. نصوص واجهة التطبيق لكل زائر، وكلاهما يُرجع الفعّال وحده.
 
 **`POST /`** body:
 
@@ -905,7 +907,7 @@ Accept-language: ar | en
 - بريد مجهول وكلمة مرور خاطئة يعطيان نفس `401 invalid_credentials` بنفس الزمن.
 
 ### `WireCustomer`
-`id · first_name · last_name · full_name · email · phone · address · image · status (active|suspended|disabled) · customer_type (retail|wholesale) · wholesale_status (pending|approved|rejected|null) · preferred_branch_id · email_verified · email_verified_at · created_at`
+`id · first_name · last_name · full_name · email · phone · image · status (active|suspended|disabled) · customer_type (retail|wholesale) · wholesale_status (pending|approved|rejected|null) · preferred_branch_id · email_verified · email_verified_at · created_at`
 
 ### Endpoints
 
@@ -913,7 +915,7 @@ Accept-language: ar | en
 |---|---|---|---|
 | POST | `/customers/register` | عام + `registerRateLimit` | `201` بنفس شكل دخول الزبون (جلسة فوراً). الحساب `active` والبريد **غير موثَّق** إن كان التحقق مفعّلاً. لا حقل `customer_type`/`status` بالجسم عمداً |
 | GET | `/customers/me` | `requireCustomer` | مسموح لغير الموثَّق |
-| PATCH | `/customers/me` | `requireCustomer` | `first_name · last_name · phone · address · preferred_branch_id` (حقل واحد على الأقل) |
+| PATCH | `/customers/me` | `requireCustomer` | `first_name · last_name · phone · preferred_branch_id` (حقل واحد على الأقل). **`address` أُزيل 2026-09-21** — العناوين صارت قائمة بـ`/customers/me/addresses` |
 | POST | `/auth/verify-email` · `/auth/resend-verification` · `/auth/change-password` · `GET/DELETE /auth/sessions…` · `POST /auth/refresh` · `POST /users/logout` | `requireSignedIn` | **تعمل على فئة التوكن** (موظف أو زبون) |
 | POST | `/auth/forgot-password` · `/auth/reset-password` | عام | الفئة تُحلّ من البريد؛ بريد مجهول = no-op صامت كما كان |
 
@@ -928,6 +930,29 @@ Accept-language: ar | en
 | `requirePermission(k)` | `permission` | موظف بصلاحية |
 
 **`email_verification_required` مفتاح مخصّص لا 403 عام**: ردّ العميل الصحيح عليه فتح شاشة الرمز، لا عرض خطأ. **كل مسار شراء/طلب/طلب جملة يجب أن يحمل `requireVerifiedCustomer`** — ولا يمكن نسيان الحارس بالكامل لأن `check:permissions` يفشل على أي مسار بلا تصنيف.
+
+### عناوين التوصيل — `/customers/me/addresses` (2026-09-21)
+
+عدة عناوين للزبون، **واحد منها أساسي بالضبط** (فهرس فريد جزئي بالقاعدة). يستبدل عمود `customers.address` النصي: migration `0018` نسخت كل قيمة غير فارغة إلى عنوان أساسي (النص بـ`details`، و`area` فارغة) ثم حذفت العمود.
+
+| Method | Path | الجسم | الرد |
+|---|---|---|---|
+| GET | `/customers/me/addresses` | — | `WireCustomerAddress[]` — الأساسي أولاً ثم الأحدث تعديلاً |
+| POST | `/customers/me/addresses` | `area · details` (إلزاميان) + `kind? (home\|work\|other، افتراضي home) · label? · recipient_name? · recipient_phone? · landmark? · latitude? · longitude? · make_default?` | `201` + القائمة كاملة |
+| PATCH | `/customers/me/addresses/:addressId` | أي حقل مما سبق عدا `make_default` (حقل واحد على الأقل) | القائمة كاملة |
+| POST | `/customers/me/addresses/:addressId/make-default` | — | القائمة كاملة |
+| DELETE | `/customers/me/addresses/:addressId` | — | القائمة كاملة |
+
+كل المسارات `requireCustomer` (غير الموثَّق يُعِدّ عناوينه؛ الشراء هو ما ينتظر التوثيق).
+
+- **كل كتابة تُرجع القائمة كاملة لا الصف**: علم الأساسي ينتقل بين الصفوف (أول عنوان · تعيين آخر · حذف الأساسي)، فرد بصفٍّ واحد يترك بالعميل `is_default` قديماً على صف لم يلمسه.
+- **أول عنوان يصير أساسياً** مهما أرسل. **حذف الأساسي يُسلّم الصفة للأحدث تعديلاً** — عناوين بلا أساسي تعني دفع طلب بلا شيء مختار.
+- `latitude`/`longitude` معاً أو لا شيء (`422`)، وبـPATCH يُستبدلان أو يُمسحان معاً. النص يبقى إلزامياً: عناوين كثيرة هنا تُعرف بمَعلَم لا بإحداثية.
+- `recipient_*` لمن يطلب لشخص آخر؛ `null` = صاحب الحساب.
+- الحد `10` ← `409 address_limit_reached` (+`data.limit`). عنوان لا يملكه الزبون = `404` كغير الموجود.
+- **الطلب سينسخ العنوان لا يشير إليه** (لا FK من الطلبات) — فتعديل عنوان أو حذفه لا يغيّر مكان توصيل طلب سابق، ولهذا الحذف فعلي لا أرشفة.
+
+`WireCustomerAddress`: `id · kind · label · recipient_name · recipient_phone · area · details · landmark · latitude · longitude (number|null) · is_default · created_at · updated_at`
 
 ### ما لا يزال مؤجَّلاً
 الدخول بالجوال/OTP · طابور موافقة الجملة · حذف زبون (يجب أن يستدعي `accountEmails.release`).
@@ -972,3 +997,35 @@ Accept-language: ar | en
 - `DELETE /customers/me` — `requireCustomer`، الجسم `{password}`. كلمة مرور خاطئة `422 current_password_wrong` **لا 401**. يمحو الحساب وجلساته ورموزه ويحرّر البريد؛ يبقى `customer.self_deleted` بسجل النشاط.
 - **بيانات التواصل**: `email` و`phone` بـ`GET /customers` و`GET /customers/:id` **مقنَّعان** (`l***@domain` · `*******222`) ما لم يحمل الموظف `customers.contact`. والبحث (`search`) لا يصل للبريد/الهاتف عمّن لا يحملها. الأفعال (تعليق…) تردّ نفس الحساب بنفس السياسة.
 - **متغيّرات بيئة جديدة**: `TRUST_PROXY_HOPS` (0 = بلا proxy) · `STAFF_REGISTER_RATE_LIMIT` (5) · `CUSTOMER_REGISTER_RATE_LIMIT` (30).
+
+### الدفعة الثانية (2026-09-21)
+
+- `POST /customers/:id/wholesale/revoke` — `customers.wholesale`، `{reason}` إلزامي. الرد الحساب بلا جملة.
+- `POST /customers/me/email` — `requireCustomer`، `{email, password}`. الرد الحساب بالبريد الجديد **`email_verified:false`**. الأخطاء: `422 current_password_wrong` · `422 email_unchanged` · `409 email_taken` (أي فئة). ينهي كل جلسات الزبون عدا الطالبة.
+- `PATCH /users/me` — `requireAuth`، أي من `first_name · last_name · phone · address` (`address:null` يمسحه)، جسم فارغ أو بريد `422`.
+
+### المصادقة الثنائية للموظفين (2026-09-21) — المرجع: `docs/reference/mfa.md`
+
+- `POST /users/login` — قد يردّ الآن `{account_type:'staff', mfa_required:true, mfa_token}` (بلا `token`) لمن سجّل مصادقة. ردّ الجلسة الكاملة وردّ `GET /users/me` يحملان **`mfa_setup_required: bool`**.
+- `POST /users/login/mfa` — عام. `{mfa_token, code, device_info?}` ← نفس جسم الدخول الكامل. `401 mfa_challenge_invalid` (منتهٍ/مزوَّر) · `401 mfa_code_invalid` · `429 mfa_locked` (5 أخطاء ← 15 دقيقة).
+- `GET /auth/mfa` — `{enrolled, required, recovery_codes_remaining}`.
+- `POST /auth/mfa/setup` — `{secret, otpauth_uri}` (السرّ base32 للإدخال اليدوي، والـURI لرمز QR). `409 mfa_already_enrolled`.
+- `POST /auth/mfa/confirm {code}` — `{recovery_codes:[10]}` **تُعرض مرة واحدة**.
+- `POST /auth/mfa/recovery-codes {code}` — رمز تطبيق أو استرداد ← عشرة جديدة، القديمة تُبطل.
+- `POST /auth/mfa/disable {password, code}` — `422 current_password_wrong` · `409 mfa_required_by_role`.
+- `POST /users/:id/mfa/reset` — `users.manage`. ينهي جلسات الهدف. `403 mfa_reset_self_forbidden`.
+- **`403 mfa_setup_required`** على أي مسار آخر لحساب مُلزَم لم يسجّل (`data.mfa_setup_required: true`). كل `/auth/mfa*` للموظفين فقط (`403 mfa_staff_only` لغيرهم).
+
+### الملكية (2026-09-21) — كل المسارات `ownerships.manage`
+
+- `GET /ownerships[?branch_scope=]` — **كل الحصص الفعّالة بكل النطاقات** (أو فرع واحد)، كل صف يحمل **`user_name`** و**`branch_name`** (`null` = نطاق كل الفروع). كان `requireAuth` وبلا `branch_scope` يُرجع نطاق «كل الفروع» وحده؛ صار بصلاحية لأن الرد يسمّي أشخاصاً ونسبهم.
+- `POST /ownerships` `{user_id, percentage, branch_scope?}` — `422 ownership_sum_exceeded` إن تجاوز مجموع النطاق ١٠٠٪ (يذكر المجموع الحالي). مُدقَّق `ownership.create`.
+- `POST /ownerships/:id/revise` `{percentage}` — يُغلق السجل ويفتح **جديداً** (معرّف جديد بالرد؛ التاريخ يبقى). الحدّ يستثني السجل المستبدَل. `404` لمغلق. مُدقَّق `ownership.revise`.
+- `POST /ownerships/:id/end` — يُغلق الحصة (بيع/انسحاب). `404` لمغلقة. مُدقَّق `ownership.end`.
+
+### أجهزة الإشعارات (2026-09-21) — المرجع: `docs/reference/notifications.md`
+
+- `POST /auth/push-token` `{token, platform: 'android'|'ios', language?}` — أي حساب مسجَّل (موظف أو زبون). الرمز فريد: تسجيله لحساب ثانٍ **ينقله** إليه. `422` لرمز قصير/منصة مجهولة، `401` للضيف.
+- `POST /auth/push-token/remove` `{token}` — يحذف الرمز **إن كان لصاحب الطلب**؛ غير ذلك `200` بلا أثر. يُستدعى قبل مسح الجلسة عند الخروج.
+
+- **تعديل 2026-09-21**: `POST /customers/me/email` لغير الموثَّق بريدُه فقط — لموثَّق `409 email_change_not_allowed`.

@@ -5,7 +5,12 @@ import { registerRealm, type AuthRealm } from './realm.js';
 import { setSecurityEventSink, type SecurityEventSink } from './ports/security-event-sink.js';
 import { registerAuthProvider } from './ports/auth-provider.js';
 import { localAuthProvider } from './providers/local-auth.provider.js';
-import { SmtpEmailSender } from './adapters/smtp-email-sender.js';
+import {
+  SmtpEmailSender,
+  fallbackSmtpConfig,
+  primarySmtpConfig,
+} from './adapters/smtp-email-sender.js';
+import { FailoverEmailSender } from './adapters/failover-email-sender.js';
 import { LogEmailSender } from './adapters/log-email-sender.js';
 import * as sessionService from './services/session.service.js';
 
@@ -59,15 +64,44 @@ export function configureAuth(composition: AuthComposition): void {
  * so and says why).
  */
 function selectEmailSender(): EmailSender {
-  const useSmtp =
-    env.MAIL_TRANSPORT === 'smtp' || (env.MAIL_TRANSPORT === 'auto' && env.SMTP_HOST.length > 0);
+  const hasPrimary = env.SMTP_HOST.length > 0;
+  const hasFallback = env.SMTP2_HOST.length > 0;
 
-  if (useSmtp) {
-    if (env.SMTP_HOST.length === 0) {
-      throw new Error('MAIL_TRANSPORT=smtp requires SMTP_HOST to be set.');
+  if (env.MAIL_TRANSPORT === 'smtp' && !hasPrimary) {
+    throw new Error('MAIL_TRANSPORT=smtp requires SMTP_HOST to be set.');
+  }
+  if (env.MAIL_TRANSPORT === 'smtp2' && !hasFallback) {
+    throw new Error('MAIL_TRANSPORT=smtp2 requires SMTP2_HOST to be set.');
+  }
+
+  if (env.MAIL_TRANSPORT === 'smtp2') {
+    logger.info({ host: env.SMTP2_HOST }, 'Mail transport: SMTP (fallback account only)');
+    return new SmtpEmailSender(fallbackSmtpConfig());
+  }
+
+  const usePrimary = env.MAIL_TRANSPORT === 'smtp' || (env.MAIL_TRANSPORT === 'auto' && hasPrimary);
+  if (usePrimary) {
+    const primary = new SmtpEmailSender(primarySmtpConfig());
+    // Only `auto` chains the fallback: `smtp` is an explicit "this server, and
+    // nothing else" — used to find out whether one specific account works.
+    if (env.MAIL_TRANSPORT === 'auto' && hasFallback) {
+      logger.info(
+        { host: env.SMTP_HOST, fallbackHost: env.SMTP2_HOST },
+        'Mail transport: SMTP with fallback',
+      );
+      return new FailoverEmailSender([
+        { name: 'primary', sender: primary },
+        { name: 'fallback', sender: new SmtpEmailSender(fallbackSmtpConfig()) },
+      ]);
     }
     logger.info({ host: env.SMTP_HOST, port: env.SMTP_PORT }, 'Mail transport: SMTP');
-    return new SmtpEmailSender();
+    return primary;
+  }
+
+  // No primary but a fallback account: use it rather than the log adapter.
+  if (env.MAIL_TRANSPORT === 'auto' && hasFallback) {
+    logger.info({ host: env.SMTP2_HOST }, 'Mail transport: SMTP (fallback account only)');
+    return new SmtpEmailSender(fallbackSmtpConfig());
   }
 
   if (env.NODE_ENV === 'production') {

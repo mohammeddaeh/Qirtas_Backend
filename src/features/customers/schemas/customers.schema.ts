@@ -58,7 +58,24 @@ export const customersTable = pgTable(
       onDelete: 'set null',
     }),
     image: text('image'),
-    address: text('address'),
+    /**
+     * Consent to the terms and privacy policy — WHEN and to WHICH version.
+     * Both, because "accepted" alone answers nothing once the text changes: the
+     * version says what this person actually agreed to. Null on accounts that
+     * predate the requirement.
+     */
+    /**
+     * The language of the customer's app, kept in step on every sign-in.
+     *
+     * Mail sent ON their behalf by someone else (an employee re-sending a code)
+     * must speak THEIR language — the request's `Accept-Language` is the
+     * employee's, and an Arabic-speaking customer would receive English. Null
+     * until the first sign-in after this column existed; callers fall back to the
+     * request language then.
+     */
+    preferred_language: varchar('preferred_language', { length: 8 }),
+    terms_accepted_at: timestamp('terms_accepted_at', { withTimezone: true }),
+    terms_version: varchar('terms_version', { length: 32 }),
     archived_at: timestamp('archived_at', { withTimezone: true }),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

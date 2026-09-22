@@ -10,8 +10,10 @@ import type {
   RegisterStaffBody,
   DecideRegistrationBody,
   LoginBody,
+  LoginMfaBody,
   BootstrapSuperAdminBody,
   UpdateUserBody,
+  UpdateOwnProfileBody,
   CreateUserByAdminBody,
   UsersFilterQuery,
   ResubmitRegistrationBody,
@@ -41,6 +43,11 @@ export async function getCurrentUser(req: Request, res: Response): Promise<void>
 export async function getUserPermissions(req: Request, res: Response): Promise<void> {
   const { id } = req.params as unknown as { id: number };
   ok(res, await usersService.getUserPermissions(id));
+}
+
+export async function updateOwnProfile(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  ok(res, await usersService.updateOwnProfile(actor, req.body as UpdateOwnProfileBody));
 }
 
 export async function updateUser(req: Request, res: Response): Promise<void> {
@@ -117,6 +124,19 @@ export async function login(req: Request, res: Response): Promise<void> {
   // it before the attempt is judged would clear it for failures too.
   resetLoginRateLimit(body.email, req.ip ?? 'unknown');
   ok(res, result);
+}
+
+export async function loginMfa(req: Request, res: Response): Promise<void> {
+  const body = req.body as LoginMfaBody;
+  const result = await usersService.completeLogin(body, originOf(req));
+  ok(res, { account_type: 'staff', ...result });
+}
+
+export async function resetUserMfa(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  const { id } = req.params as unknown as { id: number };
+  await usersService.resetUserMfa(actor, id);
+  ok(res, null);
 }
 
 export async function logout(req: Request, res: Response): Promise<void> {

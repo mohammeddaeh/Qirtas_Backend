@@ -36,23 +36,56 @@ import {
  * refusal `LogEmailSender` gives. Built on first send, reused afterwards
  * (nodemailer pools connections internally).
  */
+/** One SMTP account. `label` names it in logs (`primary` / `fallback`). */
+export interface SmtpConfig {
+  label: string;
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  from: string;
+}
+
+export const primarySmtpConfig = (): SmtpConfig => ({
+  label: 'primary',
+  host: env.SMTP_HOST,
+  port: env.SMTP_PORT,
+  secure: env.SMTP_SECURE,
+  user: env.SMTP_USER,
+  pass: env.SMTP_PASS,
+  from: env.MAIL_FROM.length > 0 ? env.MAIL_FROM : env.SMTP_USER,
+});
+
+export const fallbackSmtpConfig = (): SmtpConfig => ({
+  label: 'fallback',
+  host: env.SMTP2_HOST,
+  port: env.SMTP2_PORT,
+  secure: env.SMTP2_SECURE,
+  user: env.SMTP2_USER,
+  pass: env.SMTP2_PASS,
+  from: env.MAIL2_FROM.length > 0 ? env.MAIL2_FROM : env.SMTP2_USER,
+});
+
 export class SmtpEmailSender implements EmailSender {
   private transporter: Transporter | undefined;
+
+  constructor(private readonly config: SmtpConfig = primarySmtpConfig()) {}
 
   private transport(): Transporter {
     if (!this.transporter) {
       this.transporter = nodemailer.createTransport({
-        host: env.SMTP_HOST,
-        port: env.SMTP_PORT,
+        host: this.config.host,
+        port: this.config.port,
         // Implicit TLS on 465, STARTTLS on 587. Nodemailer upgrades a `false`
         // connection automatically when the server advertises STARTTLS, so this
         // flag selects the mode rather than choosing between TLS and plaintext.
-        secure: env.SMTP_SECURE,
+        secure: this.config.secure,
         // Omitted entirely when empty: some internal relays accept mail from a
         // trusted network with no authentication at all, and passing empty
         // credentials makes those servers reject the session outright.
-        ...(env.SMTP_USER.length > 0
-          ? { auth: { user: env.SMTP_USER, pass: env.SMTP_PASS } }
+        ...(this.config.user.length > 0
+          ? { auth: { user: this.config.user, pass: this.config.pass } }
           : {}),
       });
     }
@@ -82,10 +115,11 @@ export class SmtpEmailSender implements EmailSender {
    * reset codes.
    */
   async send(message: EmailMessage): Promise<EmailDeliveryResult> {
-    const from = env.MAIL_FROM.length > 0 ? env.MAIL_FROM : env.SMTP_USER;
+    const from = this.config.from;
     const context = {
       provider: 'smtp' as const,
-      host: env.SMTP_HOST,
+      account: this.config.label,
+      host: this.config.host,
       kind: message.kind,
       recipientDomain: recipientDomain(message.to),
     };

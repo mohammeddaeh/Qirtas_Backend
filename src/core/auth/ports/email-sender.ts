@@ -55,7 +55,7 @@
  * called without it, and so `subject` (localized, and therefore useless as a
  * grouping key) never becomes the thing dashboards filter on.
  */
-export type EmailKind = 'email_verification' | 'password_reset';
+export type EmailKind = 'email_verification' | 'password_reset' | 'notification';
 
 export interface EmailMessage {
   to: string;

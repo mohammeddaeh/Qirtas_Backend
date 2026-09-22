@@ -29,6 +29,10 @@ import { customersRouter } from './features/customers/routes/customers.routes.js
 import * as customersService from './features/customers/services/customers.service.js';
 import * as usersService from './features/identity/services/users.service.js';
 import { registerLoginHandler } from './core/auth/login-dispatch.js';
+import { configureNotifications } from './core/notifications/composition.js';
+import { setMfaPolicy } from './core/auth/mfa/mfa.service.js';
+import { identityMfaPolicy } from './features/identity/mfa-policy.js';
+import { mfaEnrollmentGate } from './features/identity/mfa-gate.js';
 import { authRouter } from './features/auth/routes/auth.routes.js';
 import { usersRouter } from './features/identity/routes/users.routes.js';
 import { rolesRouter } from './features/identity/routes/roles.routes.js';
@@ -120,12 +124,15 @@ export function buildApp(): Express {
     }),
   });
 
+  configureNotifications();
+
   // One sign-in endpoint for every population: each realm supplies the payload
   // only it knows how to build (staff: permission keys; customer: profile).
   registerLoginHandler('staff', async (body, origin) => ({
     account_type: 'staff',
-    ...(await usersService.login(body, origin)),
+    ...(await usersService.loginOrChallenge(body, origin)),
   }));
+  setMfaPolicy(identityMfaPolicy);
   registerLoginHandler('customer', (body, origin) => customersService.login(body, origin));
 
 
@@ -160,6 +167,9 @@ export function buildApp(): Express {
 
   app.use(express.json());
   app.use(asyncHandler(auth));
+  // After `auth`, before any router: a required-but-unenrolled staff account is
+  // confined to MFA setup (see features/identity/mfa-gate.ts).
+  app.use(asyncHandler(mfaEnrollmentGate));
   app.get('/', (_req, res) => {
     res.json({
       message: 'Qirtas API 🚀',

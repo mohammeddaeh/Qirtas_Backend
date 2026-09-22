@@ -2,6 +2,9 @@ import type { Request, Response } from 'express';
 import { ok, noContentOk } from '../../../core/http/response.js';
 import { actorOf } from '../../../core/http/require-customer.js';
 import { BusinessError, NotFoundError, UnauthorizedError } from '../../../core/http/api-error.js';
+import * as notificationsService from '../../../core/notifications/notifications.service.js';
+import * as mfaService from '../../../core/auth/mfa/mfa.service.js';
+import { verifyPassword } from '../../../core/auth/services/password.service.js';
 import * as authService from '../../../core/auth/services/auth.service.js';
 import { getRealm, realmForToken } from '../../../core/auth/realm.js';
 import { realmForEmail } from '../../../core/auth/login-dispatch.js';
@@ -10,6 +13,10 @@ import {
   toWireSession,
   type ChangePasswordBody,
   type ForgotPasswordBody,
+  type MfaCodeBody,
+  type RegisterPushTokenBody,
+  type RemovePushTokenBody,
+  type MfaDisableBody,
   type ResetPasswordBody,
   type VerifyEmailBody,
 } from '../dtos/auth.dto.js';
@@ -251,4 +258,82 @@ export async function changePassword(req: Request, res: Response): Promise<void>
  */
 async function realmForEmailOrStaff(email: string) {
   return getRealm((await realmForEmail(email)) ?? 'staff');
+}
+
+// ── Second factor (TOTP) ─────────────────────────────────────────────────────
+
+/**
+ * Staff only for now. The engine is realm-generic, but the customer sign-in
+ * handler does not yet know how to answer a challenge — an enrolled customer
+ * would be locked out with a 500. Extending it is a deliberate step, not a side effect.
+ */
+function mfaActor(req: Request): { realm: 'staff'; id: number } {
+  const actor = actorOf(req);
+  if (actor.realm !== 'staff') {
+    throw new BusinessError(403, 'Two-factor authentication is for staff accounts', 'mfa_staff_only');
+  }
+  return { realm: 'staff', id: actor.id };
+}
+
+export async function mfaStatus(req: Request, res: Response): Promise<void> {
+  const { realm, id } = mfaActor(req);
+  ok(res, await mfaService.status(realm, id));
+}
+
+export async function mfaSetup(req: Request, res: Response): Promise<void> {
+  const { realm, id } = mfaActor(req);
+  const account = await getRealm(realm).store.findById(id);
+  if (!account) throw new UnauthorizedError('Authentication required', 'authentication_required');
+  ok(res, await mfaService.beginEnrollment(realm, id, account.email));
+}
+
+export async function mfaConfirm(req: Request, res: Response): Promise<void> {
+  const { realm, id } = mfaActor(req);
+  const { code } = req.body as MfaCodeBody;
+  ok(res, { recovery_codes: await mfaService.confirmEnrollment(realm, id, code) });
+}
+
+export async function mfaRegenerateCodes(req: Request, res: Response): Promise<void> {
+  const { realm, id } = mfaActor(req);
+  const { code } = req.body as MfaCodeBody;
+  await mfaService.verifySecondFactor(realm, id, code);
+  ok(res, { recovery_codes: await mfaService.regenerateRecoveryCodes(realm, id) });
+}
+
+export async function mfaDisable(req: Request, res: Response): Promise<void> {
+  const { realm, id } = mfaActor(req);
+  const { password, code } = req.body as MfaDisableBody;
+  const account = await getRealm(realm).store.findById(id);
+  if (!account || !(await verifyPassword(password, account.passwordHash))) {
+    throw new BusinessError(422, 'Current password is incorrect', 'current_password_wrong');
+  }
+  // A required role cannot opt out — the requirement is the point.
+  if (await mfaService.isRequired(realm, id)) {
+    throw new BusinessError(409, 'Your role requires two-factor authentication', 'mfa_required_by_role');
+  }
+  await mfaService.verifySecondFactor(realm, id, code);
+  await mfaService.clear(realm, id);
+  ok(res, null);
+}
+
+// ── Push notification devices ────────────────────────────────────────────────
+
+export async function registerPushToken(req: Request, res: Response): Promise<void> {
+  const { realm, id } = actorOf(req);
+  const body = req.body as RegisterPushTokenBody;
+  await notificationsService.registerDevice({
+    realm,
+    accountId: id,
+    token: body.token,
+    platform: body.platform,
+    language: body.language ?? null,
+  });
+  ok(res, null);
+}
+
+export async function removePushToken(req: Request, res: Response): Promise<void> {
+  const { realm, id } = actorOf(req);
+  const { token } = req.body as RemovePushTokenBody;
+  await notificationsService.unregisterDevice(realm, id, token);
+  ok(res, null);
 }

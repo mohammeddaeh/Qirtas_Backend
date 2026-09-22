@@ -305,6 +305,14 @@ export const loginBodySchema = z.object({
 });
 export type LoginBody = z.infer<typeof loginBodySchema>;
 
+/** Second step of a sign-in: the receipt from `POST /login` + an authenticator or recovery code. */
+export const loginMfaBodySchema = z.object({
+  mfa_token: z.string().min(1).max(500),
+  code: z.string().trim().min(6).max(16),
+  device_info: z.string().trim().max(500).optional(),
+});
+export type LoginMfaBody = z.infer<typeof loginMfaBodySchema>;
+
 // ── Password reset & change ─────────────────────────────────────────────────
 //
 // The three schemas that lived here moved to `features/auth/dtos/auth.dto.ts`
@@ -355,6 +363,25 @@ export const updateUserBodySchema = z.object({
   phone: optionalSyrianPhoneSchema,
 });
 export type UpdateUserBody = z.infer<typeof updateUserBodySchema>;
+
+/**
+ * `PATCH /users/me` — what an employee may change about THEMSELVES.
+ *
+ * Deliberately narrower than `updateUserBodySchema`: no email (an address change
+ * is an identity change and needs re-verification, so it is not a profile field),
+ * and nothing about status, role or approval — those are decisions about the
+ * person, not by them. `address` may be cleared with `null`.
+ */
+export const updateOwnProfileBodySchema = z
+  .object({
+    first_name: z.string().trim().min(1).max(100),
+    last_name: z.string().trim().min(1).max(100),
+    phone: optionalSyrianPhoneSchema,
+    address: z.string().trim().max(2000).nullable(),
+  })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, { message: 'At least one field is required' });
+export type UpdateOwnProfileBody = z.infer<typeof updateOwnProfileBodySchema>;
 
 /**
  * Mirrors LoginResult (services/users.service.ts) for OpenAPI doc generation only.

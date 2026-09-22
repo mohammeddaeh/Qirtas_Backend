@@ -7,7 +7,9 @@ import { requireCustomer, requireVerifiedCustomer } from '../../../core/http/req
 import { publicRoute } from '../../../core/http/route-marker.js';
 import { customerRegisterRateLimit } from '../../../core/middleware/register-rate-limit.js';
 import {
+  changeEmailBodySchema,
   customerIdParamsSchema,
+  revokeWholesaleBodySchema,
   customersFilterQuerySchema,
   deleteMeBodySchema,
   decideWholesaleBodySchema,
@@ -15,6 +17,12 @@ import {
   updateCustomerProfileBodySchema,
 } from '../dtos/customers.dto.js';
 import * as customersController from '../controllers/customers.controller.js';
+import * as addressesController from '../controllers/customer-addresses.controller.js';
+import {
+  addressIdParamsSchema,
+  createAddressBodySchema,
+  updateAddressBodySchema,
+} from '../dtos/customer-addresses.dto.js';
 
 /**
  * `/api/v1/customers/*` — the shopper's own account.
@@ -44,6 +52,14 @@ customersRouter.patch(
   asyncHandler(customersController.updateMe),
 );
 
+// Moving the account to another mailbox: signed-in customer, password asked again.
+customersRouter.post(
+  '/me/email',
+  requireCustomer,
+  validate(changeEmailBodySchema, 'body'),
+  asyncHandler(customersController.changeEmail),
+);
+
 // Self-service erase. Before `/:id` (Express matches in mount order) and after
 // the auth guard: a customer token only.
 customersRouter.delete(
@@ -51,6 +67,42 @@ customersRouter.delete(
   requireCustomer,
   validate(deleteMeBodySchema, 'body'),
   asyncHandler(customersController.deleteMe),
+);
+
+// ── Delivery addresses ───────────────────────────────────────────────────────
+// Signed in is enough, like the profile: an unverified customer may prepare
+// where things go; buying is what waits on the verified email. Every write
+// answers with the whole list — the default flag moves between rows.
+
+customersRouter.get('/me/addresses', requireCustomer, asyncHandler(addressesController.list));
+
+customersRouter.post(
+  '/me/addresses',
+  requireCustomer,
+  validate(createAddressBodySchema, 'body'),
+  asyncHandler(addressesController.create),
+);
+
+customersRouter.patch(
+  '/me/addresses/:addressId',
+  requireCustomer,
+  validate(addressIdParamsSchema, 'params'),
+  validate(updateAddressBodySchema, 'body'),
+  asyncHandler(addressesController.update),
+);
+
+customersRouter.post(
+  '/me/addresses/:addressId/make-default',
+  requireCustomer,
+  validate(addressIdParamsSchema, 'params'),
+  asyncHandler(addressesController.makeDefault),
+);
+
+customersRouter.delete(
+  '/me/addresses/:addressId',
+  requireCustomer,
+  validate(addressIdParamsSchema, 'params'),
+  asyncHandler(addressesController.remove),
 );
 
 /**
@@ -114,6 +166,14 @@ customersRouter.post(
   validate(customerIdParamsSchema, 'params'),
   validate(decideWholesaleBodySchema, 'body'),
   asyncHandler(customersController.decideWholesale),
+);
+
+customersRouter.post(
+  '/:id/wholesale/revoke',
+  requirePermission('customers.wholesale'),
+  validate(customerIdParamsSchema, 'params'),
+  validate(revokeWholesaleBodySchema, 'body'),
+  asyncHandler(customersController.revokeWholesale),
 );
 
 // Retiring a record is `records.archive` everywhere in this system (branches,

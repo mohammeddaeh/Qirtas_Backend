@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { RateLimiter } from '../security/rate-limiter.js';
+import { readChallenge } from '../auth/mfa/challenge.js';
 
 const MAX_ATTEMPTS_PER_EMAIL = 5;
 /**
@@ -101,4 +102,40 @@ export async function loginRateLimit(
 export function resetLoginRateLimit(email: string, ip: string): void {
   void emailLimiter.reset(`email:${email}`);
   void ipLimiter.reset(`ip:${ip}`);
+}
+
+const mfaAccountLimiter = new RateLimiter(
+  30,
+  WINDOW_MS,
+  LOGIN_MESSAGE,
+  'too_many_login_attempts',
+);
+
+/**
+ * Brake for the second step of sign-in (`POST /users/login/mfa`).
+ *
+ * **Not `loginRateLimit`**: that keys on the request's `email`, which this body
+ * does not carry — every caller would share the single bucket `email:unknown`,
+ * and five people typing a code within 15 minutes would lock every other staff
+ * member out of step two. The identifier here is the account the challenge was
+ * issued for (readable without trusting it: a forged token has no account and
+ * falls to the IP limit alone).
+ *
+ * The per-account code lockout in `mfa.service` is the real defence against
+ * guessing; this bounds request volume and the challenge-forging noise.
+ */
+export async function mfaLoginRateLimit(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const token = (req.body as { mfa_token?: string }).mfa_token ?? '';
+    const claim = readChallenge(token);
+    if (claim) await mfaAccountLimiter.consume(`mfa:${claim.realm}:${claim.accountId}`);
+    await ipLimiter.consume(`ip:${req.ip ?? 'unknown'}`);
+    next();
+  } catch (err) {
+    next(err);
+  }
 }

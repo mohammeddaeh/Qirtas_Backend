@@ -3,7 +3,7 @@ import { passwordSchema } from '../../../core/auth/services/password.service.js'
 import { queryBooleanSchema } from '../../../core/validation/common-schemas.js';
 import type { CustomerRow } from '../schemas/customers.schema.js';
 
-const phoneSchema = z.string().trim().min(6).max(32);
+export const phoneSchema = z.string().trim().min(6).max(32);
 
 /**
  * `POST /customers/register`.
@@ -19,6 +19,13 @@ export const registerCustomerBodySchema = z.object({
   email: z.string().trim().toLowerCase().email().max(255),
   phone: phoneSchema.optional(),
   password: passwordSchema,
+  /**
+   * Must be `true`. The client shows one line ("by signing up you agree…") with
+   * links rather than a checkbox, and sending this is the act of consent. The
+   * VERSION is not sent: the server owns it (`TERMS_VERSION`), so a client
+   * cannot claim to have accepted a text it never showed.
+   */
+  accept_terms: z.literal(true),
   preferred_branch_id: z.coerce.number().int().positive().nullable().optional(),
   device_info: z.string().trim().max(500).optional(),
 });
@@ -30,7 +37,6 @@ export const updateCustomerProfileBodySchema = z
     first_name: z.string().trim().min(1).max(100),
     last_name: z.string().trim().min(1).max(100),
     phone: phoneSchema.nullable(),
-    address: z.string().trim().max(500).nullable(),
     preferred_branch_id: z.coerce.number().int().positive().nullable(),
   })
   .partial()
@@ -44,7 +50,6 @@ export interface WireCustomer {
   full_name: string;
   email: string;
   phone: string | null;
-  address: string | null;
   image: string | null;
   status: CustomerRow['status'];
   customer_type: CustomerRow['customer_type'];
@@ -70,7 +75,6 @@ export function toWireCustomer(row: CustomerRow): WireCustomer {
     full_name: `${row.first_name} ${row.last_name}`.trim(),
     email: row.email,
     phone: row.phone,
-    address: row.address,
     image: row.image,
     status: row.status,
     customer_type: row.customer_type,
@@ -166,3 +170,16 @@ export function applyContactPolicy(wire: WireCustomer, canSeeContact: boolean): 
   if (canSeeContact) return wire;
   return { ...wire, email: maskEmail(wire.email), phone: maskPhone(wire.phone) };
 }
+
+/** `POST /customers/:id/wholesale/revoke` — withdrawing a price the customer relies on must say why (it goes to the audit log). */
+export const revokeWholesaleBodySchema = z.object({
+  reason: z.string().trim().min(1).max(1000),
+});
+export type RevokeWholesaleBody = z.infer<typeof revokeWholesaleBodySchema>;
+
+/** `POST /customers/me/email` — the password is asked again: a session alone must not be able to hand the account to another mailbox. */
+export const changeEmailBodySchema = z.object({
+  email: z.string().trim().toLowerCase().email().max(255),
+  password: z.string().min(1),
+});
+export type ChangeEmailBody = z.infer<typeof changeEmailBodySchema>;

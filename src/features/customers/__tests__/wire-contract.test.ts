@@ -29,9 +29,11 @@ const row = {
   wholesale_decided_at: null,
   wholesale_decided_by_user_id: null,
   wholesale_rejection_reason: null,
+  preferred_language: null,
+  terms_accepted_at: null,
+  terms_version: null,
   preferred_branch_id: null,
   image: null,
-  address: null,
   archived_at: null,
   created_at: new Date('2026-09-20T09:34:27.311Z'),
 };
@@ -46,7 +48,6 @@ describe('WireCustomer', () => {
         'full_name',
         'email',
         'phone',
-        'address',
         'image',
         'status',
         'customer_type',
@@ -66,6 +67,10 @@ describe('WireCustomer', () => {
   it('never leaks the credential columns', () => {
     const wire = toWireCustomer(row) as unknown as Record<string, unknown>;
     expect(wire).not.toHaveProperty('password_hash');
+    // Consent bookkeeping stays server-side.
+    expect(wire).not.toHaveProperty('preferred_language');
+    expect(wire).not.toHaveProperty('terms_version');
+    expect(wire).not.toHaveProperty('terms_accepted_at');
     // Who decided is an employee id — internal, and not the customer's to see.
     expect(wire).not.toHaveProperty('wholesale_decided_by_user_id');
   });

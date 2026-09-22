@@ -127,6 +127,29 @@ const envSchema = z.object({
    */
   PASSWORD_POLICY: z.enum(['strict', 'relaxed']).default('strict'),
 
+  /**
+   * Key that seals TOTP secrets in the database and signs login challenges.
+   * **Required in production** (the app refuses to start a second-factor
+   * operation without it). Any long random string; changing it invalidates
+   * every enrolled authenticator, so treat it like the database password.
+   */
+  /**
+   * Path to the Firebase **service account** JSON that lets this server send
+   * push notifications. Keep the file outside the repository; only its path goes
+   * in `.env`. Unset = pushes are written to the log instead of delivered.
+   */
+  FCM_SERVICE_ACCOUNT_PATH: z.string().min(1).optional(),
+  MFA_ENCRYPTION_KEY: z.string().min(16).optional(),
+  /**
+   * Whether roles that must have a second factor are *forced* to enroll
+   * (`true`/`false`). Unset = **off** (deferred proposal, docs/reference/mfa.md).
+   * Accounts that HAVE enrolled are challenged either way.
+   */
+  MFA_ENFORCE: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform((v) => (v === undefined ? undefined : v === 'true')),
+
   // ── Mail transport ────────────────────────────────────────────────────────
   // These ARE secrets (SMTP_PASS especially) and are read only by
   // core/auth/adapters/smtp-email-sender.ts — never by auth-config.ts, so a
@@ -154,7 +177,23 @@ const envSchema = z.object({
    * production fails loudly instead of silently logging codes (see
    * LogEmailSender). `smtp`/`log` force one explicitly.
    */
-  MAIL_TRANSPORT: z.enum(['auto', 'smtp', 'log']).default('auto'),
+  MAIL_TRANSPORT: z.enum(['auto', 'smtp', 'smtp2', 'log']).default('auto'),
+
+  // ── Fallback mail server ──────────────────────────────────────────────────
+  // A second SMTP account tried when the first fails (down, auth broken, port
+  // blocked, recipient refused). Same shape as SMTP_*; empty SMTP2_HOST = no
+  // fallback. `MAIL_TRANSPORT=smtp2` forces this one alone, to test it.
+  //   Gmail (app password) → SMTP2_HOST=smtp.gmail.com SMTP2_PORT=587 SMTP2_SECURE=false
+  SMTP2_HOST: z.string().default(''),
+  SMTP2_PORT: z.coerce.number().int().positive().default(587),
+  SMTP2_SECURE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  SMTP2_USER: z.string().default(''),
+  SMTP2_PASS: z.string().default(''),
+  /** Sender shown by the fallback. Must be an address its account may send as (Gmail rewrites others). */
+  MAIL2_FROM: z.string().default(''),
 });
 
 const parsed = envSchema

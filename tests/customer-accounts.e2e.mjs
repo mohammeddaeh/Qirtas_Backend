@@ -81,7 +81,7 @@ const email = `e2e_customer_${Date.now()}@qirtas.test`;
 const other = `e2e_customer_b_${Date.now()}@qirtas.test`;
 
 // ── Sign-up ──────────────────────────────────────────────────────────────────
-const reg = await call('POST', '/customers/register', {
+const reg = await call('POST', '/customers/register', { accept_terms: true,
   first_name: 'Test',
   last_name: 'Customer',
   email,
@@ -95,7 +95,7 @@ chk('starts active', reg.json?.data?.customer?.status === 'active');
 chk('starts UNverified', reg.json?.data?.customer?.email_verified === false);
 chk('always retail on self-registration', reg.json?.data?.customer?.customer_type === 'retail');
 
-const smuggled = await call('POST', '/customers/register', {
+const smuggled = await call('POST', '/customers/register', { accept_terms: true,
   first_name: 'S',
   last_name: 'M',
   email: other,
@@ -109,16 +109,19 @@ chk(
   String(smuggled.json?.data?.customer?.customer_type),
 );
 
+chk('signing up WITHOUT accepting the terms → 422', (await call('POST', '/customers/register', { first_name: 'N', last_name: 'T', email: `e2e_customer_terms_${Date.now()}@qirtas.test`, password: PW })).status === 422);
+chk('…and accept_terms:false is refused too', (await call('POST', '/customers/register', { first_name: 'N', last_name: 'T', email: `e2e_customer_terms2_${Date.now()}@qirtas.test`, password: PW, accept_terms: false })).status === 422);
+
 // ── Duplicates across BOTH realms ────────────────────────────────────────────
-const dupSame = await call('POST', '/customers/register', {
+const dupSame = await call('POST', '/customers/register', { accept_terms: true,
   first_name: 'A', last_name: 'B', email, password: PW,
 });
 chk('same email again → 409', dupSame.status === 409, String(dupSame.status));
-const dupCase = await call('POST', '/customers/register', {
+const dupCase = await call('POST', '/customers/register', { accept_terms: true,
   first_name: 'A', last_name: 'B', email: email.toUpperCase(), password: PW,
 });
 chk('same email, other case → 409', dupCase.status === 409, String(dupCase.status));
-const dupStaff = await call('POST', '/customers/register', {
+const dupStaff = await call('POST', '/customers/register', { accept_terms: true,
   first_name: 'A', last_name: 'B', email: ADMIN_EMAIL, password: PW,
 });
 chk('a STAFF address cannot become a customer → 409', dupStaff.status === 409, String(dupStaff.status));
@@ -240,6 +243,14 @@ const app = await call('POST', `/customers/${id}/wholesale/decide`, { decision: 
 chk('approve → wholesale + approved', app.status === 200 && app.json?.data?.customer_type === 'wholesale' && app.json?.data?.wholesale_status === 'approved');
 chk('an approved customer cannot ask again → 409', (await call('POST', '/customers/me/wholesale-request', null, CT4)).status === 409);
 
+// ── Wholesale can be WITHDRAWN, not only granted ─────────────────────────────
+chk('revoking needs a reason → 422', (await call('POST', `/customers/${id}/wholesale/revoke`, {}, AT)).status === 422);
+const rev = await call('POST', `/customers/${id}/wholesale/revoke`, { reason: 'No longer qualifies' }, AT);
+chk('revoke → back to retail with no wholesale status', rev.status === 200 && rev.json?.data?.customer_type === 'retail' && rev.json?.data?.wholesale_status === null, String(rev.status));
+chk('revoking a non-wholesale account → 409', (await call('POST', `/customers/${id}/wholesale/revoke`, { reason: 'again' }, AT)).status === 409);
+chk('a customer cannot revoke anyone → 401', (await call('POST', `/customers/${id}/wholesale/revoke`, { reason: 'x' }, CT4)).status === 401);
+chk('after a revoke the customer may ask again', (await call('POST', '/customers/me/wholesale-request', null, CT4)).json?.data?.wholesale_status === 'pending');
+
 // ── Activity + support actions ───────────────────────────────────────────────
 const act = await call('GET', `/customers/${id}/activity?limit=50`, null, AT);
 chk('activity lists what the customer did', act.status === 200 && act.json?.data?.items?.some((e) => e.action === 'customer.wholesale_requested'));
@@ -254,13 +265,45 @@ chk('resend verification for an unverified customer reaches the mailer (200, or 
   resend.status === 200 || (resend.status === 429 && resend.json?.data?.message_key === 'verification_resend_cooldown'), String(resend.status));
 chk('an admin can trigger a password reset (mailed to the customer)', (await call('POST', `/customers/${id}/password-reset`, null, AT)).status === 200);
 
+// ── A VERIFIED address cannot be moved (only the sign-up typo can) ──────────
+const verifiedTry = await call('POST', '/customers/me/email', { email: `e2e_nope_${Date.now()}@qirtas.test`, password: NEWPW }, CT4);
+chk('a customer with a VERIFIED email cannot change it → 409 email_change_not_allowed', verifiedTry.status === 409 && verifiedTry.json?.data?.message_key === 'email_change_not_allowed', String(verifiedTry.status));
+
 // ── Sign-out ─────────────────────────────────────────────────────────────────
 chk('logout with a customer token → ok', (await call('POST', '/users/logout', null, CT4)).status === 200);
 chk('the logged-out token is dead', (await call('GET', '/customers/me', null, CT4)).status === 401);
 
+
+// ── Changing the email address ───────────────────────────────────────────────
+const other2 = `e2e_customer_moved_${Date.now()}@qirtas.test`;
+const second = (await call('POST', '/users/login', { email: other, password: PW })).json?.data?.token;
+chk('a second session exists before the change', !!second);
+const badPw = await call('POST', '/customers/me/email', { email: other2, password: 'wrong' }, UNVERIFIED);
+chk('changing email with a wrong password → 422 current_password_wrong', badPw.status === 422 && badPw.json?.data?.message_key === 'current_password_wrong', String(badPw.status));
+chk('…to the SAME address → 422 email_unchanged', (await call('POST', '/customers/me/email', { email: other, password: PW }, UNVERIFIED)).json?.data?.message_key === 'email_unchanged');
+chk('…to an address held by STAFF → 409', (await call('POST', '/customers/me/email', { email: ADMIN_EMAIL, password: PW }, UNVERIFIED)).status === 409);
+chk('a guest cannot change an email → 401', (await call('POST', '/customers/me/email', { email: other2, password: PW })).status === 401);
+const moved = await call('POST', '/customers/me/email', { email: other2, password: PW }, UNVERIFIED);
+chk('the right password moves the account', moved.status === 200 && moved.json?.data?.email === other2, String(moved.status));
+chk('…and the new address is UNverified (purchasing stops until it is confirmed)', moved.json?.data?.email_verified === false);
+chk('…a code is mailed to the NEW address', !!(await latestCode(other2)));
+chk('…the OLD address no longer signs in', (await call('POST', '/users/login', { email: other, password: PW })).status === 401);
+chk('…the new address does', (await call('POST', '/users/login', { email: other2, password: PW })).status === 200);
+chk('…every OTHER session was ended', (await call('GET', '/customers/me', null, second)).status === 401);
+chk('…but the session that asked keeps working', (await call('GET', '/customers/me', null, UNVERIFIED)).status === 200);
+chk('…and the old address is free again (another customer can take it)', (await call('POST', '/customers/register', { accept_terms: true, first_name: 'F', last_name: 'R', email: other, password: PW })).status === 201);
+
+// ── An employee edits their OWN profile ──────────────────────────────────────
+const mine = await call('PATCH', '/users/me', { address: 'e2e address' }, AT);
+chk('an employee can edit their own address', mine.status === 200 && mine.json?.data?.address === 'e2e address', String(mine.status));
+chk('…an empty body → 422', (await call('PATCH', '/users/me', {}, AT)).status === 422);
+chk('…email is not a profile field (dropped → nothing left → 422)', (await call('PATCH', '/users/me', { email: 'x@y.z' }, AT)).status === 422);
+chk('…a customer token cannot use it → 401', (await call('PATCH', '/users/me', { address: 'x' }, CT4)).status === 401);
+chk('…and it can be cleared', (await call('PATCH', '/users/me', { address: null }, AT)).json?.data?.address === null);
+
 // ── Contact policy + self-service erase ──────────────────────────────────────
-const seen = await call('GET', `/customers?search=${encodeURIComponent(other)}`, null, AT);
-chk('a holder of customers.contact sees the real address', seen.json?.data?.items?.[0]?.email === other, String(seen.json?.data?.items?.[0]?.email));
+const seen = await call('GET', `/customers?search=${encodeURIComponent(other2)}`, null, AT);
+chk('a holder of customers.contact sees the real address', seen.json?.data?.items?.[0]?.email === other2, String(seen.json?.data?.items?.[0]?.email));
 
 chk('erasing needs the password: none → 422', (await call('DELETE', '/customers/me', {}, UNVERIFIED)).status === 422);
 const wrongPw = await call('DELETE', '/customers/me', { password: 'wrong-password' }, UNVERIFIED);
@@ -269,8 +312,8 @@ chk('…and the account is still there', (await call('GET', '/customers/me', nul
 chk('a staff token cannot erase a customer account → 401', (await call('DELETE', '/customers/me', { password: PW }, AT)).status === 401);
 chk('the right password erases the account', (await call('DELETE', '/customers/me', { password: PW }, UNVERIFIED)).status === 200);
 chk('…its token is dead', (await call('GET', '/customers/me', null, UNVERIFIED)).status === 401);
-chk('…it cannot sign in', (await call('POST', '/users/login', { email: other, password: PW })).status === 401);
-chk('…and the admin no longer lists it', !(await call('GET', `/customers?search=${encodeURIComponent(other)}`, null, AT)).json?.data?.items?.length);
+chk('…it cannot sign in', (await call('POST', '/users/login', { email: other2, password: PW })).status === 401);
+chk('…and the admin no longer lists it', !(await call('GET', `/customers?search=${encodeURIComponent(other2)}`, null, AT)).json?.data?.items?.length);
 
 // ── Retiring an account ──────────────────────────────────────────────────────
 const arch = await call('POST', `/customers/${id}/archive`, null, AT);
@@ -283,7 +326,7 @@ chk('reactivating an ARCHIVED customer is refused → 409', (await call('POST', 
 const un = await call('POST', `/customers/${id}/unarchive`, null, AT);
 chk('unarchive brings it back but still DISABLED', un.status === 200 && un.json?.data?.archived_at === null && un.json?.data?.status === 'disabled');
 chk('unarchiving one that is not archived → 409', (await call('POST', `/customers/${id}/unarchive`, null, AT)).status === 409);
-const live = await call('POST', '/customers/register', { first_name: 'L', last_name: 'V', email: `e2e_customer_live_${Date.now()}@qirtas.test`, password: PW });
+const live = await call('POST', '/customers/register', { accept_terms: true, first_name: 'L', last_name: 'V', email: `e2e_customer_live_${Date.now()}@qirtas.test`, password: PW });
 chk('deleting an ACTIVE customer is refused → 409', (await call('DELETE', `/customers/${live.json?.data?.customer?.id}`, null, AT)).status === 409);
 chk('deleting a disabled customer → 200', (await call('DELETE', `/customers/${id}`, null, AT)).status === 200);
 chk('…and it is gone', (await call('GET', `/customers/${id}`, null, AT)).status === 404);

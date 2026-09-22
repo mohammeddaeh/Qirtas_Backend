@@ -99,6 +99,54 @@ export const MESSAGES = {
     en: 'A wholesale request is already open or approved for this account',
     ar: 'يوجد طلب جملة مفتوح أو معتمد لهذا الحساب',
   },
+  wholesale_not_approved: {
+    en: 'This account is not an approved wholesale account',
+    ar: 'هذا الحساب ليس حساب جملة معتمداً',
+  },
+  mfa_already_enrolled: {
+    en: 'Two-factor authentication is already set up',
+    ar: 'المصادقة الثنائية مفعّلة بالفعل',
+  },
+  mfa_not_started: {
+    en: 'Start the setup first',
+    ar: 'ابدأ الإعداد أولاً',
+  },
+  mfa_code_invalid: {
+    en: 'The code is wrong or expired',
+    ar: 'الرمز خاطئ أو منتهي',
+  },
+  mfa_locked: {
+    en: 'Too many wrong codes. Try again in 15 minutes.',
+    ar: 'محاولات خاطئة كثيرة. أعد المحاولة بعد ١٥ دقيقة.',
+  },
+  mfa_challenge_invalid: {
+    en: 'The sign-in step expired. Sign in again.',
+    ar: 'انتهت خطوة الدخول. سجّل الدخول من جديد.',
+  },
+  mfa_staff_only: {
+    en: 'Two-factor authentication is for staff accounts',
+    ar: 'المصادقة الثنائية لحسابات الموظفين',
+  },
+  mfa_required_by_role: {
+    en: 'Your role requires two-factor authentication',
+    ar: 'منصبك يتطلّب المصادقة الثنائية',
+  },
+  mfa_setup_required: {
+    en: 'Set up two-factor authentication to continue',
+    ar: 'فعّل المصادقة الثنائية للمتابعة',
+  },
+  mfa_reset_self_forbidden: {
+    en: 'You cannot reset your own two-factor authentication',
+    ar: 'لا يمكنك إعادة ضبط المصادقة الثنائية لحسابك',
+  },
+  email_change_not_allowed: {
+    en: 'A verified email address cannot be changed here. Contact support.',
+    ar: 'لا يمكن تغيير بريد موثَّق من هنا. تواصل مع الدعم.',
+  },
+  email_unchanged: {
+    en: 'That is already your email address',
+    ar: 'هذا هو بريدك الحالي بالفعل',
+  },
   wholesale_not_pending: {
     en: 'This account has no pending wholesale request',
     ar: 'لا يوجد طلب جملة قيد المراجعة لهذا الحساب',
@@ -110,6 +158,10 @@ export const MESSAGES = {
   customer_delete_requires_disabled: {
     en: 'Only a disabled customer can be deleted',
     ar: 'لا يُحذف إلا حساب زبون معطَّل',
+  },
+  address_limit_reached: {
+    en: 'You have reached the maximum number of saved addresses. Remove one to add another.',
+    ar: 'وصلت للحد الأقصى من العناوين المحفوظة. احذف عنواناً لتضيف غيره.',
   },
   customer_not_archived: {
     en: 'This customer is not archived',
@@ -382,9 +434,13 @@ export const MESSAGES = {
     en: 'This account is archived. Restore it before editing.',
     ar: 'هذا الحساب مؤرشف. استرجعه قبل تعديله.',
   },
+  // One email, one account, across both realms (`account_emails`). There is no
+  // customer-to-staff conversion, so the way out is a second email — say so.
+  // Deliberately silent on *which* realm holds it: naming it would tell anyone
+  // typing addresses into the sign-up form which ones belong to staff.
   email_taken: {
-    en: 'An account with this email already exists',
-    ar: 'يوجد حساب بهذا البريد الإلكتروني بالفعل',
+    en: 'This email already belongs to another account. Use a different email — a work account and a shopping account cannot share one.',
+    ar: 'هذا البريد مستخدَم لحساب آخر. استعمل بريداً مختلفاً — حساب العمل وحساب التسوّق لا يشتركان ببريد واحد.',
   },
   registration_not_rejected: {
     en: 'Only a rejected registration can be resubmitted',

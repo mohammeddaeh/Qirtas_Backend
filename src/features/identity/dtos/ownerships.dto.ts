@@ -10,6 +10,8 @@ export const ownershipResponseSchema = z.object({
   valid_from: z.string(),
   valid_to: z.string().nullable(),
   created_at: z.string(),
+  user_name: z.string(),
+  branch_name: z.string().nullable(),
 });
 
 export interface WireOwnership {
@@ -20,9 +22,16 @@ export interface WireOwnership {
   valid_from: string;
   valid_to: string | null;
   created_at: string;
+  /** Resolved server-side: a share list of bare ids is unreadable, and the client should not fetch two catalogs to label it. */
+  user_name: string;
+  /** `null` = the **all branches** scope, which is its own 100% pool. */
+  branch_name: string | null;
 }
 
-export function toWireOwnership(row: OwnershipRow): WireOwnership {
+export function toWireOwnership(
+  row: OwnershipRow,
+  names: { user_name: string; branch_name: string | null },
+): WireOwnership {
   return {
     id: row.id,
     user_id: row.user_id,
@@ -31,6 +40,7 @@ export function toWireOwnership(row: OwnershipRow): WireOwnership {
     valid_from: row.valid_from.toISOString(),
     valid_to: row.valid_to ? row.valid_to.toISOString() : null,
     created_at: row.created_at.toISOString(),
+    ...names,
   };
 }
 
@@ -44,4 +54,13 @@ export type CreateOwnershipBody = z.infer<typeof createOwnershipBodySchema>;
 export const listOwnershipsQuerySchema = z.object({
   branch_scope: z.coerce.number().int().positive().optional(),
 });
+export const revisePercentageBodySchema = z.object({
+  percentage: z.coerce.number().min(0.01).max(100),
+});
+export type RevisePercentageBody = z.infer<typeof revisePercentageBodySchema>;
+
+export const ownershipIdParamsSchema = z.object({
+  id: z.coerce.number().int().positive(),
+});
+
 export type ListOwnershipsQuery = z.infer<typeof listOwnershipsQuerySchema>;

@@ -4,7 +4,7 @@ import { validate } from '../../../core/validation/validate.js';
 import { requireAuth } from '../../../core/http/require-actor.js';
 import { publicRoute } from '../../../core/http/route-marker.js';
 import { requirePermission } from '../../../core/http/require-permission.js';
-import { loginRateLimit } from '../../../core/middleware/login-rate-limit.js';
+import { loginRateLimit, mfaLoginRateLimit } from '../../../core/middleware/login-rate-limit.js';
 import { passwordResetRateLimit } from '../../../core/middleware/password-reset-rate-limit.js';
 import { registerRateLimit } from '../../../core/middleware/register-rate-limit.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
@@ -14,11 +14,13 @@ import {
   resubmitRegistrationBodySchema,
   decideRegistrationBodySchema,
   loginBodySchema,
+  loginMfaBodySchema,
   forgotPasswordBodySchema,
   resetPasswordBodySchema,
   changePasswordBodySchema,
   bootstrapSuperAdminBodySchema,
   updateUserBodySchema,
+  updateOwnProfileBodySchema,
   createUserByAdminBodySchema,
   usersFilterQuerySchema,
   currentUserQuerySchema,
@@ -55,6 +57,14 @@ usersRouter.get(
   requireAuth,
   validate(currentUserQuerySchema, 'query'),
   asyncHandler(usersController.getCurrentUser),
+);
+
+/** Edits the caller's own name, phone and address — no permission: it is their own record. Before `/:id`. */
+usersRouter.patch(
+  '/me',
+  requireAuth,
+  validate(updateOwnProfileBodySchema, 'body'),
+  asyncHandler(usersController.updateOwnProfile),
 );
 
 /**
@@ -187,6 +197,26 @@ usersRouter.post(
   validate(loginBodySchema, 'body'),
   loginRateLimit,
   asyncHandler(usersController.login),
+);
+
+/**
+ * Second step of a sign-in for an account holding a second factor. Rate-limited
+ * like the first (the per-account lockout in `mfa.service` is the real brake).
+ */
+usersRouter.post(
+  '/login/mfa',
+  publicRoute,
+  validate(loginMfaBodySchema, 'body'),
+  mfaLoginRateLimit,
+  asyncHandler(usersController.loginMfa),
+);
+
+/** Removes another person's second factor (lost phone and recovery codes) and ends their sessions. */
+usersRouter.post(
+  '/:id/mfa/reset',
+  requirePermission('users.manage'),
+  validate(userIdParamsSchema, 'params'),
+  asyncHandler(usersController.resetUserMfa),
 );
 
 /** Ends only the calling session (identified by its own Bearer token) — other concurrent sessions are untouched. */

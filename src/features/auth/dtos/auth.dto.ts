@@ -162,3 +162,29 @@ export const refreshResponseSchema = z.object({
   rotated: z.boolean(),
   expires_at: z.string(),
 });
+
+export const mfaCodeBodySchema = z.object({
+  code: z.string().trim().min(6).max(16),
+});
+export type MfaCodeBody = z.infer<typeof mfaCodeBodySchema>;
+
+/** Disabling needs the password AND a code: a stolen session alone must not be able to drop the factor. */
+export const mfaDisableBodySchema = z.object({
+  password: z.string().min(1),
+  code: z.string().trim().min(6).max(16),
+});
+export type MfaDisableBody = z.infer<typeof mfaDisableBodySchema>;
+
+/** A device announcing where pushes for the signed-in account should go. */
+export const registerPushTokenBodySchema = z.object({
+  token: z.string().trim().min(20).max(512),
+  platform: z.enum(['android', 'ios']),
+  /** The app language on this device — the push is written in it. */
+  language: z.string().trim().max(8).optional(),
+});
+export type RegisterPushTokenBody = z.infer<typeof registerPushTokenBodySchema>;
+
+export const removePushTokenBodySchema = z.object({
+  token: z.string().trim().min(20).max(512),
+});
+export type RemovePushTokenBody = z.infer<typeof removePushTokenBodySchema>;

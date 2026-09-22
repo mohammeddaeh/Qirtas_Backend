@@ -7,6 +7,10 @@ import { passwordResetRateLimit } from '../../../core/middleware/password-reset-
 import { verificationRateLimit } from '../../../core/middleware/verification-rate-limit.js';
 import {
   changePasswordBodySchema,
+  mfaCodeBodySchema,
+  registerPushTokenBodySchema,
+  removePushTokenBodySchema,
+  mfaDisableBodySchema,
   forgotPasswordBodySchema,
   resetPasswordBodySchema,
   sessionIdParamsSchema,
@@ -113,4 +117,52 @@ authRouter.post(
   requireSignedIn,
   validate(changePasswordBodySchema, 'body'),
   asyncHandler(authController.changePassword),
+);
+
+// ── Second factor (TOTP) ─────────────────────────────────────────────────────
+//
+// Any signed-in account may enroll; who is *required* to is decided by the
+// application's policy (identity), not here. These paths are the ones an
+// enrollment-pending session is still allowed to call (see mfa-gate.ts).
+
+authRouter.get('/mfa', requireSignedIn, asyncHandler(authController.mfaStatus));
+authRouter.post('/mfa/setup', requireSignedIn, asyncHandler(authController.mfaSetup));
+authRouter.post(
+  '/mfa/confirm',
+  requireSignedIn,
+  validate(mfaCodeBodySchema, 'body'),
+  asyncHandler(authController.mfaConfirm),
+);
+authRouter.post(
+  '/mfa/recovery-codes',
+  requireSignedIn,
+  validate(mfaCodeBodySchema, 'body'),
+  asyncHandler(authController.mfaRegenerateCodes),
+);
+authRouter.post(
+  '/mfa/disable',
+  requireSignedIn,
+  validate(mfaDisableBodySchema, 'body'),
+  asyncHandler(authController.mfaDisable),
+);
+
+// ── Push notification devices ────────────────────────────────────────────────
+
+/**
+ * Registers this device for pushes about the caller's own account. Any signed-in
+ * account (staff or customer) — the token moves to them if another account held it.
+ */
+authRouter.post(
+  '/push-token',
+  requireSignedIn,
+  validate(registerPushTokenBodySchema, 'body'),
+  asyncHandler(authController.registerPushToken),
+);
+
+/** Called at sign-out so the next person on this phone does not receive this one's notifications. */
+authRouter.post(
+  '/push-token/remove',
+  requireSignedIn,
+  validate(removePushTokenBodySchema, 'body'),
+  asyncHandler(authController.removePushToken),
 );
