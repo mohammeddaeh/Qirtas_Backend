@@ -14,6 +14,8 @@ import '../../features/identity/ownerships.openapi.js';
 import '../../features/identity/user-role-assignments.openapi.js';
 import '../../features/identity/audit-log.openapi.js';
 import '../../features/localization/languages.openapi.js';
+import '../media/media.openapi.js';
+import '../../features/catalog/catalog.openapi.js';
 
 export function buildOpenApiDocument() {
   const generator = new OpenApiGeneratorV3(registry.definitions);

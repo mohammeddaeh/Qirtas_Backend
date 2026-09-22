@@ -31,6 +31,7 @@ import { auditLogSecurityEventSink } from '../../features/identity/repositories/
 import { seedCore } from './seed-core.js';
 import { bootstrapSuperAdminIfMissing } from './bootstrap-super-admin.js';
 import { seedDemoArabicData } from './seed-demo-arabic-data.js';
+import { seedCatalogReference } from './seed-catalog.js';
 import { seedFrenchUiTranslations } from './seed-french-ui-translations.js';
 import { seedUiTextOverridesDemo } from './seed-ui-text-overrides-demo.js';
 import { logger } from '../logger/logger.js';
@@ -51,6 +52,8 @@ Usage: npm run db:seed [-- <flags>]
 Always runs:
   (core)                permission catalog + role catalog + permission display
                         names (ar/en). Idempotent.
+                        + catalog starting data (units, attributes, category
+                        tree, brands) — insert-if-missing, never overwrites.
 
 Optional flags:
   --admin               Create the first Super Admin account if the users table
@@ -166,6 +169,9 @@ async function main(): Promise<void> {
   });
 
   await seedCore();
+  // Catalog starting data (units, attributes, category tree, brands) —
+  // insert-if-missing, so admin edits survive every re-run.
+  await seedCatalogReference();
 
   if (parsed.admin) {
     await bootstrapSuperAdminIfMissing();

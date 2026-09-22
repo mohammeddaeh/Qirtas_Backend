@@ -148,6 +148,27 @@
       "when": 1790059760939,
       "tag": "0020_session_tombstones",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790064015064,
+      "tag": "0021_media_assets",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790067596843,
+      "tag": "0022_catalog_reference",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790068550220,
+      "tag": "0023_catalog_products",
+      "breakpoints": true
     }
   ]
 }

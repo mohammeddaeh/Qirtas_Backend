@@ -139,6 +139,24 @@ const envSchema = z.object({
    * in `.env`. Unset = pushes are written to the log instead of delivered.
    */
   FCM_SERVICE_ACCOUNT_PATH: z.string().min(1).optional(),
+
+  // ── File storage (core/media/) ────────────────────────────────────────────
+  /**
+   * Where uploaded files live. `local` is the only driver today: a directory on
+   * this machine. The code writes to the `StorageDriver` port, never to a path,
+   * so moving to MinIO/S3 later is a new adapter plus this value — no caller
+   * changes.
+   */
+  STORAGE_DRIVER: z.enum(['local']).default('local'),
+  /** Root directory for `local`, relative to the process cwd. Kept out of git (`.gitignore`). */
+  STORAGE_LOCAL_ROOT: z.string().min(1).default('storage'),
+  /**
+   * HMAC key that signs short-lived links to **private** files (a customer's
+   * print document, which may be an ID copy). Required in production. Unset in
+   * development = a random key per process, so links die on restart — harmless
+   * for a developer, unacceptable for a deployment.
+   */
+  STORAGE_SIGNING_KEY: z.string().min(32).optional(),
   MFA_ENCRYPTION_KEY: z.string().min(16).optional(),
   /**
    * Whether roles that must have a second factor are *forced* to enroll
@@ -210,6 +228,10 @@ const parsed = envSchema
   .refine((e) => !(e.NODE_ENV === 'production' && e.PASSWORD_POLICY === 'relaxed'), {
     message: 'PASSWORD_POLICY=relaxed is not allowed when NODE_ENV=production',
     path: ['PASSWORD_POLICY'],
+  })
+  .refine((e) => !(e.NODE_ENV === 'production' && e.STORAGE_SIGNING_KEY === undefined), {
+    message: 'STORAGE_SIGNING_KEY is required when NODE_ENV=production',
+    path: ['STORAGE_SIGNING_KEY'],
   })
   .refine((e) => e.PASSWORD_POLICY === 'relaxed' || e.PASSWORD_MIN_LENGTH >= 8, {
     message: 'PASSWORD_MIN_LENGTH below 8 requires PASSWORD_POLICY=relaxed',

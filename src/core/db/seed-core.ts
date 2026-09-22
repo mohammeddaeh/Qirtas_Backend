@@ -272,6 +272,72 @@ const PERMISSIONS: SeedPermission[] = [
     is_sensitive: true,
     display: { ar: 'عرض بيانات تواصل الزبائن', en: 'View Customer Contact Details' },
   },
+
+  // ── Catalog, pricing, promotions — docs/reference/store_system.md §١٠ ─────
+  // One key per DECISION, not per action. Branch vs all-branches comes from the
+  // role assignment's branch, never from a second key.
+  {
+    key: 'catalog.view',
+    module: 'catalog',
+    is_sensitive: false,
+    display: { ar: 'عرض الكتالوج', en: 'View Catalog' },
+  },
+  {
+    key: 'catalog.create',
+    module: 'catalog',
+    is_sensitive: false,
+    display: { ar: 'إضافة إلى الكتالوج', en: 'Add to Catalog' },
+  },
+  {
+    key: 'catalog.edit',
+    module: 'catalog',
+    is_sensitive: false,
+    display: { ar: 'تعديل الكتالوج', en: 'Edit Catalog' },
+  },
+  {
+    key: 'catalog.delete',
+    module: 'catalog',
+    is_sensitive: true,
+    display: { ar: 'حذف وأرشفة من الكتالوج', en: 'Delete or Archive Catalog Items' },
+  },
+  {
+    // A branch meets a barcode the catalog does not know and keeps working.
+    key: 'catalog.drafts.create',
+    module: 'catalog',
+    is_sensitive: false,
+    display: { ar: 'إنشاء مسودة منتج', en: 'Create Product Draft' },
+  },
+  {
+    key: 'catalog.drafts.review',
+    module: 'catalog',
+    is_sensitive: false,
+    display: { ar: 'اعتماد مسودات المنتجات', en: 'Review Product Drafts' },
+  },
+  {
+    key: 'pricing.edit',
+    module: 'pricing',
+    is_sensitive: true,
+    display: { ar: 'تعديل الأسعار', en: 'Edit Prices' },
+  },
+  {
+    // Policies, bands, exchange rate, bulk updates — moves every price at once.
+    key: 'pricing.policy',
+    module: 'pricing',
+    is_sensitive: true,
+    display: { ar: 'سياسات التسعير وسعر الصرف', en: 'Pricing Policies & Exchange Rate' },
+  },
+  {
+    key: 'promotions.edit',
+    module: 'promotions',
+    is_sensitive: false,
+    display: { ar: 'إدارة العروض', en: 'Manage Promotions' },
+  },
+  {
+    key: 'barcodes.print',
+    module: 'barcodes',
+    is_sensitive: false,
+    display: { ar: 'توليد الباركود وطباعة الملصقات', en: 'Generate Barcodes & Print Labels' },
+  },
 ];
 
 /**
@@ -302,6 +368,10 @@ const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
   customization: { ar: 'التخصيص', en: 'Customization' },
   orders: { ar: 'الطلبات', en: 'Orders' },
   customers: { ar: 'العملاء', en: 'Customers' },
+  catalog: { ar: 'الكتالوج', en: 'Catalog' },
+  pricing: { ar: 'التسعير', en: 'Pricing' },
+  promotions: { ar: 'العروض', en: 'Promotions' },
+  barcodes: { ar: 'الباركود', en: 'Barcodes' },
 };
 
 const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
@@ -407,7 +477,7 @@ const ROLES: SeedRole[] = [
     category: 'system',
     level: null,
     is_system_default: true,
-    permissionKeys: ['reports.financial.view', 'reports.operational.view', 'audit_log.view'],
+    permissionKeys: ['reports.financial.view', 'reports.operational.view', 'audit_log.view', 'catalog.view'],
   },
   {
     name: 'مدير الفرع',
@@ -431,6 +501,12 @@ const ROLES: SeedRole[] = [
       // مدير الفرع يقرّر طلبات الجملة (قرار تجاري بحدود فرعه) ولا يقرأ بيانات تواصل.
       'customers.wholesale',
       'reports.operational.view',
+      // الكتالوج بفرعه: يسعّر ضمن السياسة ويطلق عروضه ضمن السقف، ولا يعرّف المنتجات.
+      'catalog.view',
+      'catalog.drafts.create',
+      'pricing.edit',
+      'promotions.edit',
+      'barcodes.print',
     ],
   },
   {
@@ -445,14 +521,20 @@ const ROLES: SeedRole[] = [
     category: 'operational',
     level: 20,
     is_system_default: true,
-    permissionKeys: ['inventory.view', 'inventory.edit'],
+    permissionKeys: [
+      'inventory.view',
+      'inventory.edit',
+      'catalog.view',
+      'catalog.drafts.create',
+      'barcodes.print',
+    ],
   },
   {
     name: 'موظف إنتاج طباعة',
     category: 'operational',
     level: 20,
     is_system_default: true,
-    permissionKeys: ['printing.queue.view', 'printing.status.update'],
+    permissionKeys: ['printing.queue.view', 'printing.status.update', 'catalog.view'],
   },
   {
     name: 'موظف إنتاج تخصيص',
@@ -463,6 +545,7 @@ const ROLES: SeedRole[] = [
       'customization.queue.view',
       'customization.proof.approve',
       'customization.status.update',
+      'catalog.view',
     ],
   },
   {
@@ -470,14 +553,20 @@ const ROLES: SeedRole[] = [
     category: 'operational',
     level: 20,
     is_system_default: true,
-    permissionKeys: ['orders.delivery.view', 'orders.delivery.update'],
+    permissionKeys: ['orders.delivery.view', 'orders.delivery.update', 'catalog.view'],
   },
   {
     name: 'أمين صندوق / مبيعات',
     category: 'operational',
     level: 20,
     is_system_default: true,
-    permissionKeys: ['orders.create', 'orders.view', 'printing.create', 'customization.create'],
+    permissionKeys: [
+      'orders.create',
+      'orders.view',
+      'printing.create',
+      'customization.create',
+      'catalog.view',
+    ],
   },
   {
     name: 'خدمة العملاء',
@@ -485,7 +574,13 @@ const ROLES: SeedRole[] = [
     level: 20,
     is_system_default: true,
     // خدمة العملاء تكلّم الزبائن — فهي التي تحتاج بيانات التواصل.
-    permissionKeys: ['orders.view', 'orders.manage_issues', 'customers.view', 'customers.contact'],
+    permissionKeys: [
+      'orders.view',
+      'orders.manage_issues',
+      'customers.view',
+      'customers.contact',
+      'catalog.view',
+    ],
   },
 ];
 

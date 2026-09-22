@@ -19,6 +19,8 @@ qirtas_backend/
     ├── index.ts             ← entrypoint
     ├── app.ts                ← buildApp()
     ├── core/                 ← بنية تحتية مشتركة (لا تعتمد على أي feature)
+    │   ├── media/               ← تخزين الملفات (منفذ StorageDriver + قرص محلي) · معالجة الصور · روابط موقَّعة · media_assets · /files
+    │   ├── audit/               ← منفذ recordAudit — كل feature غير identity يكتب سجل التدقيق عبره
     │   ├── config/env.ts
     │   ├── db/{client,schema,seed}.ts
     │   ├── http/{response,api-error,async-handler,require-actor}.ts
@@ -28,6 +30,7 @@ qirtas_backend/
     │   ├── validation/validate.ts
     │   └── logger/logger.ts
     └── features/
+        ├── catalog/          ← الكتالوج المركزي: وحدات · خصائص · تصنيفات · ماركات · منتجات/متغيّرات/باركود · مجموعات · صور
         └── identity/         ← الموديول التأسيسي الكامل: users/roles/permissions/branches/ownerships/audit/sessions
             ├── routes/ controllers/ services/ repositories/ schemas/ dtos/
             └── (9 كيانات، كل واحد بملف schema+dto+repository+service منفصل — الـcontrollers/routes مجمّعة حسب الـresource)

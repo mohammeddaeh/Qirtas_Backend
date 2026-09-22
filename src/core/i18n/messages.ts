@@ -551,6 +551,180 @@ export const MESSAGES = {
     en: 'The request is too large',
     ar: 'حجم الطلب كبير جداً',
   },
+
+  // ── Files and images (core/media/) ────────────────────────────────────────
+  // Read by whoever is filling a catalog form — each names what to do next.
+  image_too_large: {
+    en: 'The image is larger than 10 MB — choose a smaller one',
+    ar: 'حجم الصورة أكبر من ١٠ ميغابايت — اختر صورة أصغر',
+  },
+  image_unsupported_format: {
+    en: 'Only JPEG, PNG or WebP images are accepted',
+    ar: 'تُقبل صور JPEG أو PNG أو WebP فقط',
+  },
+  image_too_small: {
+    en: 'The image is too small — its shortest side must be at least 200 pixels',
+    ar: 'الصورة صغيرة جداً — يجب ألا يقل أقصر أضلاعها عن ٢٠٠ بكسل',
+  },
+  image_unreadable: {
+    en: 'The file could not be read as an image',
+    ar: 'تعذّرت قراءة الملف كصورة',
+  },
+  // ── Catalog (features/catalog/) ───────────────────────────────────────────
+  // Name clashes are compared after folding Arabic spellings (أ/ا, ة/ه, ى/ي),
+  // so the message says "already exists" even when the letters differ slightly.
+  unit_name_taken: {
+    en: 'A unit with this name already exists',
+    ar: 'توجد وحدة بهذا الاسم مسبقاً',
+  },
+  attribute_type_name_taken: {
+    en: 'An attribute with this name already exists',
+    ar: 'توجد خاصية بهذا الاسم مسبقاً',
+  },
+  attribute_value_taken: {
+    en: 'This attribute already has this value',
+    ar: 'هذه القيمة موجودة مسبقاً في هذه الخاصية',
+  },
+  attribute_type_in_use: {
+    en: 'Categories still allow this attribute — remove it from them first',
+    ar: 'ما زالت تصنيفات تستخدم هذه الخاصية — أزلها منها أولاً',
+  },
+  brand_name_taken: {
+    en: 'A brand with this name already exists',
+    ar: 'توجد ماركة بهذا الاسم مسبقاً',
+  },
+  category_name_taken: {
+    en: 'A category with this name already exists here',
+    ar: 'يوجد تصنيف بهذا الاسم في المستوى نفسه',
+  },
+  category_name_taken_by_archived: {
+    en: 'An archived category here uses this name — restore it instead, or choose another name',
+    ar: 'تصنيف مؤرشف في المستوى نفسه يحمل هذا الاسم — استرجعه بدلاً من إنشاء جديد، أو اختر اسماً آخر',
+  },
+  category_too_deep: {
+    en: 'Categories go three levels deep at most',
+    ar: 'التصنيفات ثلاثة مستويات كحد أقصى',
+  },
+  category_parent_invalid: {
+    en: 'A category cannot be moved under itself or one of its subcategories',
+    ar: 'لا يمكن نقل تصنيف تحت نفسه أو تحت أحد تصنيفاته الفرعية',
+  },
+  category_parent_archived: {
+    en: 'The parent category is archived — restore it first',
+    ar: 'التصنيف الأب مؤرشف — استرجعه أولاً',
+  },
+  category_archived: {
+    en: 'This category is archived — restore it before editing',
+    ar: 'هذا التصنيف مؤرشف — استرجعه قبل التعديل',
+  },
+  category_has_children: {
+    en: 'This category has subcategories — move or delete them first, or archive it',
+    ar: 'تحت هذا التصنيف تصنيفات فرعية — انقلها أو احذفها أولاً، أو أرشفه',
+  },
+  category_has_active_children: {
+    en: 'This category still has live subcategories — archive or move them first',
+    ar: 'تحت هذا التصنيف تصنيفات فرعية نشطة — أرشفها أو انقلها أولاً',
+  },
+  category_has_products: {
+    en: 'Products belong to this category — move them, or archive the category',
+    ar: 'منتجات تنتمي لهذا التصنيف — انقلها، أو أرشف التصنيف',
+  },
+  category_has_active_products: {
+    en: 'Live products belong to this category — archive or move them first',
+    ar: 'منتجات نشطة تنتمي لهذا التصنيف — أرشفها أو انقلها أولاً',
+  },
+  category_parent_has_products: {
+    en: 'The parent category holds products — move them into a subcategory first',
+    ar: 'التصنيف الأب يحوي منتجات — انقلها إلى تصنيف فرعي أولاً',
+  },
+  category_attribute_in_use: {
+    en: 'Variants in this category use an attribute being removed',
+    ar: 'متغيّرات في هذا التصنيف تستخدم خاصية تحاول إزالتها',
+  },
+  category_not_leaf: {
+    en: 'Choose the most specific category — this one has subcategories',
+    ar: 'اختر التصنيف الأدق — لهذا التصنيف تصنيفات فرعية',
+  },
+  attribute_value_in_use: {
+    en: 'Variants use this value — it cannot be deleted',
+    ar: 'متغيّرات تستخدم هذه القيمة — لا يمكن حذفها',
+  },
+  brand_in_use: {
+    en: 'Products carry this brand — archive it instead',
+    ar: 'منتجات تحمل هذه الماركة — أرشفها بدلاً من الحذف',
+  },
+
+  // Products, variants, barcodes.
+  product_archived: {
+    en: 'This product is archived — restore it before editing',
+    ar: 'هذا المنتج مؤرشف — استرجعه قبل التعديل',
+  },
+  product_category_archived: {
+    en: 'The category is archived — choose another or restore it',
+    ar: 'التصنيف مؤرشف — اختر غيره أو استرجعه',
+  },
+  product_attributes_not_allowed_in_category: {
+    en: "This product's variants use attributes the new category does not allow",
+    ar: 'متغيّرات هذا المنتج تستخدم خصائص لا يسمح بها التصنيف الجديد',
+  },
+  product_needs_active_variant: {
+    en: 'A product on sale needs at least one active variant',
+    ar: 'المنتج المعروض للبيع يحتاج متغيّراً نشطاً واحداً على الأقل',
+  },
+  product_needs_variant: {
+    en: 'A product needs at least one variant — delete the product instead',
+    ar: 'المنتج يحتاج متغيّراً واحداً على الأقل — احذف المنتج بدلاً من ذلك',
+  },
+  variant_attribute_not_allowed: {
+    en: "This attribute is not allowed in the product's category",
+    ar: 'هذه الخاصية غير مسموحة في تصنيف المنتج',
+  },
+  variant_attribute_repeated: {
+    en: 'A variant takes one value per attribute',
+    ar: 'المتغيّر يأخذ قيمة واحدة لكل خاصية',
+  },
+  variant_too_many_axes: {
+    en: 'A product varies on three attributes at most',
+    ar: 'يتفرّع المنتج على ثلاث خصائص كحد أقصى',
+  },
+  variant_axes_mismatch: {
+    en: "All of a product's variants must use the same attributes",
+    ar: 'يجب أن تستخدم كل متغيّرات المنتج الخصائص نفسها',
+  },
+  variant_combination_taken: {
+    en: 'Another variant of this product already has this combination',
+    ar: 'يوجد متغيّر آخر لهذا المنتج بالتركيبة نفسها',
+  },
+  variant_sku_taken: {
+    en: 'This SKU is already used by another variant',
+    ar: 'رمز SKU هذا مستخدم لمتغيّر آخر',
+  },
+  variant_unit_factor_invalid: {
+    en: 'A pack unit must hold more than one base unit',
+    ar: 'وحدة التعبئة يجب أن تحوي أكثر من وحدة أساس واحدة',
+  },
+  variant_unit_has_barcodes: {
+    en: 'Remove the barcodes on this unit before removing the unit',
+    ar: 'أزل الباركودات المطبوعة على هذه الوحدة قبل إزالتها',
+  },
+  barcode_format_invalid: {
+    en: 'A barcode is 4–32 digits, capital letters or dashes',
+    ar: 'الباركود من ٤ إلى ٣٢ رقماً أو حرفاً لاتينياً أو شَرطة',
+  },
+  barcode_checksum_invalid: {
+    en: 'The check digit is wrong — the code was probably mistyped',
+    ar: 'رقم التحقق خاطئ — الأرجح أن الكود كُتب خطأً',
+  },
+  barcode_already_on_unit: {
+    en: 'This unit already carries this barcode',
+    ar: 'هذه الوحدة تحمل هذا الباركود مسبقاً',
+  },
+
+  /** A private file's signed link was tampered with or has expired — the app requests a fresh one. */
+  file_link_invalid: {
+    en: 'This file link has expired — open the file again',
+    ar: 'انتهت صلاحية رابط الملف — افتح الملف من جديد',
+  },
 } as const satisfies Record<string, Record<Lang, string>>;
 
 export type MessageKey = keyof typeof MESSAGES;

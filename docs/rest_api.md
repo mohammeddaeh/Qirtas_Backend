@@ -1048,3 +1048,67 @@ Accept-language: ar | en
 - `POST /auth/push-token/remove` `{token}` — يحذف الرمز **إن كان لصاحب الطلب**؛ غير ذلك `200` بلا أثر. يُستدعى قبل مسح الجلسة عند الخروج.
 
 - **تعديل 2026-09-21**: `POST /customers/me/email` لغير الموثَّق بريدُه فقط — لموثَّق `409 email_change_not_allowed`.
+
+## 18. الملفات والصور (2026-09-22) — `core/media/` · المرجع: `docs/reference/store_system.md` §١٠
+
+**منطقتان من البداية**: `public` (صور الكتالوج، للجميع بمن فيهم الضيف) و`private` (ملفات الزبائن، برابط موقَّع قصير العمر فقط). الكود يكتب لمنفذ `StorageDriver`، واليوم `LocalDiskDriver` (`STORAGE_LOCAL_ROOT`، خارج git). الصف في `media_assets` يخزّن **مفاتيح لا روابط**، فنقل التخزين لا يُفسد أي صف.
+
+**شكل `Image`** (يُرجعه كل endpoint يقبل أو يعرض صورة):
+
+```json
+{ "id": 12, "width": 2400, "height": 1600,
+  "urls": { "thumb": "/api/v1/files/public/img/2026/09/<uuid>_thumb.webp",
+            "medium": "/api/v1/files/public/img/2026/09/<uuid>_medium.webp",
+            "large": "/api/v1/files/public/img/2026/09/<uuid>_large.webp" } }
+```
+
+الروابط **نسبية** لأصل الـAPI، والعميل يضيف عنوان الخادم الذي يكلّمه أصلاً. `width`/`height` للأصل **بعد تطبيق الاتجاه**.
+
+- `POST /catalog/media/images` — `catalog.edit`. multipart، حقل `file`. الحارس **قبل** محلّل الملف (من لا صلاحية له لا يرفع ١٠MB للذاكرة أولاً). يُحفظ WebP بثلاثة أحجام (٣٢٠ · ٨٠٠ · ١٦٠٠، بلا تكبير)، وEXIF محذوف (موقع GPS). ← `201 Image`. الأخطاء: `413 image_too_large` (> ١٠MB) · `422 image_unsupported_format` (غير JPEG/PNG/WebP — HEIC يحوّله التطبيق قبل الرفع) · `422 image_too_small` (أقصر ضلع < ٢٠٠) · `422 image_unreadable` (ليس صورة، أو يتجاوز ٤٠ ميغابكسل). الصورة **غير مرتبطة** (`attached_at: null`) حتى يُحفظ سجل كتالوج يشير لمعرّفها.
+- `GET /files/public/<key>` — عام. `Cache-Control: public, max-age=31536000, immutable` (المفتاح لا يتكرر: صورة مستبدلة = مفتاح جديد). مفتاح مخالف للقواعد أو غير موجود ← `404` بنفس الشكل.
+- `GET /files/private/<key>?expires=&signature=` — عام، **والتوقيع هو التفويض** (بلا Bearer: يقرؤه ودجت صورة أو مدير تنزيل). `403 file_link_invalid` لمنتهٍ أو معدَّل · `Cache-Control: private, no-store`. التوقيع HMAC-SHA256 على `zone:key:expires` بـ`STORAGE_SIGNING_KEY` (إلزامي بالإنتاج). **لا مُصدِر له بعد** — أول من يُصدره وحدة الطباعة، بعد فحص حقّ القارئ.
+
+## 19. الكتالوج المركزي — البيانات المرجعية (2026-09-22) · المرجع: `docs/reference/store_system.md` §٩–١٠
+
+**الصلاحيات**: قراءة `catalog.view` · إنشاء `catalog.create` · تعديل `catalog.edit` · حذف `catalog.delete` · أرشفة/استرجاع `catalog.delete` **+** `records.archive` (نفس نمط §16). `catalog.manage` مظلّة تجمعها. كل طفرة **مُدقَّقة** بنفس `audit_log_entries` (`target_entity`: `catalog_category:<id>` · `catalog_attribute_type:<id>` · `catalog_attribute_value:<id>` · `catalog_unit:<id>` · `catalog_brand:<id>`).
+
+**مقارنة الأسماء بعد الطيّ** (`core/i18n/arabic-normalize.ts`): «أقلام»=«اقلام» · «مدرسية»=«مدرسيه» · «مقوّى»=«مقوى» — فالتكرار يُرفض حتى لو اختلفت الحروف قليلاً، والبحث يجد الكلمة كيفما كُتبت.
+
+- `GET /catalog/units` — غير مُصفّحة. `{id, code, name_ar, name_en, allows_fraction, is_active, sort_order}`. `code` للمبذور فقط.
+- `POST /catalog/units` `{name_ar, name_en?, allows_fraction?, sort_order?}` · `PATCH /catalog/units/:id` `{name_ar?, name_en?, sort_order?, is_active?}` — **`allows_fraction` لا يُعدَّل** (قاعدة كسر مختلفة = وحدة أخرى). `409 unit_name_taken`.
+- `GET /catalog/attributes` — المكتبة كاملة مع قيمها، غير مُصفّحة. كل نوع يحمل `categories_count` (سبب تعذّر الحذف). `display`: `swatch` | `text`.
+- `POST /catalog/attributes` `{name_ar, name_en?, display?, sort_order?}` · `PATCH /catalog/attributes/:id` · `DELETE /catalog/attributes/:id` (`409 attribute_type_in_use` + `data.categories_count`؛ القيم تُحذف معه) · `POST /catalog/attributes/:id/values` `{value_ar, value_en?, color_hex?, sort_order?}` (`409 attribute_value_taken`) · `PATCH|DELETE /catalog/attribute-values/:id`. **الحذف مؤقتاً بلا فحص متغيّرات** — لا متغيّرات بعد؛ يُضاف الفحص والأرشفة مع الشريحة التالية.
+- `GET /catalog/categories[?archived=true]` — **قائمة مسطّحة غير مُصفّحة** (العميل يبني الشجرة): كل صف `{id, code, parent_id, level, name_ar, name_en, product_kind, price_policy, pricing_currency, effective:{product_kind, price_policy, pricing_currency}, image: Image|null, sort_order, is_active, archived_at, children_count}`. الحقول الثلاثة `null` = **يرث**، و`effective` هي القيمة المطبَّقة بعد الصعود في الشجرة — ما يعرضه العميل. `children_count` يعدّ الأبناء غير المؤرشفين.
+- `GET /catalog/categories/:id` — ما سبق + `path` (من الجذر) + `attribute_types:{own, inherited[{…, from_category_id}]}` + `is_deletable` · `is_archivable` · `active_children_count`. **الأحكام من الخادم** ولا يشتقّها العميل.
+- `POST /catalog/categories` `{parent_id?, name_ar, name_en?, product_kind?, price_policy?, pricing_currency?, image_id?, sort_order?, is_active?}` ← `201` التفاصيل. `422 category_too_deep` (أكثر من ٣ مستويات) · `409 category_name_taken` / `category_name_taken_by_archived` (بين الإخوة، `data.category_id`) · `409 category_parent_archived` · `422 image_id` لصورة غير موجودة/خاصة.
+- `PATCH /catalog/categories/:id` — نفس الحقول جزئياً. **النقل** (`parent_id`) يعيد حساب مستوى الشجرة الفرعية كاملة بمعاملة واحدة، والعمق يُفحص **مع** الشجرة المنقولة. `422 category_parent_invalid` (تحت نفسه/حفيده) · `409 category_archived`.
+- `PUT /catalog/categories/:id/attributes` `{attribute_type_ids:[]}` — يستبدل خصائص التصنيف **الخاصة**؛ الموروثة تُعدَّل على الجدّ المالك لها.
+- `DELETE /catalog/categories/:id` — لمن لا ابن تحته قط (المؤرشف يُحسب). `409 category_has_children`.
+- `POST /catalog/categories/:id/archive` (`409 category_has_active_children`) · `/unarchive` (`409 category_parent_archived` · `category_name_taken`). كلاهما idempotent.
+- `GET /catalog/brands?page&limit&search` — مُصفّحة، بحث مطويّ. `{id, name, logo: Image|null, archived_at, created_at}`. `POST` `{name, logo_image_id?}` · `PATCH` · `DELETE` (بلا فحص منتجات بعد). `409 brand_name_taken`.
+
+**بيانات البداية** (`src/core/db/seed-catalog.ts`، مع كل `npm run db:seed`): ١٠ وحدات · ١٥ خاصية بـ٩٠ قيمة · ١٤٦ تصنيفاً (١٢/٤٧/٨٧) · ١٢ ماركة — من `docs/reference/catalog_seed.md`. **إدخال عند الغياب فقط**: صفّ مبذور موجود لا يُلمس أبداً، فتعديل الأدمن ينجو من كل إعادة بذر.
+
+## 20. المنتجات والمتغيّرات والباركود والمجموعات (2026-09-22) · المرجع: `docs/reference/store_system.md` §٧ و§٩
+
+**النموذج**: المنتج (الاسم · الوصف · التصنيف · الماركة · الصور) ← متغيّرات (كل واحد تركيبة قيم فريدة، وSKU، ووحدة أساس يُعدّ بها المخزون) ← وحدات بيع بمعامل (القطعة ×1 دائماً، العلبة ×12…) ← باركودات. المنتج بلا خيارات = متغيّر واحد بلا قيم. كل ردّ كتابة على منتج أو متغيّر أو باركود **يُرجع تفاصيل المنتج كاملة**، فالشاشة تستبدل ولا ترقّع.
+
+**قواعد المتغيّرات** (مُختبَرة بـ`__tests__/product-rules.test.ts`): تصنيف **ورقي** فقط (`422 category_not_leaf`) · كل المتغيّرات على نفس الخصائص (`422 variant_axes_mismatch`) · ٣ خصائص كحد أقصى (`422 variant_too_many_axes`) · قيمة واحدة لكل خاصية (`422 variant_attribute_repeated`) · الخاصية مسموحة بالتصنيف أو أحد أجداده (`422 variant_attribute_not_allowed`) · لا تركيبتان متطابقتان (`409 variant_combination_taken`). SKU بلا إدخال = `QRT-<id>`، وتكراره `409 variant_sku_taken`.
+
+**الباركود**: **الكود ليس فريداً وحده** — الفرادة على (الكود + المتغيّر + الوحدة)، فأخطاء المصانع (نفس الكود على القطعة والعلبة، أو لكل الألوان) تُقبل وتُعلَّم `is_shared: true`. EAN-8/UPC-A/EAN-13 برقم تحقق خاطئ `422 barcode_checksum_invalid`، والشكل غير الصالح `422 barcode_format_invalid`. **الداخلي** EAN-13 ببادئة `20` من تسلسل قاعدة البيانات — نطاق محجوز عالمياً للمتاجر، لا يصطدم بكود مصنّع.
+
+- `GET /catalog/products?page&limit&search&category_id&brand_id&status&kind&archived` — `catalog.view`. `search` مطويّ على الأسماء والكلمات المرادفة، وإن بدا كوداً طابق الباركود/SKU **حرفياً**. `category_id` يشمل الفروع. العنصر: `{id, name_ar, name_en, category{id,name_ar,name_en}, brand{id,name}|null, kind, status, is_sellable, thumbnail: Image|null, variants_count, archived_at, created_at, updated_at}`.
+- `GET /catalog/products/:id` — ما سبق + `description_*` · `search_keywords` · `price_policy`/`pricing_currency` (`null` = يرث) · `effective` · `category_path` · `allowed_attribute_type_ids` · `axes` · `images` · `variants[{id, sku, status, sort_order, base_unit_id, label_ar, label_en, values[{attribute_type_id, attribute_value_id, value_ar, value_en, color_hex}], units[{id, unit_id, name_ar, name_en, factor, is_base, allows_fraction, sellable_online, sellable_at_pos}], barcodes[{id, code, unit_id, source, is_shared}], images}]` · `is_deletable` · `is_archivable`.
+- `POST /catalog/products` — `catalog.create`. `{category_id, brand_id?, kind?, is_sellable?, name_ar, name_en?, description_ar?, description_en?, search_keywords?, price_policy?, pricing_currency?, status?: draft|active, image_ids?, variants: [{sku?, attribute_value_ids, base_unit_id, units?[{unit_id, factor, sellable_online?, sellable_at_pos?}], barcodes?[{code, unit_id}], image_ids?, sort_order?}]}` — `kind` الافتراضي من التصنيف. كتابة واحدة بمعاملة واحدة.
+- `PATCH /catalog/products/:id` — `catalog.edit`. نقل التصنيف يُرفض إن كانت المتغيّرات تستخدم خصائص لا يسمح بها الجديد (`409 product_attributes_not_allowed_in_category`). `active` يحتاج متغيّراً نشطاً (`422 product_needs_active_variant`). `409 product_archived`.
+- `DELETE /catalog/products/:id` — `catalog.delete`. **حذف فعلي اليوم** (لا مخزون ولا أسعار ولا طلبات تشير لمنتج بعد)؛ المرحلتان ٢–٣ تضيفان عدّاداتها ويصير المنتج ذو الماضي للأرشفة. `POST /:id/archive` · `/unarchive` — `+ records.archive`، والاسترجاع لتصنيف مؤرشف `409 product_category_archived`.
+- `POST /catalog/products/:id/variants` · `PATCH /catalog/variants/:id` (`sku · attribute_value_ids · status · sort_order · image_ids`؛ **`base_unit_id` لا يُعدَّل**) · `DELETE /catalog/variants/:id` (`409 product_needs_variant` للأخير) — `catalog.edit`.
+- `PUT /catalog/variants/:id/units` `{units:[…]}` — الأساس يبقى بمعامل 1. `422 variant_unit_factor_invalid` (معامل ≤ 1) · `409 variant_unit_has_barcodes` (+ `data.codes`).
+- `POST /catalog/variants/:id/barcodes` `{code, unit_id}` — `catalog.edit`. `409 barcode_already_on_unit`. · `POST /catalog/variants/:id/barcodes/internal` `{unit_id}` — **`barcodes.print`** (موظف المخزون يلصق ملصقات ولا يعدّل الكتالوج). · `DELETE /catalog/barcodes/:id`.
+- `GET /catalog/barcodes/lookup?code=` — `catalog.view`. `{code, ambiguity: none|unit|item, matches[{barcode_id, product_id, product_name_ar, product_name_en, product_status, variant_id, sku, variant_label_ar, variant_status, unit_id, unit_name_ar, factor, thumbnail}]}`. `unit` = متغيّر واحد بعدة وحدات (اعرض الوحدات) · `item` = عدة متغيّرات (اعرض الصور/الألوان). المؤرشف مستبعد.
+- `GET /catalog/barcodes/shared` — الأكواد المشتركة، الأسوأ أولاً: `[{code, matches_count, ambiguity}]` — إشارة اللوحة («٧ باركودات مشتركة»).
+- `GET|POST /catalog/collections` · `GET|PATCH|DELETE /catalog/collections/:id` · `PUT /catalog/collections/:id/products` `{product_ids}` (بالترتيب المعروض؛ المؤرشف مرفوض). `{id, name_ar, name_en, image, starts_at, ends_at, is_active, sort_order, products_count}` + `products` بالتفاصيل. الحذف فعلي — المجموعة لافتة رفّ بلا تاريخ.
+
+**قواعد صارت تعدّ المنتجات** (تكمّل §19): حذف تصنيف له منتجات قطّ `409 category_has_products` · أرشفته وبه منتجات حيّة `409 category_has_active_products` · تصنيف فرعي تحت تصنيف فيه منتجات `409 category_parent_has_products` · إزالة خاصية تستخدمها متغيّرات تحته `409 category_attribute_in_use` · حذف قيمة يستخدمها متغيّر `409 attribute_value_in_use` · حذف ماركة عليها منتجات `409 brand_in_use` (والبديل `POST /catalog/brands/:id/archive`). تفاصيل التصنيف تحمل `products_count` و`active_products_count`.
+
+**مؤجَّل**: مسودات الفروع (`catalog.drafts.*`) مع المرحلة 3 — المسودة لا معنى لها قبل أن يستلم الفرع بضاعة.

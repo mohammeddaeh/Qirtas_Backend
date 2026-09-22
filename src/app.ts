@@ -44,6 +44,11 @@ import { roleAssignmentsRouter } from './features/identity/routes/user-role-assi
 import { auditLogRouter } from './features/identity/routes/audit-log.routes.js';
 import { languagesRouter } from './features/localization/routes/languages.routes.js';
 import { branchesTransferResource } from './features/identity/branches.transfer.js';
+import { configureMedia } from './core/media/composition.js';
+import { filesRouter } from './core/media/routes/files.routes.js';
+import { catalogRouter } from './features/catalog/routes/catalog.routes.js';
+import { setAuditRecorder } from './core/audit/audit-recorder.js';
+import * as auditService from './features/identity/services/audit.service.js';
 
 /**
  * Every router this API serves, and the prefix it is mounted at.
@@ -68,6 +73,10 @@ export const API_ROUTERS: ReadonlyArray<{ path: string; router: Router }> = [
   { path: '/api/v1/role-assignments', router: roleAssignmentsRouter },
   { path: '/api/v1/audit-log', router: auditLogRouter },
   { path: '/api/v1/languages', router: languagesRouter },
+  { path: '/api/v1/catalog', router: catalogRouter },
+
+  /** Stored files (core/media/): public images, and private files behind signed links. */
+  { path: '/api/v1/files', router: filesRouter },
 
   /** Generic import/export. Mounted once, serves every resource passed to `configureDataTransfer()`. */
   { path: '/api/v1/data-transfer', router: dataTransferRouter },
@@ -125,6 +134,10 @@ export function buildApp(): Express {
   });
 
   configureNotifications();
+  configureMedia();
+  // Features other than identity write the same audit log through this port
+  // (core/audit/audit-recorder.ts) — one log, one history per record.
+  setAuditRecorder(auditService.record);
 
   // One sign-in endpoint for every population: each realm supplies the payload
   // only it knows how to build (staff: permission keys; customer: profile).

@@ -25,3 +25,6 @@ Thumbs.db
 
 # Archived pre-skeleton files — never enters git history
 _archive/
+
+# Uploaded files (STORAGE_DRIVER=local) — core/media/
+storage/

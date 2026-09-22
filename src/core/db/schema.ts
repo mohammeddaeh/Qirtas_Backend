@@ -47,3 +47,17 @@ export * from '../data-transfer/schemas/import-staging.schema.js';
 // to be applied *before* scaling out is one that gets forgotten in the hour it
 // is needed.
 export * from '../security/schemas/rate-limits.schema.js';
+
+// Uploaded files and their renditions. Owned by core/media/ because catalog,
+// printing and customization all point at it, and a feature may not import
+// another feature.
+export * from '../media/schemas/media-assets.schema.js';
+
+// The central catalog (features/catalog/) — docs/reference/store_system.md §٩.
+export * from '../../features/catalog/schemas/catalog-enums.schema.js';
+export * from '../../features/catalog/schemas/units.schema.js';
+export * from '../../features/catalog/schemas/attributes.schema.js';
+export * from '../../features/catalog/schemas/categories.schema.js';
+export * from '../../features/catalog/schemas/brands.schema.js';
+export * from '../../features/catalog/schemas/products.schema.js';
+export * from '../../features/catalog/schemas/collections.schema.js';

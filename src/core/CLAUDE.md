@@ -173,3 +173,12 @@ ordersRouter.post(
 - **الاستثناء الوحيد المسموح للتكرار**: shapes الـresponse (`Wire<X>`) هي TS interfaces عادية مش zod schemas — `zod-to-openapi` محتاج zod تحديداً، فبيتحط بجانبها (بنفس ملف الـdto) نسخة zod موازية باسم `<x>ResponseSchema` (مثال: `userResponseSchema` بجانب `WireUser`/`toWireUser` بـ`users.dto.ts`). **لازم يتحدّثوا مع بعض دايماً** لو أي حقل اتغيّر بالـWire type.
 - **checklist عند إضافة feature جديدة**: (1) أضف `<x>ResponseSchema` بجانب كل `Wire<X>` بملفات الـdto، (2) أنشئ `<name>.openapi.ts` يسجّل كل route بنفس الـmethod/path الموجودين فعلياً بـ`routes/*.routes.ts`، (3) أضف سطر `import '../../features/<name>/<name>.openapi.js';` بـ`openapi/document.ts`.
 - الوصول: `GET /docs` (Swagger UI تفاعلي) و`GET /openapi.json` (المستند الخام) — مُسجَّلان بـ`app.ts` قبل أي `/api/v1/*` router.
+
+## §Media — تخزين الملفات (`core/media/`، 2026-09-22)
+
+- **لا مسار ملف ولا رابط bucket خارج `adapters/`.** كل كتابة/قراءة عبر `storageDriver()` (منفذ `ports/storage-driver.ts`)، والمحوِّل يُختار بـ`STORAGE_DRIVER` في `configureMedia()`. اليوم `LocalDiskDriver` وحده؛ MinIO/S3 = ملف شقيق + فرع بـ`composition.ts`، ولا مستدعٍ يتغيّر.
+- **منطقتان: `public` و`private`.** ملف زبون (مستند طباعة قد يكون نسخة هوية) **لا يُكتب أبداً في `public`**. قراءته برابط موقَّع من `fileUrl('private', key)` — والمستدعي **يفحص حقّ القارئ قبل** طلب الرابط، فالرابط هو الصلاحية.
+- **المفاتيح يولّدها الخادم وحده** (`storage-keys.ts`: `img/YYYY/MM/<uuid>_<variant>.webp`) وقواعدها ضيّقة عمداً — ويُعاد فحصها داخل كل محوِّل مع فحص احتواء المسار. لا نصّ من العميل يصير مساراً.
+- **الصورة تُخزَّن ثلاث نسخ WebP لا الأصل** (`image-processing.ts`) وEXIF محذوف دائماً. **الصف يخزّن مفاتيح لا روابط** — الرابط يُبنى عند الرد (`toWireImage`)، فنقل التخزين لا يُفسد صفاً.
+- **`attached_at`**: الرفع يسبق حفظ النموذج، فالنموذج المتروك يترك صورة يتيمة. كل سجل يستعمل صورة يضبط `attached_at` بنفس المعاملة؛ ومهمة تنظيف اليتيم (> يوم) تأتي مع شاشات الكتالوج.
+- **مسار رفع جديد** (ملف طباعة، صورة تخصيص) يضع حارسه **قبل** `multer` — من لا صلاحية له لا يملأ الذاكرة أولاً.
