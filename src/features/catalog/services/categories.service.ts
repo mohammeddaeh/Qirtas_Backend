@@ -22,6 +22,7 @@ import {
   type UpdateCategoryBody,
   type WireCategory,
   type WireCategoryDetail,
+  type WirePricingRules,
 } from '../dtos/categories.dto.js';
 
 async function loadTree(): Promise<CategoryTree<CatalogCategoryRow>> {
@@ -119,6 +120,26 @@ export async function getCategory(id: number): Promise<WireCategoryDetail> {
     active_children_count: activeChildren.length,
     products_count: productsEver,
     active_products_count: liveProducts,
+    pricing_rules: pricingRulesOf(tree, row),
+  };
+}
+
+/** Own (`null` = inherit) and effective pricing rules — store_system.md §١١. */
+function pricingRulesOf(tree: CategoryTree<CatalogCategoryRow>, row: CatalogCategoryRow): WirePricingRules {
+  const num = (v: string | null) => (v === null ? null : Number(v));
+  return {
+    own: {
+      price_band_percent: num(row.price_band_percent),
+      wholesale_discount_percent: num(row.wholesale_discount_percent),
+      wholesale_min_qty: num(row.wholesale_min_qty),
+      tax_rate_percent: num(row.tax_rate_percent),
+    },
+    effective: {
+      price_band_percent: tree.effectiveNumber(row.id, 'price_band_percent'),
+      wholesale_discount_percent: tree.effectiveNumber(row.id, 'wholesale_discount_percent'),
+      wholesale_min_qty: tree.effectiveNumber(row.id, 'wholesale_min_qty'),
+      tax_rate_percent: tree.effectiveNumber(row.id, 'tax_rate_percent'),
+    },
   };
 }
 

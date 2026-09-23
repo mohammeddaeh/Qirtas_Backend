@@ -110,6 +110,10 @@
 
 `isGrantable` أوسع من `isEnforced` بالمظلّات بالضبط. **لا تخلطهما**: استعمال `isEnforced` مكان `isGrantable` بالبذرة يحذف كل منحِ `users.manage` بصمت.
 
+### 🏢 الصلاحية بنطاق فرع — `holdsPermissionAt(userId, key, branchId)`
+
+`requirePermission` يسأل «هل يملك المفتاح **بأي مكان**؟». حين يعتمد النطاق على الصفّ المكتوب (سعر فرع على منتج `central_locked` يحتاج المفتاح **بلا تقييد**؛ على `branch_free` يكفي فرعه) يبقى `requirePermission` على المسار (يُعلن المفتاح ويردّ من لا يملكه بأي مكان)، ثم تسأل الخدمة `holdsPermissionAt` بعد قراءة الصف. `branchId = null` = بلا تقييد فقط. **ويمرّ بنفس `resolvePermissions`** (المظلّة + المنح/الحجب الفردي): كانت `findEffectivePermissionKeys(user, branch)` تُرجع منح الأدوار الخام، فحجبٌ فردي كان يُتجاهَل بنطاق الفرع بلا أي خطأ. والاستثناء الفردي بلا فرع: السماح يُقرأ غير مقيّد، والحجب بكل مكان. المستهلك الأول: `features/catalog/services/pricing.service.ts`.
+
 ### 📐 النمط للوحدات الباقية
 
 `branches` · `ownerships` · `localization` · `permissions` ما زالت `manage` خشنة. عمّم النمط عند الحاجة:

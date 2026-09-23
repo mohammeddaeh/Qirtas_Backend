@@ -1112,3 +1112,34 @@ Accept-language: ar | en
 **قواعد صارت تعدّ المنتجات** (تكمّل §19): حذف تصنيف له منتجات قطّ `409 category_has_products` · أرشفته وبه منتجات حيّة `409 category_has_active_products` · تصنيف فرعي تحت تصنيف فيه منتجات `409 category_parent_has_products` · إزالة خاصية تستخدمها متغيّرات تحته `409 category_attribute_in_use` · حذف قيمة يستخدمها متغيّر `409 attribute_value_in_use` · حذف ماركة عليها منتجات `409 brand_in_use` (والبديل `POST /catalog/brands/:id/archive`). تفاصيل التصنيف تحمل `products_count` و`active_products_count`.
 
 **مؤجَّل**: مسودات الفروع (`catalog.drafts.*`) مع المرحلة 3 — المسودة لا معنى لها قبل أن يستلم الفرع بضاعة.
+
+## 21. الطرح والتسعير (2026-09-22) · المرجع: `docs/reference/store_system.md` §١١
+
+**المبدأ**: الخادم يحسب السعر النهائي ويُرجعه **مع مصدره**، والعميل يعرض ولا يحسب. الحلّ بدالة صافية `services/price-resolution.ts` (مُختبَرة بـ`__tests__/price-resolution.test.ts`، كل قاعدة مع نقيضها).
+
+**كائن `resolved`** (يتكرّر بكل رد):
+- `{status: "not_listed"}` — مسحوب من هذا الفرع.
+- `{status: "unpriced", reason: "no_price" | "no_exchange_rate"}` — لا يُباع، ولا يراه الزبون بهذا الاسم؛ يظهر بـ`/pricing/worklist`.
+- `{status: "priced", amount_syp, source: "central" | "branch" | "branch_exception" | "suggested", out_of_band, band: {min, max} | null, wholesale: {amount_syp, min_qty} | null}`. `suggested` = `branch_free` بلا سعر فرع (يُباع بالمركزي). `out_of_band: true` = للفرع سعر خرج عن النطاق بعد تحرّك المركزي، **فيُطبَّق المركزي** ويُكشف.
+
+**العملة**: كل سعر مخزَّن بعملته (`SYP`/`USD`). الليرة المكتوبة تبقى كما كُتبت؛ **المحسوب فقط يُقرَّب لأعلى** بالشرائح (المحوَّل من الدولار، والجملة المشتقّة بنسبة، ونتيجة التحديث الجماعي بالليرة).
+
+**النطاق والصلاحية**: الكتابة تتطلّب `pricing.edit` على المسار، ثم يفحص الخادم النطاق حسب سياسة المنتج: السعر المركزي واستثناءات `central_locked` تحتاجه **بلا تقييد فرع** (`403 price_central_only`)؛ سعر فرع لـ`branch_free`/`branch_banded` يحتاجه **بذلك الفرع** (`403 pricing_scope_denied`). الفحص يمرّ بنفس `resolvePermissions` (المظلّة + المنح/الحجب الفردي). و`can_edit_central`/`can_edit_branch` بالرد هما جواب الخادم — الشاشة تعرض الأدوات منهما.
+
+- `GET /catalog/pricing/settings` — `catalog.view`. `{exchange_rate: {usd_to_syp, effective_at} | null, rounding_bands: [{below, step}]}`.
+- `POST /catalog/pricing/exchange-rate` `{usd_to_syp}` — `pricing.policy`. **يُضاف ولا يُعدَّل**؛ الساري = الأحدث. يردّ الإعدادات.
+- `PUT /catalog/pricing/rounding` `{bands}` — `pricing.policy`. تتصاعد، آخرها `below: null`، خطوات موجبة (`422 rounding_bands_invalid`).
+- `GET /catalog/products/:id/pricing?branch_id=` — `catalog.view`. `{product_id, branch_id, price_policy, pricing_currency, band_percent, own_band_percent, wholesale_discount_percent, wholesale_min_qty, tax_rate_percent, exchange_rate, can_edit_central, can_edit_branch, variants: [{variant_id, sku, label_ar, central: {amount, currency, wholesale_amount, wholesale_min_qty} | null, branch_price: {amount, currency} | null, is_listed, resolved, branch_prices: [{branch_id, branch_name, amount, currency}], unlisted_branch_ids}]}`. بلا `branch_id` = العرض المركزي (`branch_prices`/`unlisted_branch_ids` معبّأة، `branch_price` فارغ)؛ معه = عرض الفرع (العكس).
+- `PUT /catalog/variants/:id/price` `{amount, currency?, wholesale_amount?, wholesale_min_qty?}` — السعر المركزي. العملة الغائبة = عملة المنتج الفعّالة. `422 wholesale_not_below_retail`. يردّ العرض المركزي.
+- `PUT /catalog/branches/:branchId/variants/:variantId/price` `{amount, currency?}` — لـ`branch_banded`: `409 price_band_missing` (لا نطاق) · `409 price_no_central` · `422 price_outside_band` + `data: {min, max}`. يردّ عرض الفرع.
+- `DELETE /catalog/branches/:branchId/variants/:variantId/price` — يعود للمركزي.
+- `PUT /catalog/branches/:branchId/variants/:variantId/listing` `{is_listed}` — `pricing.edit` بذلك الفرع (السحب قرار الفرع مهما كانت السياسة). **الغياب = مطروح**.
+- `GET /catalog/variants/:id/price-history` — `catalog.view`. آخر ١٠٠: `[{id, branch_id, branch_name, field: retail|wholesale|wholesale_min_qty, old_amount, old_currency, new_amount, new_currency, source: manual|bulk, changed_at, changed_by}]`. `branch_id: null` = مركزي.
+- `GET /catalog/pricing/worklist?branch_id=` — `catalog.view`. المتغيّرات القابلة للبيع (منتج منشور + متغيّر نشط) بلا سعر أو خارج النطاق: `{total, items: [{variant_id, product_id, product_name_ar, product_name_en, sku, label_ar, problem: no_price|no_exchange_rate|out_of_band}]}` (أول ٢٠٠).
+- `POST /catalog/pricing/bulk/preview` · `POST /catalog/pricing/bulk/apply` `{category_id | brand_id, percent}` — `pricing.policy`. مركزي فقط، التصنيف **بأبنائه**، −٩٠…+٥٠٠ ولا صفر. `{count, skipped, largest_change_syp, smallest_change_syp, samples[≤10]}`. `apply` **يعيد التخطيط** ولا يثق بالمعاينة (قد تتحرّك الأسعار بين الضغطتين)، ويكتب التاريخ `source: bulk` وسطر تدقيق واحد.
+- `PUT /catalog/categories/:id/pricing-rules` `{price_band_percent?, wholesale_discount_percent?, wholesale_min_qty?, tax_rate_percent?}` — `pricing.policy`. `null` = يرث، الغياب = بلا تغيير. يردّ تفاصيل التصنيف، وفيها `pricing_rules: {own, effective}`.
+- `PUT /catalog/products/:id/pricing-rules` `{price_band_percent}` — `pricing.policy`. تجاوز النطاق لمنتج واحد (`null` = نطاق التصنيف). يردّ العرض المركزي.
+
+**التدقيق**: `catalog.price.central.set` · `catalog.price.branch.set|clear` · `catalog.listing.set` (على `catalog_variant:<id>`) · `catalog.pricing.exchange_rate.set|rounding.set|bulk_update` (على `catalog_pricing:settings`) · `catalog.category.pricing_rules` · `catalog.product.pricing_rules`.
+
+**مؤجَّل**: سعر خاص للعلبة/الطرد · الأسعار المجدولة (مع العروض) · الجملة بشرائح · التحديث الجماعي لأسعار الفروع · نطاق المورد بالتحديث الجماعي (مع وحدة الموردين).

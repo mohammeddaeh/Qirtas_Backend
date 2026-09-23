@@ -40,6 +40,15 @@ export const CATALOG_AUDIT = {
   collectionUpdate: 'catalog.collection.update',
   collectionProductsReplace: 'catalog.collection.products.replace',
   collectionDelete: 'catalog.collection.delete',
+  centralPriceSet: 'catalog.price.central.set',
+  branchPriceSet: 'catalog.price.branch.set',
+  branchPriceClear: 'catalog.price.branch.clear',
+  listingSet: 'catalog.listing.set',
+  exchangeRateSet: 'catalog.pricing.exchange_rate.set',
+  roundingSet: 'catalog.pricing.rounding.set',
+  bulkPriceUpdate: 'catalog.pricing.bulk_update',
+  categoryPricingRules: 'catalog.category.pricing_rules',
+  productPricingRules: 'catalog.product.pricing_rules',
 } as const;
 
 /** `target_entity` values — what `EntityHistorySection(targetEntity:)` filters by. */
@@ -54,4 +63,6 @@ export const catalogTarget = {
   // variant" is the question the history section answers.
   variant: (id: number) => `catalog_variant:${id}`,
   collection: (id: number) => `catalog_collection:${id}`,
+  /** Shop-wide pricing settings (rate, rounding, bulk changes) — one history for all of them. */
+  pricing: () => 'catalog_pricing:settings',
 } as const;

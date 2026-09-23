@@ -92,3 +92,23 @@ export function requirePermission(permissionKey: string, meta: PermissionMeta = 
 
   return markAccess(guard, { kind: 'permission', keys: [permissionKey] });
 }
+
+/**
+ * Does the caller hold [permissionKey] **at [branchId]** — through an
+ * assignment at that branch or an unrestricted one? `branchId = null` asks
+ * for unrestricted only: "may this person act for every branch?".
+ *
+ * For checks a route guard cannot make, because the scope depends on the row
+ * being written (a branch price on a `central_locked` product needs the
+ * unrestricted grant; on a `branch_free` one, the branch's own is enough).
+ * The route still carries `requirePermission(key)` so the key is declared and
+ * a caller holding it nowhere is refused before any work.
+ */
+export async function holdsPermissionAt(
+  actorUserId: number,
+  permissionKey: string,
+  branchId: number | null,
+): Promise<boolean> {
+  const keys = await userRoleAssignmentsRepository.findEffectivePermissionKeys(actorUserId, branchId);
+  return keys.includes(permissionKey);
+}

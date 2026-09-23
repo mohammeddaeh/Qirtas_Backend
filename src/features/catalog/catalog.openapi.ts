@@ -8,6 +8,18 @@ import {
 import { imageResponseSchema } from '../../core/media/dtos/files.dto.js';
 import { idParamsSchema } from './dtos/common.dto.js';
 import {
+  branchPriceBodySchema,
+  branchVariantParamsSchema,
+  bulkPriceBodySchema,
+  categoryPricingRulesBodySchema,
+  centralPriceBodySchema,
+  exchangeRateBodySchema,
+  listingBodySchema,
+  pricingViewQuerySchema,
+  productPricingRulesBodySchema,
+  roundingBodySchema,
+} from './dtos/pricing.dto.js';
+import {
   createUnitBodySchema,
   unitResponseSchema,
   updateUnitBodySchema,
@@ -76,6 +88,7 @@ function route(
   response: ReturnType<typeof ok> | typeof deleted,
   request: Record<string, unknown> = {},
   description?: string,
+  status?: number,
 ): void {
   registry.registerPath({
     method,
@@ -85,7 +98,7 @@ function route(
     description: `Requires \`${key}\`.${description ? ` ${description}` : ''}`,
     request,
     responses: {
-      [method === 'post' && !path.includes('/archive') ? 201 : 200]: response,
+      [status ?? (method === 'post' && !path.includes('/archive') ? 201 : 200)]: response,
       ...commonErrorResponses,
     },
   });
@@ -513,3 +526,23 @@ route(
   },
 );
 route('delete', '/collections/{id}', 'Delete a collection', 'catalog.delete', deleted, params);
+
+// ── Pricing — rest_api.md §21 (shapes documented there) ──────────────────
+const pricingShape = z.object({}).passthrough();
+const see = 'Response shape: rest_api.md §21.';
+const branchVariant = { params: branchVariantParamsSchema };
+const view = { query: pricingViewQuerySchema };
+route('get', '/pricing/settings', 'Exchange rate and rounding bands', 'catalog.view', ok('Settings', pricingShape));
+route('post', '/pricing/exchange-rate', 'Record a new USD→SYP rate (appended, never edited)', 'pricing.policy', ok('Settings', pricingShape), body(exchangeRateBodySchema), undefined, 200);
+route('put', '/pricing/rounding', 'Replace the rounding bands', 'pricing.policy', ok('Settings', pricingShape), body(roundingBodySchema));
+route('get', '/pricing/worklist', 'Sellable variants with no price, or pushed out of their band', 'catalog.view', ok('Worklist', pricingShape), view, see);
+route('post', '/pricing/bulk/preview', 'Preview a percentage change to central prices', 'pricing.policy', ok('Preview', pricingShape), body(bulkPriceBodySchema), see, 200);
+route('post', '/pricing/bulk/apply', 'Apply a percentage change to central prices (re-planned, not the preview)', 'pricing.policy', ok('Applied', pricingShape), body(bulkPriceBodySchema), see, 200);
+route('get', '/products/{id}/pricing', 'A product’s prices — central, or seen from one branch', 'catalog.view', ok('Pricing', pricingShape), { ...params, ...view }, see);
+route('put', '/products/{id}/pricing-rules', 'Override the band for one product', 'pricing.policy', ok('Pricing', pricingShape), { ...params, ...body(productPricingRulesBodySchema) });
+route('put', '/categories/{id}/pricing-rules', 'Set a category’s band, wholesale and tax rules (null = inherit)', 'pricing.policy', ok('Category detail', categoryDetailResponseSchema), { ...params, ...body(categoryPricingRulesBodySchema) });
+route('put', '/variants/{id}/price', 'Set the central price', 'pricing.edit (unrestricted)', ok('Pricing', pricingShape), { ...params, ...body(centralPriceBodySchema) }, see);
+route('get', '/variants/{id}/price-history', 'Price changes, newest first', 'catalog.view', ok('History', pricingShape), params, see);
+route('put', '/branches/{branchId}/variants/{variantId}/price', 'Set a branch price (scope checked against the product’s policy)', 'pricing.edit', ok('Pricing', pricingShape), { ...branchVariant, ...body(branchPriceBodySchema) }, see);
+route('delete', '/branches/{branchId}/variants/{variantId}/price', 'Clear a branch price (back to central)', 'pricing.edit', ok('Pricing', pricingShape), branchVariant, see);
+route('put', '/branches/{branchId}/variants/{variantId}/listing', 'List or withdraw a variant at a branch', 'pricing.edit', ok('Pricing', pricingShape), { ...branchVariant, ...body(listingBodySchema) }, see);

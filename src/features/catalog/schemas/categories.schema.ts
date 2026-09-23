@@ -2,6 +2,7 @@ import {
   boolean,
   index,
   integer,
+  numeric,
   pgTable,
   primaryKey,
   serial,
@@ -42,6 +43,14 @@ export const catalogCategoriesTable = pgTable(
     product_kind: productKindEnum('product_kind'),
     price_policy: pricePolicyEnum('price_policy'),
     pricing_currency: pricingCurrencyEnum('pricing_currency'),
+    /** Pricing (store_system.md §١١) — all `null` = inherit. `branch_banded` range: ± this % of the central price. */
+    price_band_percent: numeric('price_band_percent', { precision: 5, scale: 2 }),
+    /** Wholesale = retail × (1 − this %), unless a variant sets an explicit wholesale price. */
+    wholesale_discount_percent: numeric('wholesale_discount_percent', { precision: 5, scale: 2 }),
+    /** Minimum quantity (base units) for the wholesale price to apply. */
+    wholesale_min_qty: numeric('wholesale_min_qty', { precision: 14, scale: 3 }),
+    /** Included in the shelf price (prices are tax-inclusive); the invoice splits it out. */
+    tax_rate_percent: numeric('tax_rate_percent', { precision: 5, scale: 2 }),
     image_id: integer('image_id').references(() => mediaAssetsTable.id, { onDelete: 'set null' }),
     sort_order: integer('sort_order').notNull().default(0),
     /** Hidden from customers while false; still pickable by staff. */

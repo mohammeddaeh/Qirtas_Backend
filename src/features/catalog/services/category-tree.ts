@@ -17,7 +17,21 @@ export interface TreeNode {
   product_kind: ProductKind | null;
   price_policy: PricePolicy | null;
   pricing_currency: PricingCurrency | null;
+  /** Pricing (store_system.md §١١) — numeric columns arrive as strings. Optional so tree-only callers need not carry them. */
+  price_band_percent?: string | null;
+  wholesale_discount_percent?: string | null;
+  wholesale_min_qty?: string | null;
+  tax_rate_percent?: string | null;
 }
+
+export type InheritedField =
+  | 'product_kind'
+  | 'price_policy'
+  | 'pricing_currency'
+  | 'price_band_percent'
+  | 'wholesale_discount_percent'
+  | 'wholesale_min_qty'
+  | 'tax_rate_percent';
 
 export class CategoryTree<T extends TreeNode> {
   private readonly byId: Map<number, T>;
@@ -77,16 +91,22 @@ export class CategoryTree<T extends TreeNode> {
   }
 
   /** First non-null value walking up from the node itself. */
-  effective<K extends 'product_kind' | 'price_policy' | 'pricing_currency'>(
-    id: number,
-    field: K,
-  ): T[K] | null {
+  effective<K extends InheritedField>(id: number, field: K): NonNullable<T[K]> | null {
     const self = this.byId.get(id);
     if (!self) return null;
-    if (self[field] !== null) return self[field];
+    if (self[field] != null) return self[field] as NonNullable<T[K]>;
     for (const ancestor of this.ancestorsOf(id))
-      if (ancestor[field] !== null) return ancestor[field];
+      if (ancestor[field] != null) return ancestor[field] as NonNullable<T[K]>;
     return null;
+  }
+
+  /** [effective] for a numeric column, as a number. */
+  effectiveNumber(
+    id: number,
+    field: 'price_band_percent' | 'wholesale_discount_percent' | 'wholesale_min_qty' | 'tax_rate_percent',
+  ): number | null {
+    const value = this.effective(id, field);
+    return value == null ? null : Number(value);
   }
 
   /** The level a node gets under [parentId]: roots are 1. */

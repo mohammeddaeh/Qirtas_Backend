@@ -344,10 +344,16 @@ export async function countOtherActiveUsersWithPermission(params: {
 }
 
 /**
- * Union of permission keys across every active assignment for a user,
- * restricted to a given branch or branch-unrestricted assignments (Allow-only
- * semantics — see users_roles.md). Pass branchId=null to check
- * branch-unrestricted permissions only (e.g. platform-wide actions).
+ * Permission keys a user holds **at one branch**: assignments at that branch
+ * plus branch-unrestricted ones. Pass branchId=null for unrestricted-only —
+ * "may this person act on every branch?" (the central price, for one).
+ *
+ * Runs through the same `resolvePermissions` as the branch-agnostic union
+ * below. It used to return the raw role grants, so a per-account **deny**
+ * was ignored at branch scope and umbrella keys were never expanded — a check
+ * written against this function would have passed a person the rest of the
+ * system refuses. Account overrides carry no branch: an allow reads as
+ * unrestricted, a deny applies everywhere.
  */
 export async function findEffectivePermissionKeys(
   userId: number,
@@ -358,22 +364,25 @@ export async function findEffectivePermissionKeys(
       ? sql`${userRoleAssignmentsTable.branch_id} IS NULL`
       : sql`(${userRoleAssignmentsTable.branch_id} IS NULL OR ${userRoleAssignmentsTable.branch_id} = ${branchId})`;
 
-  const rows = await db
-    .selectDistinct({ key: rolePermissionsTable.permission_key })
-    .from(userRoleAssignmentsTable)
-    .innerJoin(rolesTable, eq(rolesTable.id, userRoleAssignmentsTable.role_id))
-    .innerJoin(rolePermissionsTable, eq(rolePermissionsTable.role_id, rolesTable.id))
-    .innerJoin(permissionsTable, eq(permissionsTable.key, rolePermissionsTable.permission_key))
-    .where(
-      and(
-        eq(userRoleAssignmentsTable.user_id, userId),
-        isActiveClause,
-        eq(rolesTable.is_active, true),
-        branchClause,
+  const [rows, overrides] = await Promise.all([
+    db
+      .selectDistinct({ key: rolePermissionsTable.permission_key })
+      .from(userRoleAssignmentsTable)
+      .innerJoin(rolesTable, eq(rolesTable.id, userRoleAssignmentsTable.role_id))
+      .innerJoin(rolePermissionsTable, eq(rolePermissionsTable.role_id, rolesTable.id))
+      .innerJoin(permissionsTable, eq(permissionsTable.key, rolePermissionsTable.permission_key))
+      .where(
+        and(
+          eq(userRoleAssignmentsTable.user_id, userId),
+          isActiveClause,
+          eq(rolesTable.is_active, true),
+          branchClause,
+        ),
       ),
-    );
+    overridesRepository.findEffectsForUser(userId),
+  ]);
 
-  return rows.map((r) => r.key);
+  return [...resolvePermissions(rows.map((r) => r.key), overrides)].sort();
 }
 
 /**

@@ -719,6 +719,35 @@ export const MESSAGES = {
     en: 'This unit already carries this barcode',
     ar: 'هذه الوحدة تحمل هذا الباركود مسبقاً',
   },
+  // ── Pricing (store_system.md §١١) ──
+  price_central_only: {
+    en: 'This price is set centrally — it needs a pricing permission for every branch',
+    ar: 'هذا السعر تحدّده الإدارة مركزياً — يحتاج صلاحية تسعير لكل الفروع',
+  },
+  pricing_scope_denied: {
+    en: 'You cannot change prices at this branch',
+    ar: 'لا تملك تعديل الأسعار بهذا الفرع',
+  },
+  price_band_missing: {
+    en: 'No allowed range is set for this category yet — ask the administration to set it',
+    ar: 'لم يُحدَّد نطاق مسموح لهذا التصنيف بعد — اطلب من الإدارة تحديده',
+  },
+  price_no_central: {
+    en: 'Set the central price first — the allowed range is measured from it',
+    ar: 'ضع السعر المركزي أولاً — النطاق المسموح يُقاس منه',
+  },
+  price_outside_band: {
+    en: 'The price is outside the range allowed for this product',
+    ar: 'السعر خارج النطاق المسموح لهذا المنتج',
+  },
+  wholesale_not_below_retail: {
+    en: 'A wholesale price must be below the retail price',
+    ar: 'سعر الجملة يجب أن يكون أقل من سعر التجزئة',
+  },
+  rounding_bands_invalid: {
+    en: 'Rounding bands must climb, end with an open band and have positive steps',
+    ar: 'شرائح التقريب يجب أن تتصاعد وتنتهي بشريحة مفتوحة وخطواتها موجبة',
+  },
 
   /** A private file's signed link was tampered with or has expired — the app requests a fresh one. */
   file_link_invalid: {

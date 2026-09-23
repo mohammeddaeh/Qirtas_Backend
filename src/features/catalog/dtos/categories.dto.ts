@@ -83,7 +83,15 @@ const attributeRefSchema = z.object({
   name_en: z.string().nullable(),
 });
 
+const pricingRuleValuesSchema = z.object({
+  price_band_percent: z.number().nullable(),
+  wholesale_discount_percent: z.number().nullable(),
+  wholesale_min_qty: z.number().nullable(),
+  tax_rate_percent: z.number().nullable(),
+});
+
 export const categoryDetailResponseSchema = categoryResponseSchema.extend({
+  pricing_rules: z.object({ own: pricingRuleValuesSchema, effective: pricingRuleValuesSchema }),
   /** Root first. Lets the detail screen draw the breadcrumb without a second request. */
   path: z.array(
     z.object({ id: z.number().int(), name_ar: z.string(), name_en: z.string().nullable() }),
@@ -132,7 +140,21 @@ export interface WireAttributeRef {
   name_en: string | null;
 }
 
+export interface PricingRuleValues {
+  price_band_percent: number | null;
+  wholesale_discount_percent: number | null;
+  wholesale_min_qty: number | null;
+  tax_rate_percent: number | null;
+}
+
+export interface WirePricingRules {
+  own: PricingRuleValues;
+  effective: PricingRuleValues;
+}
+
 export interface WireCategoryDetail extends WireCategory {
+  /** Pricing rules (store_system.md §١١) — edited through `PUT /catalog/categories/:id/pricing-rules`. */
+  pricing_rules: WirePricingRules;
   path: { id: number; name_ar: string; name_en: string | null }[];
   attribute_types: {
     own: WireAttributeRef[];

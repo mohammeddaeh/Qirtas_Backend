@@ -61,3 +61,4 @@ export * from '../../features/catalog/schemas/categories.schema.js';
 export * from '../../features/catalog/schemas/brands.schema.js';
 export * from '../../features/catalog/schemas/products.schema.js';
 export * from '../../features/catalog/schemas/collections.schema.js';
+export * from '../../features/catalog/schemas/pricing.schema.js';

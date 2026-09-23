@@ -169,6 +169,13 @@
       "when": 1790068550220,
       "tag": "0023_catalog_products",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790077263174,
+      "tag": "0024_catalog_pricing",
+      "breakpoints": true
     }
   ]
 }

@@ -65,6 +65,8 @@ export const catalogProductsTable = pgTable(
     /** `null` = inherit from the category. */
     price_policy: pricePolicyEnum('price_policy'),
     pricing_currency: pricingCurrencyEnum('pricing_currency'),
+    /** Overrides the category's `branch_banded` range. `null` = inherit. */
+    price_band_percent: numeric('price_band_percent', { precision: 5, scale: 2 }),
     status: productStatusEnum('status').notNull().default('draft'),
     created_by_user_id: integer('created_by_user_id').references(() => usersTable.id, {
       onDelete: 'set null',

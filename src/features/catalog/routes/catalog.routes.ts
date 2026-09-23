@@ -5,6 +5,18 @@ import { validate } from '../../../core/validation/validate.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 import { uploadImageFile } from '../../../core/media/middleware/upload-image.js';
 import { idParamsSchema } from '../dtos/common.dto.js';
+import {
+  branchPriceBodySchema,
+  branchVariantParamsSchema,
+  bulkPriceBodySchema,
+  categoryPricingRulesBodySchema,
+  centralPriceBodySchema,
+  productPricingRulesBodySchema,
+  exchangeRateBodySchema,
+  listingBodySchema,
+  pricingViewQuerySchema,
+  roundingBodySchema,
+} from '../dtos/pricing.dto.js';
 import { createUnitBodySchema, updateUnitBodySchema } from '../dtos/units.dto.js';
 import {
   createAttributeTypeBodySchema,
@@ -24,6 +36,7 @@ import {
   updateBrandBodySchema,
 } from '../dtos/brands.dto.js';
 import * as catalogMediaController from '../controllers/catalog-media.controller.js';
+import * as pricingController from '../controllers/pricing.controller.js';
 import * as unitsController from '../controllers/units.controller.js';
 import * as attributesController from '../controllers/attributes.controller.js';
 import * as categoriesController from '../controllers/categories.controller.js';
@@ -373,4 +386,101 @@ catalogRouter.delete(
   canDelete,
   withId,
   asyncHandler(collectionsController.deleteCollection),
+);
+
+// ── Pricing (store_system.md §١١) ─────────────────────────────────────────
+// Reading a price is part of viewing the catalog. Writing needs `pricing.edit`
+// *somewhere*; the service then checks the scope the row demands (the central
+// price and `central_locked` exceptions need it unrestricted, a branch's own
+// price needs it at that branch) — a route guard cannot know the product's
+// policy. Settings, rates and bulk changes move every price: `pricing.policy`.
+const canEditPrice = requirePermission('pricing.edit', {
+  display: { ar: 'تعديل الأسعار', en: 'Edit Prices' },
+  sensitive: true,
+});
+const canPricingPolicy = requirePermission('pricing.policy', {
+  display: { ar: 'سياسات التسعير وسعر الصرف', en: 'Pricing Policies & Exchange Rate' },
+  sensitive: true,
+});
+const withBranchVariant = validate(branchVariantParamsSchema, 'params');
+
+catalogRouter.get('/pricing/settings', canView, asyncHandler(pricingController.getSettings));
+catalogRouter.post(
+  '/pricing/exchange-rate',
+  canPricingPolicy,
+  validate(exchangeRateBodySchema, 'body'),
+  asyncHandler(pricingController.setExchangeRate),
+);
+catalogRouter.put(
+  '/pricing/rounding',
+  canPricingPolicy,
+  validate(roundingBodySchema, 'body'),
+  asyncHandler(pricingController.setRounding),
+);
+catalogRouter.get(
+  '/pricing/worklist',
+  canView,
+  validate(pricingViewQuerySchema, 'query'),
+  asyncHandler(pricingController.getWorklist),
+);
+catalogRouter.post(
+  '/pricing/bulk/preview',
+  canPricingPolicy,
+  validate(bulkPriceBodySchema, 'body'),
+  asyncHandler(pricingController.previewBulk),
+);
+catalogRouter.post(
+  '/pricing/bulk/apply',
+  canPricingPolicy,
+  validate(bulkPriceBodySchema, 'body'),
+  asyncHandler(pricingController.applyBulk),
+);
+catalogRouter.get(
+  '/products/:id/pricing',
+  canView,
+  withId,
+  validate(pricingViewQuerySchema, 'query'),
+  asyncHandler(pricingController.getProductPricing),
+);
+catalogRouter.put(
+  '/variants/:id/price',
+  canEditPrice,
+  withId,
+  validate(centralPriceBodySchema, 'body'),
+  asyncHandler(pricingController.setCentralPrice),
+);
+catalogRouter.get('/variants/:id/price-history', canView, withId, asyncHandler(pricingController.getPriceHistory));
+catalogRouter.put(
+  '/branches/:branchId/variants/:variantId/price',
+  canEditPrice,
+  withBranchVariant,
+  validate(branchPriceBodySchema, 'body'),
+  asyncHandler(pricingController.setBranchPrice),
+);
+catalogRouter.delete(
+  '/branches/:branchId/variants/:variantId/price',
+  canEditPrice,
+  withBranchVariant,
+  asyncHandler(pricingController.clearBranchPrice),
+);
+catalogRouter.put(
+  '/branches/:branchId/variants/:variantId/listing',
+  canEditPrice,
+  withBranchVariant,
+  validate(listingBodySchema, 'body'),
+  asyncHandler(pricingController.setListing),
+);
+catalogRouter.put(
+  '/categories/:id/pricing-rules',
+  canPricingPolicy,
+  withId,
+  validate(categoryPricingRulesBodySchema, 'body'),
+  asyncHandler(pricingController.setCategoryRules),
+);
+catalogRouter.put(
+  '/products/:id/pricing-rules',
+  canPricingPolicy,
+  withId,
+  validate(productPricingRulesBodySchema, 'body'),
+  asyncHandler(pricingController.setProductBand),
 );
