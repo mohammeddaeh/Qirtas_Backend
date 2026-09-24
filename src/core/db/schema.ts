@@ -78,3 +78,9 @@ export * from '../../features/storefront/schemas/demand.schema.js';
 
 // العروض والتخفيضات (features/promotions/) — docs/reference/store_system.md §٥.
 export * from '../../features/promotions/schemas/promotions.schema.js';
+
+// نقطة البيع والفاتورة (features/sales/) — docs/reference/orders_delivery.md §الفوترة.
+export * from '../../features/sales/schemas/sales.schema.js';
+
+// نقطة البيع والفاتورة (features/sales/) — docs/reference/orders_delivery.md §الفوترة.
+export * from '../../features/sales/schemas/sales.schema.js';

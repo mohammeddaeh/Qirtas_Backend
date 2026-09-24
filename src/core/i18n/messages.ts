@@ -842,6 +842,72 @@ export const MESSAGES = {
     en: 'This promotion is archived — restore it before editing',
     ar: 'هذا العرض مؤرشف — أعِده قبل تعديله',
   },
+  // ── نقطة البيع (orders_delivery.md §الفوترة · store_system.md §٦) ──
+  /** الفاتورة المسدَّدة لا تُعدَّل ولا تُحذف: الإلغاء بمستندٍ معاكس. */
+  sale_already_paid: {
+    en: 'This sale is already paid — cancel it with a return instead',
+    ar: 'هذه الفاتورة مسدَّدة — إلغاؤها يكون بمرتجع لا بتعديلها',
+  },
+  sale_voided: {
+    en: 'This sale was cancelled',
+    ar: 'هذه السلّة أُلغيت',
+  },
+  sale_empty: {
+    en: 'An empty sale cannot be paid',
+    ar: 'لا تُسدَّد سلّة فارغة',
+  },
+  sale_product_not_sellable: {
+    en: 'This product is not for sale',
+    ar: 'هذا الصنف غير معروض للبيع',
+  },
+  /** «غير مسعَّر» عطلٌ عندنا — والكاشير يحتاج أن يعرف أن الجواب تسعيرٌ لا إعادة مسح. */
+  sale_item_unpriced: {
+    en: 'This item has no price at this branch — price it first',
+    ar: 'هذا الصنف بلا سعر بهذا الفرع — يحتاج تسعيراً',
+  },
+  /** الرقم يقول كم بقي، فلا تكون المحاولة التالية تخميناً. */
+  sale_underpaid: {
+    en: 'The payments do not cover the sale',
+    ar: 'المدفوع لا يغطّي الفاتورة',
+  },
+  sale_discount_reason_required: {
+    en: 'A manual discount needs a reason',
+    ar: 'الخصم اليدوي يحتاج سبباً',
+  },
+  sale_discount_needs_approval: {
+    en: 'This discount is above your ceiling — a manager must approve it',
+    ar: 'هذا الخصم فوق سقفك — يحتاج موافقة مدير',
+  },
+  /** فوق أعلى سقفٍ بالمنظمة: لا أحد يوافق، فاستدعاء مديرٍ انتظارٌ بلا جدوى. */
+  sale_discount_above_ceiling: {
+    en: 'This discount is above what anyone may approve',
+    ar: 'هذا الخصم فوق ما يملك أحدٌ الموافقة عليه',
+  },
+  sale_approver_cap_too_low: {
+    en: 'This approver may not approve that much',
+    ar: 'سقف هذا الموافِق أقلّ من الخصم المطلوب',
+  },
+  /** رفضٌ واحد لكل الأسباب: تمييزها يقول لمن يجرّب أي البريدين موجود. */
+  sale_approval_refused: {
+    en: 'Approval was refused',
+    ar: 'الموافقة مرفوضة',
+  },
+  sale_credit_needs_customer: {
+    en: 'Credit needs a named customer',
+    ar: 'الآجل والرصيد يحتاجان زبوناً مسمّى',
+  },
+  sale_credit_insufficient: {
+    en: 'Not enough customer credit',
+    ar: 'رصيد الزبون لا يكفي',
+  },
+  sale_credit_limit_exceeded: {
+    en: 'Above this customer credit limit',
+    ar: 'فوق سقف آجل هذا الزبون',
+  },
+  ledger_amount_required: {
+    en: 'A ledger entry needs an amount',
+    ar: 'القيد يحتاج مبلغاً',
+  },
   draft_no_variant: {
     en: 'This draft has no item to merge',
     ar: 'لا يوجد صنف بهذه المسودة لدمجه',

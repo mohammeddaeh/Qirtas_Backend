@@ -367,6 +367,26 @@ const PERMISSIONS: SeedPermission[] = [
     display: { ar: 'سياسات التسعير وسعر الصرف', en: 'Pricing Policies & Exchange Rate' },
   },
   {
+    // ثلاثة مفاتيح: من يبيع ليس من يقرأ التقارير، ومن يضع السقوف ليس أيّهما.
+    key: 'sales.sell',
+    module: 'sales',
+    is_sensitive: false,
+    display: { ar: 'البيع بنقطة البيع', en: 'Sell at the Till' },
+  },
+  {
+    key: 'sales.view',
+    module: 'sales',
+    is_sensitive: false,
+    display: { ar: 'عرض المبيعات', en: 'View Sales' },
+  },
+  {
+    key: 'sales.manage',
+    module: 'sales',
+    // حسّاس: يقرّر كم يخصم كل دور وكم يُقرَض كل زبون.
+    is_sensitive: true,
+    display: { ar: 'إدارة سقوف الخصم والآجل', en: 'Manage Discount & Credit Limits' },
+  },
+  {
     // مفتاحان لا واحد: الكاشير يُسأل «لماذا هذا السعر؟» فيحتاج أن يقرأ العرض،
     // ولا يجوز أن يملك تغييره. مفتاحٌ واحد كان سيمنح الشرحَ والقرارَ معاً.
     key: 'promotions.view',
@@ -420,6 +440,7 @@ const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
   catalog: { ar: 'الكتالوج', en: 'Catalog' },
   pricing: { ar: 'التسعير', en: 'Pricing' },
   promotions: { ar: 'العروض', en: 'Promotions' },
+  sales: { ar: 'المبيعات ونقطة البيع', en: 'Sales & Till' },
   barcodes: { ar: 'الباركود', en: 'Barcodes' },
   suppliers: { ar: 'الموردون', en: 'Suppliers' },
 };

@@ -19,6 +19,8 @@ import '../../features/catalog/catalog.openapi.js';
 import '../../features/inventory/inventory.openapi.js';
 import '../../features/storefront/storefront.openapi.js';
 import '../../features/promotions/promotions.openapi.js';
+import '../../features/sales/sales.openapi.js';
+import '../../features/sales/sales.openapi.js';
 
 export function buildOpenApiDocument() {
   const generator = new OpenApiGeneratorV3(registry.definitions);

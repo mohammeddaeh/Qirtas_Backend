@@ -50,9 +50,11 @@ import { catalogRouter } from './features/catalog/routes/catalog.routes.js';
 import { inventoryRouter } from './features/inventory/routes/inventory.routes.js';
 import { storefrontRouter } from './features/storefront/routes/storefront.routes.js';
 import { promotionsRouter } from './features/promotions/routes/promotions.routes.js';
+import { salesRouter, customerAccountsRouter } from './features/sales/routes/sales.routes.js';
 import { installCatalogPriceResolver } from './features/catalog/services/price-provider.js';
 import { installPromotionResolver } from './features/promotions/services/promotion-provider.js';
 import { installInventoryCostResolver } from './features/inventory/services/cost-provider.js';
+import { installInventoryStockIssuer } from './features/inventory/services/stock-issuer.js';
 import { installInventoryDeletionGuard } from './features/inventory/services/deletion-guard.js';
 import { installVariantMergeHandler } from './features/inventory/services/variant-merge.js';
 import { setAuditRecorder } from './core/audit/audit-recorder.js';
@@ -86,6 +88,12 @@ export const API_ROUTERS: ReadonlyArray<{ path: string; router: Router }> = [
   /** What a customer browses — public, and priced for the branch they chose. */
   { path: '/api/v1/storefront', router: storefrontRouter },
   { path: '/api/v1/promotions', router: promotionsRouter },
+  { path: '/api/v1/sales', router: salesRouter },
+  // حساب الزبون يعيش تحت `/customers/:id/account` — الرصيد صفةٌ للزبون،
+  // والموديول الذي يملك الدفتر هو الذي يخدمه.
+  { path: '/api/v1/customers', router: customerAccountsRouter },
+  // حساب الزبون يعيش تحت `/customers/:id/account` — الرصيد صفةٌ للزبون،
+  // والموديول الذي يملك الدفتر هو الذي يخدمه.
 
   /** Stock, suppliers and purchase invoices — mounted at the root so
    *  `/suppliers` and `/inventory/*` each read as themselves. */
@@ -164,6 +172,11 @@ export function buildApp(): Express {
   // لا يستورد موديولاً، ونسخةٌ ثانية من أيّهما تختلف أول تعديل بلا أي فشل.
   installPromotionResolver();
   installInventoryCostResolver();
+  // البضاعة تغادر الرفّ **بمعاملة الفاتورة نفسها** — منفذٌ لا استيراد،
+  // وفصلُ الكتابتين يترك فاتورةً لبضاعة ما زالت بالدفتر.
+  installInventoryStockIssuer();
+  // البضاعة تغادر الرفّ **بمعاملة الفاتورة نفسها** — منفذٌ لا استيراد،
+  // وفصلُ الكتابتين يترك فاتورةً لبضاعة ما زالت بالدفتر.
   // And carries a branch draft’s stock onto the product it turns out to be.
   installVariantMergeHandler();
 
