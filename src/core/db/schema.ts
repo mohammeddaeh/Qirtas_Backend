@@ -81,6 +81,5 @@ export * from '../../features/promotions/schemas/promotions.schema.js';
 
 // نقطة البيع والفاتورة (features/sales/) — docs/reference/orders_delivery.md §الفوترة.
 export * from '../../features/sales/schemas/sales.schema.js';
-
-// نقطة البيع والفاتورة (features/sales/) — docs/reference/orders_delivery.md §الفوترة.
-export * from '../../features/sales/schemas/sales.schema.js';
+export * from '../../features/sales/schemas/returns.schema.js';
+export * from '../../features/sales/schemas/orders.schema.js';

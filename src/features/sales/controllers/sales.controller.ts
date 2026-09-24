@@ -5,8 +5,9 @@ import { BusinessError } from '../../../core/http/api-error.js';
 import { buildActorContext, requireActorId } from '../../../core/http/require-actor.js';
 import { paginated, toPaginationParams } from '../../../core/pagination/pagination.js';
 import { created, ok } from '../../../core/http/response.js';
-import type { DiscountBody, PayBody, SalesQuery } from '../dtos/sales.dto.js';
+import type { CreateReturnBody, DiscountBody, PayBody, SalesQuery } from '../dtos/sales.dto.js';
 import * as service from '../services/sales.service.js';
+import * as returns from '../services/returns.service.js';
 import * as repo from '../repositories/sales.repository.js';
 
 const actorOf = (req: Request) => buildActorContext(req, requireActorId(req));
@@ -116,6 +117,80 @@ export async function pay(req: Request, res: Response): Promise<void> {
       })),
     }),
   );
+}
+
+// ── المرتجع (§٢) ────────────────────────────────────────────────────────────
+
+export async function getReturnable(req: Request, res: Response): Promise<void> {
+  ok(res, await returns.getReturnable(idOf(req)));
+}
+
+/**
+ * من شكل السلك إلى شكل القاعدة الصافية — **بمكان واحد**.
+ *
+ * نسخةٌ ثانية من هذا التحويل بمسار الموافقة كانت ستنحرف أول مرة يُضاف حقل،
+ * وتنحرف صامتة: كلا المسارين يحفظ مرتجعاً بنجاح.
+ */
+const toReturnInput = (body: CreateReturnBody) => ({
+  branch_id: body.branch_id,
+  sale_id: body.sale_id,
+  refund_method: body.refund_method,
+  reason: body.reason ?? null,
+  approver_user_id: body.approver_user_id ?? null,
+  lines: body.lines.map((line) => ({
+    saleLineId: line.sale_line_id,
+    qty: line.qty,
+    condition: line.condition,
+  })),
+});
+
+export async function createReturn(req: Request, res: Response): Promise<void> {
+  created(res, await returns.createReturn(actorOf(req), toReturnInput(req.body as CreateReturnBody)));
+}
+
+/**
+ * إرجاعٌ **بعد المهلة** بموافقة مدير — نفس مسار تجاوز سقف الخصم.
+ *
+ * يتحقّق من بريده وكلمة مروره **وأن حسابه فعّال**، ويُكتب اسمه بالمستند.
+ * والرفض واحدٌ لكل الأسباب: تمييزها يقول لمن يجرّب أي البريدين موجود.
+ */
+export async function approveReturn(req: Request, res: Response): Promise<void> {
+  const body = req.body as CreateReturnBody & { email: string; password: string };
+  const account = await staffRealm().store.findByEmail(body.email.toLowerCase());
+  const valid = account ? await verifyPassword(body.password, account.passwordHash) : false;
+  if (!account || !valid || account.status !== 'active') {
+    throw new BusinessError(403, 'Approval was refused', 'sale_approval_refused');
+  }
+  created(
+    res,
+    await returns.createReturn(actorOf(req), {
+      ...toReturnInput(body),
+      approver_user_id: account.id,
+    }),
+  );
+}
+
+export async function getReturn(req: Request, res: Response): Promise<void> {
+  ok(res, await returns.getReturn(idOf(req)));
+}
+
+export async function listReturns(req: Request, res: Response): Promise<void> {
+  const query = req.query as unknown as { page: number; limit: number; branch_id?: number; sale_id?: number };
+  const params = toPaginationParams(query);
+  const { items, total } = await returns.listReturns(
+    { branchId: query.branch_id, saleId: query.sale_id },
+    params.limit,
+    (params.page - 1) * params.limit,
+  );
+  ok(res, paginated(items, total, params));
+}
+
+export async function getSalesSettings(_req: Request, res: Response): Promise<void> {
+  ok(res, await returns.getSettings());
+}
+
+export async function setSalesSettings(req: Request, res: Response): Promise<void> {
+  ok(res, await returns.setSettings(actorOf(req), req.body as Record<string, number>));
 }
 
 export async function getCaps(_req: Request, res: Response): Promise<void> {

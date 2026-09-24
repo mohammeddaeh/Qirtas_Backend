@@ -904,9 +904,76 @@ export const MESSAGES = {
     en: 'Above this customer credit limit',
     ar: 'فوق سقف آجل هذا الزبون',
   },
+  // ── المرتجع (orders_delivery.md §٢) ──
+  /** سلّةٌ لم تُسدَّد لا يُرَدّ عنها مال: لم يدخل الدرج شيء. */
+  return_sale_not_paid: {
+    en: 'Only a paid sale can be returned',
+    ar: 'لا يُرَدّ إلا عن فاتورة مسدَّدة',
+  },
+  /** المهلة انتهت — **وليست رفضاً قاطعاً**: مديرٌ يوافق على نفس الجهاز. */
+  return_window_passed: {
+    en: 'This sale is past the return window — a manager must approve',
+    ar: 'انتهت مهلة الإرجاع لهذه الفاتورة — تحتاج موافقة مدير',
+  },
+  /** الرقم يسافر مع الرفض: «مرفوض» بلا عددٍ يجعل المحاولة التالية تخميناً. */
+  return_above_returnable: {
+    en: 'That is more than what is left to return',
+    ar: 'الكمية أكبر مما بقي قابلاً للإرجاع',
+  },
+  return_line_not_in_sale: {
+    en: 'That line is not on this sale',
+    ar: 'هذا السطر ليس بهذه الفاتورة',
+  },
+  return_qty_invalid: {
+    en: 'A returned quantity must be above zero',
+    ar: 'كمية الإرجاع تكون أكبر من صفر',
+  },
+  return_empty: {
+    en: 'A return needs at least one line',
+    ar: 'المرتجع يحتاج سطراً واحداً على الأقل',
+  },
+  /** رصيدٌ لمن لا حساب له مالٌ لا يعود إليه أبداً. */
+  return_credit_needs_customer: {
+    en: 'Store credit needs a named customer — refund in cash instead',
+    ar: 'الرصيد يحتاج زبوناً مسمّى — أو استردّ نقداً',
+  },
   ledger_amount_required: {
     en: 'A ledger entry needs an amount',
     ar: 'القيد يحتاج مبلغاً',
+  },
+  // ── السلّة والطلب الإلكتروني (orders_delivery.md) ──
+  cart_qty_required: {
+    en: 'A cart line needs a quantity',
+    ar: 'أدخل الكمية المطلوبة',
+  },
+  order_cart_empty: {
+    en: 'An empty cart cannot be confirmed',
+    ar: 'السلّة فارغة — أضف صنفاً قبل التأكيد',
+  },
+  /**
+   * **«غير مسعَّر» لا تُقال للزبون**: عطلٌ عندنا لا حقيقة عن البضاعة، وقولُه
+   * له يجعله يظنّ الصنف ممنوعاً — والجواب أن يجرّب فرعاً آخر.
+   */
+  order_item_unavailable: {
+    en: 'An item in the cart is not available at this branch',
+    ar: 'أحد الأصناف غير متوفّر بهذا الفرع — احذفه أو بدّل الفرع',
+  },
+  /** الرقم يسافر مع الرفض فلا يخفّض الكمية تخميناً. */
+  order_not_enough_stock: {
+    en: 'Not enough stock for an item in the cart',
+    ar: 'الكمية المطلوبة من أحد الأصناف أكبر من المتوفّر',
+  },
+  order_account_not_active: {
+    en: 'This account cannot place an order',
+    ar: 'لا يمكن لهذا الحساب إنشاء طلب',
+  },
+  /**
+   * سُلِّم أو أُلغي أو انتهت مهلته — **والحالة تسافر بالرد** فتُقال بالاسم بدل
+   * «لا يمكن إتمام العملية».
+   */
+  order_not_open: {
+    en: 'This order is already closed',
+    ar: 'هذا الطلب مغلق — لا خطوة عليه',
   },
   draft_no_variant: {
     en: 'This draft has no item to merge',

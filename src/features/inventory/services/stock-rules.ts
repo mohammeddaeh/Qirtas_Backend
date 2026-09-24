@@ -48,6 +48,20 @@ export function applyReceipt(balance: Balance, qty: number, cost: CostPair): Bal
   };
 }
 
+/**
+ * Goods coming back that carry **no new cost**: a customer return, a
+ * stocktaking surplus.
+ *
+ * The quantity rises and the average does **not** move — these pieces were
+ * always ours, bought at the average already recorded. Weighing them in at
+ * zero would drag the average down with every return, and a shop with many
+ * returns would end up valuing its shelf at nothing.
+ */
+export function applyReturn(balance: Balance, qty: number): Balance {
+  if (qty <= 0) return balance;
+  return { onHand: roundQty(balance.onHand + qty), avg: balance.avg };
+}
+
 /** Goods leaving: the quantity drops, the average does not. May go negative (§٨). */
 export function applyIssue(balance: Balance, qty: number): Balance {
   if (qty <= 0) return balance;

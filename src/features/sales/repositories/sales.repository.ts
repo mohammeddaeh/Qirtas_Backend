@@ -22,8 +22,8 @@ export type Exec = typeof db | Tx;
 
 // ── السلّة ──────────────────────────────────────────────────────────────────
 
-export async function insertSale(values: NewSaleRow): Promise<SaleRow> {
-  const [row] = await db.insert(salesTable).values(values).returning();
+export async function insertSale(values: NewSaleRow, exec: Exec = db): Promise<SaleRow> {
+  const [row] = await exec.insert(salesTable).values(values).returning();
   return row!;
 }
 
@@ -142,8 +142,9 @@ export async function findLineFor(
 
 export async function insertLine(
   values: typeof saleLinesTable.$inferInsert,
+  exec: Exec = db,
 ): Promise<SaleLineRow> {
-  const [row] = await db.insert(saleLinesTable).values(values).returning();
+  const [row] = await exec.insert(saleLinesTable).values(values).returning();
   return row!;
 }
 

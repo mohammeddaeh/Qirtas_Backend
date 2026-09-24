@@ -6,6 +6,7 @@ import { resolvePricesAt } from '../../../core/pricing/price-port.js';
 import { issueStock } from '../../../core/stock/stock-port.js';
 import { SALES_AUDIT, saleTarget } from '../audit-actions.js';
 import * as repo from '../repositories/sales.repository.js';
+import { closePaidOrder, reopenVoidedOrder } from './orders.service.js';
 import type { SaleLineRow, SaleRow } from '../schemas/sales.schema.js';
 import {
   branchPrefix,
@@ -328,7 +329,12 @@ export async function setHeld(saleId: number, held: boolean): Promise<WireSale> 
 
 export async function voidSale(actor: RequestActorContext, saleId: number): Promise<WireSale> {
   const sale = await requireOpen(saleId);
-  await repo.updateSale(db, saleId, { status: 'void', voided_at: new Date() });
+  await db.transaction(async (tx) => {
+    await repo.updateSale(tx, saleId, { status: 'void', voided_at: new Date() });
+    // سلّةُ استلامٍ أُلغيت: الطلب يعود لانتظاره بمهلة جديدة. وتركُه مربوطاً
+    // بفاتورة ملغاة يُجمّد بضاعته بلا مهلة تُسقطها أبداً.
+    await reopenVoidedOrder(tx, saleId);
+  });
   await recordAudit(actor, SALES_AUDIT.void, saleTarget.one(saleId), { status: sale.status }, {
     status: 'void',
   });
@@ -573,6 +579,11 @@ export async function paySale(
       docId: saleId,
       userId: actor.userId,
     });
+
+    // **الطلب يُقفل بنفس معاملة الدفع** حين تكون هذه فاتورة استلامه: حجزُه
+    // يُحرَّر هنا تماماً حيث يُخصم `on_hand`، وإلا خُصمت البضاعة مرتين —
+    // مرة من الرفّ ومرة من المتاح — فيكفّ الصنف عن الظهور للبيع وهو موجود.
+    await closePaidOrder(tx, saleId);
 
     return number;
   });

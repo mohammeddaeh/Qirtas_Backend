@@ -17,7 +17,11 @@ import {
   openSalesQuerySchema,
   payBodySchema,
   salesQuerySchema,
+  salesSettingsBodySchema,
   sellableItemsQuerySchema,
+  approveReturnBodySchema,
+  createReturnBodySchema,
+  returnsQuerySchema,
 } from '../dtos/sales.dto.js';
 import * as controller from '../controllers/sales.controller.js';
 
@@ -41,6 +45,16 @@ const canSell = () =>
 const canView = () =>
   requirePermission('sales.view', {
     display: { ar: 'عرض المبيعات', en: 'View Sales' },
+  });
+
+/**
+ * **الرد مفتاحٌ مستقل**: البيع يُدخل مالاً والمرتجع يُخرجه، ومن يقف على
+ * الصندوق لا يلزم أن يملك الاثنين. ومنحهما معاً قرارُ إدارةٍ لا افتراضُ كود.
+ */
+const canRefund = () =>
+  requirePermission('sales.refund', {
+    display: { ar: 'المرتجع من الزبون', en: 'Customer Returns' },
+    sensitive: true,
   });
 
 const canManage = () =>
@@ -75,6 +89,16 @@ salesRouter.get(
   canSell(),
   validate(sellableItemsQuerySchema, 'query'),
   asyncHandler(controller.searchItems),
+);
+
+/** مهلة الإرجاع — قراءةٌ لمن يبيع، وكتابةٌ لمن يضع السياسة. */
+salesRouter.get('/settings', canView(), asyncHandler(controller.getSalesSettings));
+
+salesRouter.put(
+  '/settings',
+  canManage(),
+  validate(salesSettingsBodySchema, 'body'),
+  asyncHandler(controller.setSalesSettings),
 );
 
 salesRouter.get('/caps', canView(), asyncHandler(controller.getCaps));
@@ -138,12 +162,58 @@ salesRouter.post(
   asyncHandler(controller.approveDiscount),
 );
 
+/**
+ * ما يصلح للإرجاع من هذه الفاتورة — **السقف والسعر المدفوع من الخادم**.
+ *
+ * طرحُ المُرجَع بالعميل يجعل جهازين يرجعان القطعة نفسها معاً، وحسابُ السعر
+ * هناك يتجاهل حصّة السطر من خصم الكاشير فيُخرج من الدرج أكثر مما دخله.
+ */
+salesRouter.get(
+  '/:id/returnable',
+  canRefund(),
+  validate(idParamsSchema, 'params'),
+  asyncHandler(controller.getReturnable),
+);
+
 salesRouter.post(
   '/:id/pay',
   canSell(),
   validate(idParamsSchema, 'params'),
   validate(payBodySchema, 'body'),
   asyncHandler(controller.pay),
+);
+
+// ── المرتجع (§٢) ────────────────────────────────────────────────────────────
+
+export const returnsRouter: Router = Router();
+
+returnsRouter.get(
+  '/',
+  canView(),
+  validate(returnsQuerySchema, 'query'),
+  asyncHandler(controller.listReturns),
+);
+
+returnsRouter.post(
+  '/',
+  canRefund(),
+  validate(createReturnBodySchema, 'body'),
+  asyncHandler(controller.createReturn),
+);
+
+/** بعد المهلة — بموافقة مدير على نفس الجهاز، ولا جلسة تُفتح له. */
+returnsRouter.post(
+  '/approve',
+  canRefund(),
+  validate(approveReturnBodySchema, 'body'),
+  asyncHandler(controller.approveReturn),
+);
+
+returnsRouter.get(
+  '/:id',
+  canView(),
+  validate(idParamsSchema, 'params'),
+  asyncHandler(controller.getReturn),
 );
 
 // ── حساب الزبون ─────────────────────────────────────────────────────────────

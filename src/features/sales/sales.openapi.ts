@@ -21,6 +21,10 @@ import {
   payBodySchema,
   salesQuerySchema,
   sellableItemsQuerySchema,
+  approveReturnBodySchema,
+  createReturnBodySchema,
+  returnsQuerySchema,
+  salesSettingsBodySchema,
 } from './dtos/sales.dto.js';
 
 /** نقطة البيع بالوثائق المولَّدة — الأشكال كاملةً بـ`docs/rest_api.md` §27. */
@@ -198,6 +202,80 @@ registry.registerPath({
     'Requires `sales.sell`. Spends the invoice number, freezes the totals, issues the stock and posts the customer ledger — **all in one transaction**.',
   request: { params: idParamsSchema, body: body(payBodySchema) },
   responses: { 200: ok('Paid sale', shape), ...commonErrorResponses },
+});
+
+// ── المرتجع (§٢) ────────────────────────────────────────────────────────────
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/sales/settings',
+  tags,
+  summary: 'The return window, in days',
+  description: 'Requires `sales.view`. One window for the whole company — two windows make a customer who bought at one branch and returns at another face two rules.',
+  responses: { 200: ok('Settings', shape), ...commonErrorResponses },
+});
+
+registry.registerPath({
+  method: 'put',
+  path: '/api/v1/sales/settings',
+  tags,
+  summary: 'Set the return window',
+  description: 'Requires `sales.manage`. Zero means no returns at all — a legitimate decision, written explicitly rather than read as an absent limit.',
+  request: { body: body(salesSettingsBodySchema) },
+  responses: { 200: ok('Settings', shape), ...commonErrorResponses },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/sales/{id}/returnable',
+  tags,
+  summary: 'What may still be returned from this sale, and at what price',
+  description:
+    'Requires `sales.refund`. The **price actually paid** per unit and **what is left** both come from the server: subtracting returns on the client lets two devices return the same piece, and computing the price there ignores the line share of the cashier discount.',
+  request: { params: idParamsSchema },
+  responses: { 200: ok('Returnable', shape), ...commonErrorResponses },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/returns',
+  tags,
+  summary: 'Returns, newest first',
+  description: 'Requires `sales.view`.',
+  request: { query: returnsQuerySchema },
+  responses: { 200: ok('Returns', paginatedSchema(shape)), ...commonErrorResponses },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/returns',
+  tags,
+  summary: 'Record a customer return',
+  description:
+    'Requires `sales.refund`. Spends its own number, refunds the **price actually paid**, and puts only the **sellable** pieces back — a damaged piece is refunded in full but never returns to the shelf.',
+  request: { body: body(createReturnBodySchema) },
+  responses: { 201: ok('Return', shape), ...commonErrorResponses },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/returns/approve',
+  tags,
+  summary: 'Return past the window, approved on the same device',
+  description:
+    'Requires `sales.refund`. Verifies the manager email, password and **active** status, records their name on the document — and issues no session.',
+  request: { body: body(approveReturnBodySchema) },
+  responses: { 201: ok('Return', shape), ...commonErrorResponses },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/returns/{id}',
+  tags,
+  summary: 'One return with its lines',
+  description: 'Requires `sales.view`.',
+  request: { params: idParamsSchema },
+  responses: { 200: ok('Return', shape), ...commonErrorResponses },
 });
 
 registry.registerPath({

@@ -218,6 +218,20 @@
       "when": 1790231861021,
       "tag": "0030_sales_pos",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1790234118901,
+      "tag": "0031_sales_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1790236740226,
+      "tag": "0032_cart_orders",
+      "breakpoints": true
     }
   ]
 }

@@ -108,6 +108,61 @@ export const ledgerBodySchema = z
   })
   .strict();
 
+// ── المرتجع (§٢) ────────────────────────────────────────────────────────────
+
+const returnLineSchema = z
+  .object({
+    sale_line_id: id,
+    qty: z.number().positive().max(100000),
+    /** حال القطعة **وهي بيد الكاشير** — لا فحصٌ لاحق ينساه أحد. */
+    condition: z.enum(['sellable', 'damaged']).default('sellable'),
+  })
+  .strict();
+
+export const createReturnBodySchema = z
+  .object({
+    /** الفرع **المستلِم** لا البائع: الإرجاع بأي فرع (§٢). */
+    branch_id: id,
+    sale_id: id,
+    lines: z.array(returnLineSchema).min(1).max(50),
+    refund_method: z.enum(['cash', 'customer_credit']),
+    reason: z.string().trim().max(300).nullable().optional(),
+    approver_user_id: id.nullable().optional(),
+  })
+  .strict();
+
+/** موافقة المدير على تجاوز المهلة — بنفس جهاز الكاشير، ولا جلسة تُفتح. */
+export const approveReturnBodySchema = createReturnBodySchema
+  .omit({ approver_user_id: true })
+  .extend({
+    email: z.string().trim().email(),
+    password: z.string().min(1).max(200),
+  })
+  .strict();
+
+export const returnsQuerySchema = paginationQuerySchema
+  .extend({ branch_id: id.optional(), sale_id: id.optional() })
+  .strict();
+
+/**
+ * إعدادات البيع — **والحقلان اختياريان**.
+ *
+ * شاشتان تكتبان هذا الصفّ (مهلة الإرجاع ومهلة حجز الطلب)، وإلزامُ الاثنين
+ * يجعل كل شاشة ترسل قيمةً لا تعرض سببها — فتدهس تعديل الأخرى بصمت.
+ */
+export const salesSettingsBodySchema = z
+  .object({
+    /** صفرٌ = لا إرجاع إطلاقاً — قرارٌ مشروع، لكنه يُكتب صراحةً. */
+    return_window_days: z.number().int().min(0).max(365).optional(),
+    /** صفرٌ = حجزٌ بلا مهلة، لا «تنتهي فوراً». */
+    reservation_hours: z.number().int().min(0).max(720).optional(),
+  })
+  .strict()
+  .refine((body) => Object.keys(body).length > 0, {
+    message: 'Nothing to change',
+  });
+
+export type CreateReturnBody = z.infer<typeof createReturnBodySchema>;
 export type PayBody = z.infer<typeof payBodySchema>;
 export type DiscountBody = z.infer<typeof discountBodySchema>;
 export type SalesQuery = z.infer<typeof salesQuerySchema>;

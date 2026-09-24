@@ -380,6 +380,14 @@ const PERMISSIONS: SeedPermission[] = [
     display: { ar: 'عرض المبيعات', en: 'View Sales' },
   },
   {
+    // الرد مفتاحٌ مستقل عن البيع: البيع يُدخل مالاً والمرتجع يُخرجه، ومن يقف
+    // على الصندوق لا يلزم أن يملك الاثنين.
+    key: 'sales.refund',
+    module: 'sales',
+    is_sensitive: true,
+    display: { ar: 'المرتجع من الزبون', en: 'Customer Returns' },
+  },
+  {
     key: 'sales.manage',
     module: 'sales',
     // حسّاس: يقرّر كم يخصم كل دور وكم يُقرَض كل زبون.

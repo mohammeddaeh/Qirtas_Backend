@@ -3,6 +3,7 @@ import {
   adjustmentValue,
   applyIssue,
   applyReceipt,
+  applyReturn,
   available,
   lineUnitCost,
   needsApproval,
@@ -35,6 +36,24 @@ describe('moving weighted average', () => {
     const after = applyIssue(balance(20, 150), 5);
     expect(after.onHand).toBe(15);
     expect(after.avg.syp).toBe(150);
+  });
+
+  it('goods coming back with no new cost ADD, and leave the average alone', () => {
+    // **اتجاهٌ خاطئ هنا لا يُصدر صوتاً**: مرتجعُ الزبون كان يُخصم من الرصيد
+    // لأن `postMovements` كانت تقرّر بوجود التكلفة لا بالإشارة — والحركة
+    // تُكتب بالقيمة الصحيحة، والرصيد وحده يذهب بالاتجاه المعاكس.
+    const after = applyReturn(balance(20, 150), 5);
+    expect(after.onHand).toBe(25);
+    // **والمتوسط لا يتحرّك**: وزنُها بصفر يجرّه لأسفل مع كل مرتجع، فيصير
+    // رفُّ محلٍّ كثير المرتجعات مقوَّماً بلا شيء.
+    expect(after.avg.syp).toBe(150);
+  });
+
+  it('a return of zero or less changes nothing', () => {
+    // وإثبات الإضافة وحده لا يكفي: دالّةٌ تضيف دائماً تنجح فيه، وتلك تزيد
+    // الرصيد بمرتجعٍ فارغ أُلغي قبل أن يُسجَّل.
+    expect(applyReturn(balance(20, 150), 0).onHand).toBe(20);
+    expect(applyReturn(balance(20, 150), -3).onHand).toBe(20);
   });
 
   it('stock sold before its receipt was entered takes the new cost, not an average against a negative', () => {

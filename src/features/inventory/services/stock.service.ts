@@ -17,7 +17,8 @@ import type {
   WireStockSignals,
 } from '../dtos/stock.dto.js';
 import * as stockRepository from '../repositories/stock.repository.js';
-import { applyIssue, applyReceipt, available, stockFlag, suggestThreshold, type CostPair } from './stock-rules.js';
+import { applyIssue, applyReceipt,
+  applyReturn, available, stockFlag, suggestThreshold, type CostPair } from './stock-rules.js';
 
 /**
  * Stock — the ledger is the record, the balance is its cache
@@ -90,10 +91,18 @@ export async function postMovements(
         usd: current ? Number(current.avg_cost_usd) : 0,
       },
     };
+    // **الإشارة تقرّر، لا وجود التكلفة.**
+    //
+    // كان الشرط `qtyBase >= 0 && line.cost`، فكلُّ إدخالٍ بلا تكلفة يسقط إلى
+    // `applyIssue` **فيُخصم بدل أن يُضاف**: مرتجعُ الزبون يُنقص الرصيد،
+    // وفائضُ الجرد يزيد النقص. ولا شيء يفشل — الحركة تُكتب بالقيمة الصحيحة
+    // والرصيد وحده يذهب بالاتجاه المعاكس. اكتُشف بالتجريب الحيّ 2026-09-24.
     const next =
-      line.qtyBase >= 0 && line.cost
-        ? applyReceipt(balance, line.qtyBase, line.cost)
-        : applyIssue(balance, Math.abs(line.qtyBase));
+      line.qtyBase < 0
+        ? applyIssue(balance, Math.abs(line.qtyBase))
+        : line.cost
+          ? applyReceipt(balance, line.qtyBase, line.cost)
+          : applyReturn(balance, line.qtyBase);
     await stockRepository.upsertBalance(exec, input.branchId, line.variantId, {
       on_hand: next.onHand,
       avg_cost_syp: next.avg.syp,

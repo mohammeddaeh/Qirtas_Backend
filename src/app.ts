@@ -50,11 +50,13 @@ import { catalogRouter } from './features/catalog/routes/catalog.routes.js';
 import { inventoryRouter } from './features/inventory/routes/inventory.routes.js';
 import { storefrontRouter } from './features/storefront/routes/storefront.routes.js';
 import { promotionsRouter } from './features/promotions/routes/promotions.routes.js';
-import { salesRouter, customerAccountsRouter } from './features/sales/routes/sales.routes.js';
+import { salesRouter, customerAccountsRouter, returnsRouter } from './features/sales/routes/sales.routes.js';
+import { cartRouter, myOrdersRouter, ordersRouter } from './features/sales/routes/orders.routes.js';
 import { installCatalogPriceResolver } from './features/catalog/services/price-provider.js';
 import { installPromotionResolver } from './features/promotions/services/promotion-provider.js';
 import { installInventoryCostResolver } from './features/inventory/services/cost-provider.js';
 import { installInventoryStockIssuer } from './features/inventory/services/stock-issuer.js';
+import { installInventoryReservation } from './features/inventory/services/reservation-provider.js';
 import { installInventoryDeletionGuard } from './features/inventory/services/deletion-guard.js';
 import { installVariantMergeHandler } from './features/inventory/services/variant-merge.js';
 import { setAuditRecorder } from './core/audit/audit-recorder.js';
@@ -89,6 +91,10 @@ export const API_ROUTERS: ReadonlyArray<{ path: string; router: Router }> = [
   { path: '/api/v1/storefront', router: storefrontRouter },
   { path: '/api/v1/promotions', router: promotionsRouter },
   { path: '/api/v1/sales', router: salesRouter },
+  { path: '/api/v1/returns', router: returnsRouter },
+  { path: '/api/v1/cart', router: cartRouter },
+  { path: '/api/v1/my-orders', router: myOrdersRouter },
+  { path: '/api/v1/orders', router: ordersRouter },
   // حساب الزبون يعيش تحت `/customers/:id/account` — الرصيد صفةٌ للزبون،
   // والموديول الذي يملك الدفتر هو الذي يخدمه.
   { path: '/api/v1/customers', router: customerAccountsRouter },
@@ -175,6 +181,9 @@ export function buildApp(): Express {
   // البضاعة تغادر الرفّ **بمعاملة الفاتورة نفسها** — منفذٌ لا استيراد،
   // وفصلُ الكتابتين يترك فاتورةً لبضاعة ما زالت بالدفتر.
   installInventoryStockIssuer();
+  // **الحجز يُركَّب هنا أيضاً**: المنفذ يرمي حين لا يُركَّب، فالتأكيد يفشل بصوتٍ
+  // عالٍ بدل أن يُنشئ طلباً بلا بضاعة محجوزة.
+  installInventoryReservation();
   // البضاعة تغادر الرفّ **بمعاملة الفاتورة نفسها** — منفذٌ لا استيراد،
   // وفصلُ الكتابتين يترك فاتورةً لبضاعة ما زالت بالدفتر.
   // And carries a branch draft’s stock onto the product it turns out to be.
