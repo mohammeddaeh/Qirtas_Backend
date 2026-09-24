@@ -176,6 +176,41 @@
       "when": 1790077263174,
       "tag": "0024_catalog_pricing",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790144342575,
+      "tag": "0025_inventory",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790145396320,
+      "tag": "0026_transfers_counts",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790146156816,
+      "tag": "0027_drafts_returns",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790157293185,
+      "tag": "0028_storefront_demand",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1790161020858,
+      "tag": "0029_promotions",
+      "breakpoints": true
     }
   ]
 }

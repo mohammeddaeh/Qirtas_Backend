@@ -21,6 +21,8 @@ import * as categoriesRepository from '../repositories/categories.repository.js'
 import { db } from '../../../core/db/client.js';
 import * as pricingRepository from '../repositories/pricing.repository.js';
 import * as productsRepository from '../repositories/products.repository.js';
+import type { PriceContext, StorePrice } from '../../../core/pricing/price-port.js';
+import { resolvePromotionsOn } from '../../../core/promotions/promotion-port.js';
 import type { PricePolicy, PricingCurrency } from '../schemas/catalog-enums.schema.js';
 import type { CatalogProductRow } from '../schemas/products.schema.js';
 import { CategoryTree } from './category-tree.js';
@@ -136,11 +138,122 @@ function toWireResolved(r: ResolvedPrice): WireResolvedPrice {
   }
 }
 
+// ── The price port (core/pricing) ───────────────────────────────────────────
+
+/**
+ * What these variants cost at one branch — the answer the storefront shows.
+ *
+ * It runs the same `resolvePrice` every administration screen runs, on the
+ * same loaded rules, because a second price rule would disagree the first
+ * time either moved — and the disagreement is a plausible number on a shelf,
+ * with nothing failing anywhere.
+ */
+export async function resolveAt(
+  branchId: number,
+  variantIds: number[],
+  priceCtx: PriceContext,
+): Promise<Map<number, StorePrice>> {
+  const result = new Map<number, StorePrice>();
+  if (variantIds.length === 0) return result;
+  const ctx = await loadContext();
+  const variants = await pricingRepository.findVariantsForPricing(variantIds);
+  const ids = variants.map((v) => v.variant_id);
+  const [central, branchRows, unlisted] = await Promise.all([
+    pricingRepository.findVariantPrices(ids),
+    pricingRepository.findBranchPrices(ids, branchId),
+    pricingRepository.findUnlisted(ids, branchId),
+  ]);
+  const centralBy = new Map(central.map((c) => [c.variant_id, c]));
+  const branchBy = new Map(branchRows.map((b) => [b.variant_id, b]));
+  const unlistedSet = new Set(unlisted.map((u) => u.variant_id));
+
+  for (const v of variants) {
+    const rules = rulesOf(ctx, {
+      category_id: v.category_id,
+      price_policy: v.product_price_policy,
+      pricing_currency: v.product_currency,
+      price_band_percent: v.product_band_percent,
+    });
+    const resolved = resolveFor(
+      ctx,
+      rules,
+      centralBy.get(v.variant_id),
+      money(branchBy.get(v.variant_id)),
+      !unlistedSet.has(v.variant_id),
+    );
+    result.set(v.variant_id, {
+      variantId: v.variant_id,
+      status: resolved.status === "priced" ? "priced" : resolved.status === "not_listed" ? "not_listed" : "unpriced",
+      amountSyp: resolved.status === "priced" ? resolved.amountSyp : null,
+      wholesale:
+        resolved.status === "priced" && resolved.wholesale
+          ? { amountSyp: resolved.wholesale.amountSyp, minQty: resolved.wholesale.minQty }
+          : null,
+      taxPercent: rules.taxRate,
+      promotion: null,
+    });
+  }
+
+  if (priceCtx.promotions === 'ignore') return result;
+
+  /**
+   * العرض يُطبَّق **هنا**، بعد حلّ السعر وقبل أن يغادر الرقم الخادم.
+   *
+   * تطبيقه بالمتجر وحده كان سيترك كل مستهلك آخر للمنفذ يعرض السعر قبل العرض،
+   * والفرق يظهر رقماً معقولاً بمكان وآخر بمكان — بلا أي فشل. والقاعدة نفسها
+   * تُسأل مرة واحدة: `core/promotions`.
+   *
+   * ويُطبَّق على **ما يدفعه هذا المشتري**: سعر الجملة للمعتمَد وسعر التجزئة
+   * لغيره. تطبيقه على التجزئة دائماً كان سيعطي تاجر الجملة خصماً على سعرٍ لا
+   * يدفعه.
+   */
+  const priced = variants
+    .map((v) => {
+      const price = result.get(v.variant_id);
+      if (!price || price.status !== 'priced') return null;
+      const base =
+        priceCtx.segment === 'wholesale' && price.wholesale !== null
+          ? price.wholesale.amountSyp
+          : price.amountSyp;
+      if (base === null) return null;
+      return {
+        variantId: v.variant_id,
+        productId: v.product_id,
+        categoryId: v.category_id,
+        brandId: v.brand_id ?? null,
+        basePriceSyp: base,
+      };
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null);
+
+  const offers = await resolvePromotionsOn(
+    { branchId, channel: priceCtx.channel, segment: priceCtx.segment },
+    priced,
+  );
+  for (const [variantId, offer] of offers) {
+    const price = result.get(variantId);
+    if (!price) continue;
+    const applied = {
+      beforeSyp: offer.beforeSyp,
+      names: offer.names,
+      promotionIds: offer.promotionIds,
+    };
+    if (priceCtx.segment === 'wholesale' && price.wholesale !== null) {
+      price.wholesale = { ...price.wholesale, amountSyp: offer.afterSyp };
+    } else {
+      price.amountSyp = offer.afterSyp;
+    }
+    price.promotion = applied;
+  }
+  return result;
+}
+
 // ── Settings ────────────────────────────────────────────────────────────────
 
 export async function getSettings(): Promise<WirePricingSettings> {
-  const ctx = await loadContext();
+  const [ctx, branches] = await Promise.all([loadContext(), pricingRepository.findLiveBranches()]);
   return {
+    branches,
     exchange_rate: ctx.rate
       ? { usd_to_syp: ctx.rate.usd_to_syp, effective_at: ctx.rate.effective_at.toISOString() }
       : null,

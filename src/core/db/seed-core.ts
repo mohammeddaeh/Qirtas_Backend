@@ -164,10 +164,50 @@ const PERMISSIONS: SeedPermission[] = [
     display: { ar: 'عرض المخزون', en: 'View Inventory' },
   },
   {
-    key: 'inventory.edit',
+    // Receiving, damage and approving are separate keys because they are
+    // separate jobs: a stock clerk logs what arrived, a manager signs off on
+    // what vanished. One «inventory.edit» would have handed both to whoever
+    // needed either.
+    key: 'inventory.receive',
     module: 'inventory',
     is_sensitive: false,
-    display: { ar: 'تعديل المخزون', en: 'Edit Inventory' },
+    display: { ar: 'استلام البضاعة', en: 'Receive Goods' },
+  },
+  {
+    key: 'inventory.adjust',
+    module: 'inventory',
+    is_sensitive: true,
+    display: { ar: 'تسجيل التلف والفقد', en: 'Record Damage & Loss' },
+  },
+  {
+    key: 'inventory.transfer',
+    module: 'inventory',
+    is_sensitive: false,
+    display: { ar: 'نقل البضاعة بين الفروع', en: 'Transfer Stock Between Branches' },
+  },
+  {
+    key: 'inventory.count',
+    module: 'inventory',
+    is_sensitive: false,
+    display: { ar: 'الجرد', en: 'Stocktaking' },
+  },
+  {
+    key: 'inventory.approve',
+    module: 'inventory',
+    is_sensitive: true,
+    display: { ar: 'اعتماد فروق المخزون', en: 'Approve Stock Differences' },
+  },
+  {
+    key: 'suppliers.view',
+    module: 'suppliers',
+    is_sensitive: false,
+    display: { ar: 'عرض الموردين', en: 'View Suppliers' },
+  },
+  {
+    key: 'suppliers.manage',
+    module: 'suppliers',
+    is_sensitive: false,
+    display: { ar: 'إدارة الموردين', en: 'Manage Suppliers' },
   },
   {
     key: 'printing.queue.view',
@@ -327,9 +367,18 @@ const PERMISSIONS: SeedPermission[] = [
     display: { ar: 'سياسات التسعير وسعر الصرف', en: 'Pricing Policies & Exchange Rate' },
   },
   {
-    key: 'promotions.edit',
+    // مفتاحان لا واحد: الكاشير يُسأل «لماذا هذا السعر؟» فيحتاج أن يقرأ العرض،
+    // ولا يجوز أن يملك تغييره. مفتاحٌ واحد كان سيمنح الشرحَ والقرارَ معاً.
+    key: 'promotions.view',
     module: 'promotions',
     is_sensitive: false,
+    display: { ar: 'عرض العروض', en: 'View Promotions' },
+  },
+  {
+    key: 'promotions.edit',
+    module: 'promotions',
+    // حسّاس: يغيّر ما يدفعه الزبون فعلاً.
+    is_sensitive: true,
     display: { ar: 'إدارة العروض', en: 'Manage Promotions' },
   },
   {
@@ -372,6 +421,7 @@ const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
   pricing: { ar: 'التسعير', en: 'Pricing' },
   promotions: { ar: 'العروض', en: 'Promotions' },
   barcodes: { ar: 'الباركود', en: 'Barcodes' },
+  suppliers: { ar: 'الموردون', en: 'Suppliers' },
 };
 
 const ALL_PERMISSION_KEYS = PERMISSIONS.map((p) => p.key);
@@ -486,7 +536,13 @@ const ROLES: SeedRole[] = [
     is_system_default: true,
     permissionKeys: [
       'inventory.view',
-      'inventory.edit',
+      'inventory.receive',
+      'inventory.adjust',
+      'inventory.transfer',
+      'inventory.count',
+      'inventory.approve',
+      'suppliers.view',
+      'suppliers.manage',
       'printing.queue.view',
       'printing.status.update',
       'customization.queue.view',
@@ -505,6 +561,7 @@ const ROLES: SeedRole[] = [
       'catalog.view',
       'catalog.drafts.create',
       'pricing.edit',
+      'promotions.view',
       'promotions.edit',
       'barcodes.print',
     ],
@@ -523,7 +580,11 @@ const ROLES: SeedRole[] = [
     is_system_default: true,
     permissionKeys: [
       'inventory.view',
-      'inventory.edit',
+      'inventory.receive',
+      'inventory.adjust',
+      'inventory.transfer',
+      'inventory.count',
+      'suppliers.view',
       'catalog.view',
       'catalog.drafts.create',
       'barcodes.print',

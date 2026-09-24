@@ -16,6 +16,9 @@ import '../../features/identity/audit-log.openapi.js';
 import '../../features/localization/languages.openapi.js';
 import '../media/media.openapi.js';
 import '../../features/catalog/catalog.openapi.js';
+import '../../features/inventory/inventory.openapi.js';
+import '../../features/storefront/storefront.openapi.js';
+import '../../features/promotions/promotions.openapi.js';
 
 export function buildOpenApiDocument() {
   const generator = new OpenApiGeneratorV3(registry.definitions);

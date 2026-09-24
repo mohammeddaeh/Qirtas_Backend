@@ -1,12 +1,18 @@
 /**
  * Barcode rules — docs/reference/store_system.md §٧.
  *
- * A code is NOT unique on its own. Factories print one code on the piece, the
- * box and the carton, or one code for every colour of a pen; refusing such a
- * code would refuse real stock at the receiving desk. Uniqueness is on
- * (code + variant + unit), and a code matching more than one of those is an
- * *ambiguity* the scanner resolves with one tap and the dashboard flags for a
- * permanent fix (an internal label over the factory code).
+ * A code is NOT unique on its own *within one product*. Factories print one
+ * code on the piece, the box and the carton, or one code for every colour of a
+ * pen; refusing such a code would refuse real stock at the receiving desk.
+ * Uniqueness is on (code + variant + unit), and a code matching more than one
+ * of those is an *ambiguity* the scanner resolves with one tap and the
+ * dashboard flags for a permanent fix (an internal label over the factory
+ * code).
+ *
+ * Across *products* the code is refused (`barcode_on_other_product`, enforced
+ * in products.service.ts): the tap that resolves piece-vs-box resolves nothing
+ * between two unrelated items — the cashier holds one thing and the screen
+ * offers two, with nothing on the shelf to tell them apart.
  */
 
 /** Printable codes this system accepts: 4–32 of digits, capital letters and `-`. */
@@ -77,6 +83,23 @@ export interface BarcodeMatch {
  * - `item` — several variants (every colour under one code): offer the variants.
  */
 export type BarcodeAmbiguity = 'none' | 'unit' | 'item';
+
+/**
+ * How bad a shared code is.
+ *
+ * - `in_product` — one product wearing its code on several units or colours.
+ *   The scanner asks which, the cashier taps once, and the answer is always
+ *   the thing in their hand.
+ * - `cross_product` — two unrelated products under one code. No tap resolves
+ *   that, so it needs a person: an internal label on one of them. New ones are
+ *   refused (`barcode_on_other_product`); the ones in the list were written
+ *   before that rule.
+ */
+export type SharedCodeScope = 'in_product' | 'cross_product';
+
+export function sharedScopeOf(productIds: readonly number[]): SharedCodeScope {
+  return new Set(productIds).size > 1 ? 'cross_product' : 'in_product';
+}
 
 export function ambiguityOf(matches: readonly BarcodeMatch[]): BarcodeAmbiguity {
   if (matches.length <= 1) return 'none';

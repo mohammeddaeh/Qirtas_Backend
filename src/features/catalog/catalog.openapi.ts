@@ -68,6 +68,12 @@ import {
   replaceCollectionProductsBodySchema,
   updateCollectionBodySchema,
 } from './dtos/collections.dto.js';
+import {
+  approveDraftBodySchema,
+  createDraftBodySchema,
+  draftsFilterQuerySchema,
+  mergeDraftBodySchema,
+} from './dtos/drafts.dto.js';
 
 const tags = ['Catalog'];
 const json = <T extends z.ZodTypeAny>(schema: T) => ({
@@ -444,7 +450,7 @@ route(
   'catalog.edit',
   ok('Product', productDetailSchema),
   { ...params, ...body(addBarcodeBodySchema) },
-  '409 `barcode_already_on_unit`. The same code on another unit or variant is accepted and flagged `is_shared`.',
+  '409 `barcode_already_on_unit`. The same code on another unit or variant **of this product** is accepted and flagged `is_shared`; on another product it is refused with 409 `barcode_on_other_product` (`data`: the owning product).',
 );
 route(
   'post',
@@ -480,6 +486,8 @@ route(
   'Codes printed on more than one variant/unit',
   'catalog.view',
   ok('Shared codes', z.array(sharedBarcodeSchema)),
+  {},
+  '`scope: cross_product` first — one code on two products, which a scan cannot resolve. Those rows predate `barcode_on_other_product`; new ones are refused.',
 );
 
 // ── Collections ─────────────────────────────────────────────────────────────
@@ -526,6 +534,16 @@ route(
   },
 );
 route('delete', '/collections/{id}', 'Delete a collection', 'catalog.delete', deleted, params);
+
+// ── Branch drafts — rest_api.md §24 ───────────────────────────────
+const draftShape = z.object({}).passthrough();
+const seeDrafts = 'Response shape: rest_api.md §24.';
+route('get', '/drafts', 'Branch drafts awaiting a decision, oldest first', 'catalog.drafts.create', ok('Drafts', paginatedSchema(draftShape)), { query: draftsFilterQuerySchema }, seeDrafts);
+route('get', '/drafts/{id}', 'One draft', 'catalog.drafts.create', ok('Draft', draftShape), params, seeDrafts);
+route('post', '/drafts', 'Create a draft for an unknown barcode (receivable, not sellable)', 'catalog.drafts.create', ok('Created', draftShape), body(createDraftBodySchema), seeDrafts);
+route('post', '/drafts/{id}/approve', 'Approve it into an ordinary product', 'catalog.drafts.review', ok('Approved', draftShape), { ...params, ...body(approveDraftBodySchema) }, seeDrafts, 200);
+route('post', '/drafts/{id}/merge', 'Merge it into an existing variant (stock and barcodes travel with it)', 'catalog.drafts.review', ok('Merged', draftShape), { ...params, ...body(mergeDraftBodySchema) }, seeDrafts, 200);
+route('delete', '/drafts/{id}', 'Delete a draft that never received stock', 'catalog.drafts.review', ok('Deleted', z.null()), params, seeDrafts);
 
 // ── Pricing — rest_api.md §21 (shapes documented there) ──────────────────
 const pricingShape = z.object({}).passthrough();

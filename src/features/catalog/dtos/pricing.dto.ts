@@ -96,6 +96,12 @@ export type WireResolvedPrice =
 export interface WirePricingSettings {
   exchange_rate: { usd_to_syp: number; effective_at: string } | null;
   rounding_bands: RoundingBand[];
+  /**
+   * Live branches, so the pricing screens can offer a branch to price for.
+   * Sent here because the client's catalog feature may not read the branches
+   * feature (`Features → Features ❌`), and every pricing screen needs them.
+   */
+  branches: { id: number; name: string }[];
 }
 
 export interface WireVariantPricing {

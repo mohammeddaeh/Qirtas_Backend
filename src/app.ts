@@ -47,6 +47,14 @@ import { branchesTransferResource } from './features/identity/branches.transfer.
 import { configureMedia } from './core/media/composition.js';
 import { filesRouter } from './core/media/routes/files.routes.js';
 import { catalogRouter } from './features/catalog/routes/catalog.routes.js';
+import { inventoryRouter } from './features/inventory/routes/inventory.routes.js';
+import { storefrontRouter } from './features/storefront/routes/storefront.routes.js';
+import { promotionsRouter } from './features/promotions/routes/promotions.routes.js';
+import { installCatalogPriceResolver } from './features/catalog/services/price-provider.js';
+import { installPromotionResolver } from './features/promotions/services/promotion-provider.js';
+import { installInventoryCostResolver } from './features/inventory/services/cost-provider.js';
+import { installInventoryDeletionGuard } from './features/inventory/services/deletion-guard.js';
+import { installVariantMergeHandler } from './features/inventory/services/variant-merge.js';
 import { setAuditRecorder } from './core/audit/audit-recorder.js';
 import * as auditService from './features/identity/services/audit.service.js';
 
@@ -74,6 +82,14 @@ export const API_ROUTERS: ReadonlyArray<{ path: string; router: Router }> = [
   { path: '/api/v1/audit-log', router: auditLogRouter },
   { path: '/api/v1/languages', router: languagesRouter },
   { path: '/api/v1/catalog', router: catalogRouter },
+
+  /** What a customer browses — public, and priced for the branch they chose. */
+  { path: '/api/v1/storefront', router: storefrontRouter },
+  { path: '/api/v1/promotions', router: promotionsRouter },
+
+  /** Stock, suppliers and purchase invoices — mounted at the root so
+   *  `/suppliers` and `/inventory/*` each read as themselves. */
+  { path: '/api/v1', router: inventoryRouter },
 
   /** Stored files (core/media/): public images, and private files behind signed links. */
   { path: '/api/v1/files', router: filesRouter },
@@ -138,6 +154,18 @@ export function buildApp(): Express {
   // Features other than identity write the same audit log through this port
   // (core/audit/audit-recorder.ts) — one log, one history per record.
   setAuditRecorder(auditService.record);
+
+  // The ledger vetoes deleting a product it points at, through the same kind
+  // of port — so the catalog never imports the inventory feature, and a
+  // RESTRICT foreign key never surfaces as a 500 (core/records/).
+  installInventoryDeletionGuard();
+  installCatalogPriceResolver();
+  // العرض يُحسم عن السعر، والتكلفة يقيس بها حارس الخسارة — منفذان لأن الموديول
+  // لا يستورد موديولاً، ونسخةٌ ثانية من أيّهما تختلف أول تعديل بلا أي فشل.
+  installPromotionResolver();
+  installInventoryCostResolver();
+  // And carries a branch draft’s stock onto the product it turns out to be.
+  installVariantMergeHandler();
 
   // One sign-in endpoint for every population: each realm supplies the payload
   // only it knows how to build (staff: permission keys; customer: profile).

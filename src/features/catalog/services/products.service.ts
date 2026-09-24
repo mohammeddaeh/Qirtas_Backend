@@ -1,6 +1,7 @@
 import { BusinessError, NotFoundError, ValidationError } from '../../../core/http/api-error.js';
 import type { RequestActorContext } from '../../../core/http/require-actor.js';
 import { recordAudit } from '../../../core/audit/audit-recorder.js';
+import { countExternalReferences } from '../../../core/records/deletion-guards.js';
 import { normalizeArabic } from '../../../core/i18n/arabic-normalize.js';
 import { db } from '../../../core/db/client.js';
 import * as mediaService from '../../../core/media/media.service.js';
@@ -23,7 +24,14 @@ import {
   type ValueRef,
   type VariantProblem,
 } from './variant-rules.js';
-import { ambiguityOf, barcodeProblem, internalBarcode, normalizeBarcode } from './barcode-rules.js';
+import { assertCodesFreeOfOtherProducts } from './barcode-ownership.js';
+import {
+  ambiguityOf,
+  barcodeProblem,
+  internalBarcode,
+  normalizeBarcode,
+  sharedScopeOf,
+} from './barcode-rules.js';
 import type { CatalogCategoryRow } from '../schemas/categories.schema.js';
 import type { CatalogUnitRow } from '../schemas/units.schema.js';
 import type {
@@ -512,9 +520,11 @@ export async function getProduct(id: number): Promise<WireProductDetail> {
         return image ? [image] : [];
       }),
     variants: wire,
-    // Nothing can reference a product yet: stock, prices and orders arrive in
-    // phases 2–3, and each adds its count here, by the rule of rest_api.md §16.
-    is_deletable: true,
+    // Stock movements are the first thing outside the catalog that points at
+    // a product (phase 3). The count comes through `core/records` because the
+    // catalog may not import the inventory feature — and without it the
+    // delete used to reach a RESTRICT foreign key and come back as a 500.
+    is_deletable: (await countExternalReferences('product', [product.id])) === 0,
     is_archivable: product.archived_at === null,
   };
 }
@@ -566,6 +576,7 @@ export async function createProduct(
   );
   if (problem) variantProblemError(problem);
   const writes = body.variants.map((v, i) => variantWrite(ctx, v, i));
+  await assertCodesFreeOfOtherProducts(writes.flatMap((w) => w.barcodes.map((b) => b.code)), null);
 
   const imageIds = [...(body.image_ids ?? []), ...writes.flatMap((w) => w.imageIds)];
   if (imageIds.length > 0) await mediaService.attachPublicImages('image_ids', imageIds);
@@ -679,6 +690,11 @@ export async function updateProduct(
 export async function deleteProduct(actor: RequestActorContext, id: number): Promise<void> {
   const existing = await productsRepository.findById(id);
   if (!existing) throw new NotFoundError('Product not found');
+  const references = await countExternalReferences('product', [id]);
+  if (references > 0)
+    throw new BusinessError(409, 'This product has stock movements — archive it instead', 'product_has_movements', {
+      movements_count: references,
+    });
   await recordAudit(
     actor,
     CATALOG_AUDIT.productDelete,
@@ -776,6 +792,7 @@ export async function addVariant(
   if (problem) variantProblemError(problem);
   const existingCount = (await productsRepository.findVariantsOfProducts([productId])).length;
   const write = variantWrite(ctx, input, existingCount);
+  await assertCodesFreeOfOtherProducts(write.barcodes.map((b) => b.code), productId);
   if (write.imageIds.length > 0) await mediaService.attachPublicImages('image_ids', write.imageIds);
 
   const variant = await withUniqueMapping(() =>
@@ -940,6 +957,7 @@ export async function addBarcode(
   const { product } = await productOfVariant(variantId);
   const code = checkedBarcode(body.code);
   await unitRowOf(variantId, body.unit_id);
+  await assertCodesFreeOfOtherProducts([code], product.id);
 
   const [row] = await withUniqueMapping(() =>
     productsRepository.insertBarcodes(db, variantId, [
@@ -1049,19 +1067,29 @@ export async function lookupBarcode(rawCode: string): Promise<WireBarcodeLookup>
 
 /** The dashboard signal: codes printed on more than one (variant, unit), worst first. */
 export async function listSharedBarcodes(): Promise<
-  { code: string; matches_count: number; ambiguity: 'unit' | 'item' }[]
+  {
+    code: string;
+    matches_count: number;
+    ambiguity: 'unit' | 'item';
+    scope: 'in_product' | 'cross_product';
+    products: { id: number; name_ar: string }[];
+  }[]
 > {
   const shared = await productsRepository.findSharedCodes(200);
   const result = [];
   for (const { code, n } of shared) {
     const lookup = await lookupBarcode(code);
+    const products = new Map(lookup.matches.map((m) => [m.product_id, m.product_name_ar]));
     result.push({
       code,
       matches_count: n,
       ambiguity: lookup.ambiguity === 'item' ? ('item' as const) : ('unit' as const),
+      scope: sharedScopeOf(lookup.matches.map((m) => m.product_id)),
+      products: [...products].map(([id, name_ar]) => ({ id, name_ar })),
     });
   }
-  return result;
+  // Worst first means the unresolvable ones first, then the merely noisy.
+  return result.sort((a, b) => Number(b.scope === 'cross_product') - Number(a.scope === 'cross_product'));
 }
 
 /** List items for [ids] in the given order — for collections, which curate their own order. */

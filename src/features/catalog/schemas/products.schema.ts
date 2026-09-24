@@ -15,6 +15,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import { mediaAssetsTable } from '../../../core/media/schemas/media-assets.schema.js';
 import { usersTable } from '../../identity/schemas/users.schema.js';
+import { branchesTable } from '../../identity/schemas/branches.schema.js';
 import { pricePolicyEnum, pricingCurrencyEnum, productKindEnum } from './catalog-enums.schema.js';
 import { catalogCategoriesTable } from './categories.schema.js';
 import { catalogBrandsTable } from './brands.schema.js';
@@ -68,6 +69,14 @@ export const catalogProductsTable = pgTable(
     /** Overrides the category's `branch_banded` range. `null` = inherit. */
     price_band_percent: numeric('price_band_percent', { precision: 5, scale: 2 }),
     status: productStatusEnum('status').notNull().default('draft'),
+    /**
+     * A branch met this at its counter as an unknown barcode and created it to
+     * receive against (inventory_suppliers.md §٢). It holds stock and **cannot
+     * be sold** until the administration approves it: its name, category and
+     * picture are nobody's decision yet.
+     */
+    is_branch_draft: boolean('is_branch_draft').notNull().default(false),
+    draft_branch_id: integer('draft_branch_id').references(() => branchesTable.id, { onDelete: 'set null' }),
     created_by_user_id: integer('created_by_user_id').references(() => usersTable.id, {
       onDelete: 'set null',
     }),

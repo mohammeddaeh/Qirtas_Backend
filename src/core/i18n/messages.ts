@@ -715,9 +715,173 @@ export const MESSAGES = {
     en: 'The check digit is wrong — the code was probably mistyped',
     ar: 'رقم التحقق خاطئ — الأرجح أن الكود كُتب خطأً',
   },
+  barcode_on_other_product: {
+    en: 'This barcode is already on another product. Search the catalogue by this code to open it, or print an internal label for this one.',
+    ar: 'هذا الباركود مستخدم على منتج آخر. ابحث بالكتالوج بهذا الرمز لتفتحه، أو اطبع ملصقاً داخلياً لهذا المنتج.',
+  },
   barcode_already_on_unit: {
     en: 'This unit already carries this barcode',
     ar: 'هذه الوحدة تحمل هذا الباركود مسبقاً',
+  },
+  // ── Stock and suppliers (inventory_suppliers.md §٢–§٨) ──
+  supplier_name_taken: {
+    en: 'A supplier with this name already exists',
+    ar: 'يوجد مورد بهذا الاسم مسبقاً',
+  },
+  supplier_archived: {
+    en: 'This supplier is archived — restore it first',
+    ar: 'هذا المورد مؤرشف — استعده أولاً',
+  },
+  supplier_has_invoices: {
+    en: 'This supplier has purchase invoices — archive instead of deleting',
+    ar: 'لهذا المورد فواتير شراء — أرشفه بدل حذفه',
+  },
+  receipt_rate_required: {
+    en: 'A dollar invoice needs the exchange rate used on it',
+    ar: 'فاتورة بالدولار تحتاج سعر الصرف المستعمل فيها',
+  },
+  receipt_unit_mismatch: {
+    en: 'That unit is not one of this item’s units',
+    ar: 'هذه الوحدة ليست من وحدات هذا الصنف',
+  },
+  receipt_cost_invalid: {
+    en: 'The cost of one line could not be computed',
+    ar: 'تعذّر حساب تكلفة أحد السطور',
+  },
+  receipt_variant_unknown: {
+    en: 'One line points at an item that does not exist',
+    ar: 'أحد السطور يشير إلى صنف غير موجود',
+  },
+  receipt_product_archived: {
+    en: 'That product is archived — stock cannot be received into it',
+    ar: 'هذا المنتج مؤرشف — لا يمكن استلام بضاعة عليه',
+  },
+  adjustment_variant_unknown: {
+    en: 'One line points at an item that does not exist',
+    ar: 'أحد السطور يشير إلى صنف غير موجود',
+  },
+  adjustment_not_pending: {
+    en: 'This document was already decided',
+    ar: 'هذا المستند حُسم من قبل',
+  },
+  inventory_scope_denied: {
+    en: 'You cannot approve stock differences at this branch',
+    ar: 'لا تملك اعتماد فروق المخزون بهذا الفرع',
+  },
+  stock_qty_invalid: {
+    en: 'The quantity must be above zero',
+    ar: 'الكمية يجب أن تكون أكبر من صفر',
+  },
+  product_has_movements: {
+    en: "This product has stock movements — archive it instead of deleting",
+    ar: "لهذا المنتج حركات مخزون — أرشفه بدل حذفه",
+  },
+  // ── Returns to supplier (inventory_suppliers.md §٧) ──
+  return_not_on_receipt: {
+    en: 'That item is not on this invoice',
+    ar: 'هذا الصنف ليس على هذه الفاتورة',
+  },
+  return_exceeds_receipt: {
+    en: 'More than this invoice brought in',
+    ar: 'أكثر ممّا جاء بهذه الفاتورة',
+  },
+  return_exceeds_stock: {
+    en: 'The branch does not hold that much',
+    ar: 'لا يوجد بالفرع هذا القدر',
+  },
+  // ── Branch drafts (inventory_suppliers.md §٢) ──
+  /** The customer chose a branch that is closed, archived, or gone. */
+  branch_not_shoppable: {
+    en: 'This branch is not open for shopping',
+    ar: 'هذا الفرع غير متاح للتسوّق — اختر فرعاً آخر',
+  },
+  draft_already_decided: {
+    en: 'This draft has already been decided',
+    ar: 'تمّ البتّ بهذه المسودة من قبل',
+  },
+  draft_has_stock: {
+    en: 'This draft already holds stock — merge it into a product instead',
+    ar: 'هذه المسودة تحمل مخزوناً — ادمجها بمنتج بدل حذفها',
+  },
+  // ── العروض (store_system.md §٥) ──
+  /** النوع يقرّر أي الحقول إلزامي، والرسالة تسمّي الحقل الناقص لا «بيانات غير صالحة». */
+  promotion_percent_required: {
+    en: 'A percentage promotion needs a percent between 0 and 100',
+    ar: 'عرض النسبة يحتاج نسبةً بين ٠ و١٠٠',
+  },
+  promotion_amount_required: {
+    en: 'An amount promotion needs an amount above zero',
+    ar: 'عرض المبلغ يحتاج مبلغاً أكبر من صفر',
+  },
+  promotion_tiers_required: {
+    en: 'A tiered promotion needs at least one tier',
+    ar: 'عرض الشرائح يحتاج شريحةً واحدة على الأقل',
+  },
+  promotion_tier_qty_invalid: {
+    en: 'A tier starts at a quantity above zero',
+    ar: 'الشريحة تبدأ من كمية أكبر من صفر',
+  },
+  promotion_tier_value_invalid: {
+    en: 'A tier carries either a percent or an amount — not both and not neither',
+    ar: 'الشريحة تحمل نسبةً أو مبلغاً — لا الاثنين ولا لا شيء',
+  },
+  promotion_bxgy_required: {
+    en: 'Buy X get Y needs both quantities above zero',
+    ar: '«اشترِ X خذ Y» يحتاج الكميتين أكبر من صفر',
+  },
+  promotion_branches_required: {
+    en: 'A branch-scoped promotion needs at least one branch',
+    ar: 'عرض الفروع يحتاج فرعاً واحداً على الأقل',
+  },
+  /** السقف يُرفض ويُسمّى: «مرفوض» بلا رقمٍ يجعل المحاولة التالية تخميناً. */
+  promotion_above_branch_cap: {
+    en: 'This promotion discounts more than the branch is allowed to give',
+    ar: 'خصم هذا العرض يتجاوز سقف الفرع',
+  },
+  promotion_archived: {
+    en: 'This promotion is archived — restore it before editing',
+    ar: 'هذا العرض مؤرشف — أعِده قبل تعديله',
+  },
+  draft_no_variant: {
+    en: 'This draft has no item to merge',
+    ar: 'لا يوجد صنف بهذه المسودة لدمجه',
+  },
+  draft_merge_self: {
+    en: 'A draft cannot be merged into itself',
+    ar: 'لا تُدمج المسودة بنفسها',
+  },
+  draft_merge_into_draft: {
+    en: 'Merge into a real product, not another draft',
+    ar: 'ادمجها بمنتج حقيقي لا بمسودة أخرى',
+  },
+  // ── Transfers and stocktakes (inventory_suppliers.md §٤–§٥) ──
+  transfer_scope_denied: {
+    en: 'You cannot move stock at this branch',
+    ar: 'لا تملك نقل البضاعة بهذا الفرع',
+  },
+  transfer_same_branch: {
+    en: 'A transfer needs two different branches',
+    ar: 'النقل يحتاج فرعين مختلفين',
+  },
+  transfer_state_invalid: {
+    en: 'This transfer is no longer at that step',
+    ar: 'هذا السند لم يعد بهذه المرحلة',
+  },
+  transfer_no_discrepancy: {
+    en: 'This transfer has no open difference to settle',
+    ar: 'لا يوجد فرق مفتوح بهذا السند',
+  },
+  count_scope_denied: {
+    en: 'You cannot take stock at this branch',
+    ar: 'لا تملك الجرد بهذا الفرع',
+  },
+  count_not_open: {
+    en: 'This stocktake is closed',
+    ar: 'محضر الجرد مغلق',
+  },
+  count_not_pending: {
+    en: 'This stocktake is not waiting for a decision',
+    ar: 'محضر الجرد ليس بانتظار قرار',
   },
   // ── Pricing (store_system.md §١١) ──
   price_central_only: {

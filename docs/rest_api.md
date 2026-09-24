@@ -41,6 +41,15 @@
 
 ترتيب فحص الفرونت للرسالة عند الخطأ: `errors.field[]` → `message` → `error.message` → `error` (string). هذا الباك يلتزم بالشكل الأول دائماً عبر `ValidationError` (`src/core/http/api-error.ts`).
 
+**ومخالفة `.strict()` تُسمّى بمفتاح المصدر** (`query` · `body` · `params`، منذ 2026-09-23):
+
+```json
+{ "status": false, "message": "Validation failed", "code": 422,
+  "errors": { "query": ["Unrecognized key(s) in object: 'branch_id'"] } }
+```
+
+zod يضع مشاكل الكائن كلّه بـ`formErrors` لا `fieldErrors`، وكان `validate()` يرسل الثاني وحده — فأي مفتاح استعلام غير معرَّف يعود **`errors: {}`**: رفضٌ بلا سببه، على الشاشة وبالسجلّ معاً. كلّف جلسة تصحيح حيّة على `GET /inventory/receipts?branch_id=…`. مثبَّت بـ`src/core/validation/__tests__/validate.test.ts`.
+
 ## 4. HTTP Status Code Mapping
 
 | Status    | المعنى                 | ملاحظة                                                                               |
@@ -1095,7 +1104,7 @@ Accept-language: ar | en
 
 **قواعد المتغيّرات** (مُختبَرة بـ`__tests__/product-rules.test.ts`): تصنيف **ورقي** فقط (`422 category_not_leaf`) · كل المتغيّرات على نفس الخصائص (`422 variant_axes_mismatch`) · ٣ خصائص كحد أقصى (`422 variant_too_many_axes`) · قيمة واحدة لكل خاصية (`422 variant_attribute_repeated`) · الخاصية مسموحة بالتصنيف أو أحد أجداده (`422 variant_attribute_not_allowed`) · لا تركيبتان متطابقتان (`409 variant_combination_taken`). SKU بلا إدخال = `QRT-<id>`، وتكراره `409 variant_sku_taken`.
 
-**الباركود**: **الكود ليس فريداً وحده** — الفرادة على (الكود + المتغيّر + الوحدة)، فأخطاء المصانع (نفس الكود على القطعة والعلبة، أو لكل الألوان) تُقبل وتُعلَّم `is_shared: true`. EAN-8/UPC-A/EAN-13 برقم تحقق خاطئ `422 barcode_checksum_invalid`، والشكل غير الصالح `422 barcode_format_invalid`. **الداخلي** EAN-13 ببادئة `20` من تسلسل قاعدة البيانات — نطاق محجوز عالمياً للمتاجر، لا يصطدم بكود مصنّع.
+**الباركود**: **الكود ليس فريداً وحده داخل المنتج الواحد** — الفرادة على (الكود + المتغيّر + الوحدة)، فأخطاء المصانع (نفس الكود على القطعة والعلبة، أو لكل ألوان القلم) تُقبل وتُعلَّم `is_shared: true`. **لكن الكود لا يُقبل على منتج ثانٍ**: `409 barcode_on_other_product` مع `data: {code, product_id, product_name_ar, product_name_en}` — المسح حينها يعرض صنفين لا علاقة بينهما ولا يملك الكاشير ما يميّزهما، والمخرج فتح المنتج المالك أو طباعة ملصق داخلي. (المنتجات المؤرشفة لا تُحتسب — المسح لا يعرضها أصلاً.) EAN-8/UPC-A/EAN-13 برقم تحقق خاطئ `422 barcode_checksum_invalid`، والشكل غير الصالح `422 barcode_format_invalid`. **الداخلي** EAN-13 ببادئة `20` من تسلسل قاعدة البيانات — نطاق محجوز عالمياً للمتاجر، لا يصطدم بكود مصنّع.
 
 - `GET /catalog/products?page&limit&search&category_id&brand_id&status&kind&archived` — `catalog.view`. `search` مطويّ على الأسماء والكلمات المرادفة، وإن بدا كوداً طابق الباركود/SKU **حرفياً**. `category_id` يشمل الفروع. العنصر: `{id, name_ar, name_en, category{id,name_ar,name_en}, brand{id,name}|null, kind, status, is_sellable, thumbnail: Image|null, variants_count, archived_at, created_at, updated_at}`.
 - `GET /catalog/products/:id` — ما سبق + `description_*` · `search_keywords` · `price_policy`/`pricing_currency` (`null` = يرث) · `effective` · `category_path` · `allowed_attribute_type_ids` · `axes` · `images` · `variants[{id, sku, status, sort_order, base_unit_id, label_ar, label_en, values[{attribute_type_id, attribute_value_id, value_ar, value_en, color_hex}], units[{id, unit_id, name_ar, name_en, factor, is_base, allows_fraction, sellable_online, sellable_at_pos}], barcodes[{id, code, unit_id, source, is_shared}], images}]` · `is_deletable` · `is_archivable`.
@@ -1104,9 +1113,9 @@ Accept-language: ar | en
 - `DELETE /catalog/products/:id` — `catalog.delete`. **حذف فعلي اليوم** (لا مخزون ولا أسعار ولا طلبات تشير لمنتج بعد)؛ المرحلتان ٢–٣ تضيفان عدّاداتها ويصير المنتج ذو الماضي للأرشفة. `POST /:id/archive` · `/unarchive` — `+ records.archive`، والاسترجاع لتصنيف مؤرشف `409 product_category_archived`.
 - `POST /catalog/products/:id/variants` · `PATCH /catalog/variants/:id` (`sku · attribute_value_ids · status · sort_order · image_ids`؛ **`base_unit_id` لا يُعدَّل**) · `DELETE /catalog/variants/:id` (`409 product_needs_variant` للأخير) — `catalog.edit`.
 - `PUT /catalog/variants/:id/units` `{units:[…]}` — الأساس يبقى بمعامل 1. `422 variant_unit_factor_invalid` (معامل ≤ 1) · `409 variant_unit_has_barcodes` (+ `data.codes`).
-- `POST /catalog/variants/:id/barcodes` `{code, unit_id}` — `catalog.edit`. `409 barcode_already_on_unit`. · `POST /catalog/variants/:id/barcodes/internal` `{unit_id}` — **`barcodes.print`** (موظف المخزون يلصق ملصقات ولا يعدّل الكتالوج). · `DELETE /catalog/barcodes/:id`.
+- `POST /catalog/variants/:id/barcodes` `{code, unit_id}` — `catalog.edit`. `409 barcode_already_on_unit` · `409 barcode_on_other_product`. · `POST /catalog/variants/:id/barcodes/internal` `{unit_id}` — **`barcodes.print`** (موظف المخزون يلصق ملصقات ولا يعدّل الكتالوج). · `DELETE /catalog/barcodes/:id`.
 - `GET /catalog/barcodes/lookup?code=` — `catalog.view`. `{code, ambiguity: none|unit|item, matches[{barcode_id, product_id, product_name_ar, product_name_en, product_status, variant_id, sku, variant_label_ar, variant_status, unit_id, unit_name_ar, factor, thumbnail}]}`. `unit` = متغيّر واحد بعدة وحدات (اعرض الوحدات) · `item` = عدة متغيّرات (اعرض الصور/الألوان). المؤرشف مستبعد.
-- `GET /catalog/barcodes/shared` — الأكواد المشتركة، الأسوأ أولاً: `[{code, matches_count, ambiguity}]` — إشارة اللوحة («٧ باركودات مشتركة»).
+- `GET /catalog/barcodes/shared` — الأكواد المشتركة، الأسوأ أولاً: `[{code, matches_count, ambiguity, scope, products}]` — إشارة اللوحة («٧ باركودات مشتركة»). **`scope` يتصدّر الترتيب**: `cross_product` (كود على منتجين — لا يحلّه مسح، ويحتاج ملصقاً داخلياً بيد شخص) قبل `in_product` (حالة المصنع التي يحلّها الكاشير بضغطة). صفوف `cross_product` **سابقة لقاعدة `barcode_on_other_product`** — لا يُنشأ منها جديد، و`products` يسمّي المنتجين لفتحهما.
 - `GET|POST /catalog/collections` · `GET|PATCH|DELETE /catalog/collections/:id` · `PUT /catalog/collections/:id/products` `{product_ids}` (بالترتيب المعروض؛ المؤرشف مرفوض). `{id, name_ar, name_en, image, starts_at, ends_at, is_active, sort_order, products_count}` + `products` بالتفاصيل. الحذف فعلي — المجموعة لافتة رفّ بلا تاريخ.
 
 **قواعد صارت تعدّ المنتجات** (تكمّل §19): حذف تصنيف له منتجات قطّ `409 category_has_products` · أرشفته وبه منتجات حيّة `409 category_has_active_products` · تصنيف فرعي تحت تصنيف فيه منتجات `409 category_parent_has_products` · إزالة خاصية تستخدمها متغيّرات تحته `409 category_attribute_in_use` · حذف قيمة يستخدمها متغيّر `409 attribute_value_in_use` · حذف ماركة عليها منتجات `409 brand_in_use` (والبديل `POST /catalog/brands/:id/archive`). تفاصيل التصنيف تحمل `products_count` و`active_products_count`.
@@ -1126,7 +1135,7 @@ Accept-language: ar | en
 
 **النطاق والصلاحية**: الكتابة تتطلّب `pricing.edit` على المسار، ثم يفحص الخادم النطاق حسب سياسة المنتج: السعر المركزي واستثناءات `central_locked` تحتاجه **بلا تقييد فرع** (`403 price_central_only`)؛ سعر فرع لـ`branch_free`/`branch_banded` يحتاجه **بذلك الفرع** (`403 pricing_scope_denied`). الفحص يمرّ بنفس `resolvePermissions` (المظلّة + المنح/الحجب الفردي). و`can_edit_central`/`can_edit_branch` بالرد هما جواب الخادم — الشاشة تعرض الأدوات منهما.
 
-- `GET /catalog/pricing/settings` — `catalog.view`. `{exchange_rate: {usd_to_syp, effective_at} | null, rounding_bands: [{below, step}]}`.
+- `GET /catalog/pricing/settings` — `catalog.view`. `{exchange_rate: {usd_to_syp, effective_at} | null, rounding_bands: [{below, step}], branches: [{id, name}]}`. الفروع **هنا** لأن كتالوج الفرونت لا يقرأ وحدة الفروع (`Features → Features ❌`) وكل شاشة تسعير تحتاج منتقي فرع..
 - `POST /catalog/pricing/exchange-rate` `{usd_to_syp}` — `pricing.policy`. **يُضاف ولا يُعدَّل**؛ الساري = الأحدث. يردّ الإعدادات.
 - `PUT /catalog/pricing/rounding` `{bands}` — `pricing.policy`. تتصاعد، آخرها `below: null`، خطوات موجبة (`422 rounding_bands_invalid`).
 - `GET /catalog/products/:id/pricing?branch_id=` — `catalog.view`. `{product_id, branch_id, price_policy, pricing_currency, band_percent, own_band_percent, wholesale_discount_percent, wholesale_min_qty, tax_rate_percent, exchange_rate, can_edit_central, can_edit_branch, variants: [{variant_id, sku, label_ar, central: {amount, currency, wholesale_amount, wholesale_min_qty} | null, branch_price: {amount, currency} | null, is_listed, resolved, branch_prices: [{branch_id, branch_name, amount, currency}], unlisted_branch_ids}]}`. بلا `branch_id` = العرض المركزي (`branch_prices`/`unlisted_branch_ids` معبّأة، `branch_price` فارغ)؛ معه = عرض الفرع (العكس).
@@ -1143,3 +1152,188 @@ Accept-language: ar | en
 **التدقيق**: `catalog.price.central.set` · `catalog.price.branch.set|clear` · `catalog.listing.set` (على `catalog_variant:<id>`) · `catalog.pricing.exchange_rate.set|rounding.set|bulk_update` (على `catalog_pricing:settings`) · `catalog.category.pricing_rules` · `catalog.product.pricing_rules`.
 
 **مؤجَّل**: سعر خاص للعلبة/الطرد · الأسعار المجدولة (مع العروض) · الجملة بشرائح · التحديث الجماعي لأسعار الفروع · نطاق المورد بالتحديث الجماعي (مع وحدة الموردين).
+
+## 22. المخزون والموردون (2026-09-23) · المرجع: `docs/reference/inventory_suppliers.md` §٢–§٨
+
+**المبدأ**: **دفتر الحركات هو السجل** (`stock_movements`) — يُضاف ولا يُعدَّل ولا يُحذف، والتصحيح حركة عكسية. و`stock_balances` **كاش** يُكتب بنفس المعاملة وقابل لإعادة البناء من الدفتر. كل كمية بوحدة الأساس دائماً `numeric(14,3)` (الكسور مدعومة)، والصفّ يُقفَل (`FOR UPDATE`) أثناء أي كتابة — وإلا قرأ كاتبان نفس الرصيد وكتب كلٌّ منهما عالماً لم يعد قائماً.
+
+**التكلفة** (§٣، ومُثبَّتة بـ`__tests__/stock-rules.test.ts`): متوسط مرجّح متحرك لكل (متغيّر × فرع)، **بالليرة وبالدولار معاً**. الاستلام وحده يحرّك المتوسط؛ الصرف يُنقص الكمية ولا يمسّه. رصيد ≤ صفر عند الاستلام ← التكلفة الجديدة تصير المتوسط (المتوسط مع كمية سالبة رقم بلا معنى). وكل حركة صرف **تحمل المتوسط الذي غادرت عليه**، فتقييمها بعد سنوات لا يحتاج إعادة تشغيل كل استلام سبقها.
+
+**الترقيم**: تسلسل لكل (فرع × نوع) بلا فجوات — `GRN-<فرع>-000012` · `DMG-…`. الزيادة والقراءة **جملة واحدة** (`ON CONFLICT … +1 RETURNING`) فلا يقرأ مستندان الرقم نفسه.
+
+**الصلاحيات**: `inventory.view` · `inventory.receive` · `inventory.adjust` · `inventory.approve` · `suppliers.view` · `suppliers.manage`. الحارس يسأل «هل يملكه بأي مكان؟»، و**الاعتماد يُفحص بنطاق الفرع** بالخدمة (`holdsPermissionAt`) لأن النطاق يعتمد على فرع المستند (`403 inventory_scope_denied`).
+
+### الموردون
+- `GET /suppliers?page&limit&search&archived` — `suppliers.view`. الصف: `{id, name, phone, email, address, notes, is_active, archived_at, invoices_count, is_deletable, is_archivable}`.
+- `GET /suppliers/:id` · `POST /suppliers` · `PATCH /suppliers/:id` — `suppliers.manage`. اسم مكرَّر بعد طيّ العربية `409 supplier_name_taken` (مورد باسمين يشطر تاريخه). الكتابة على مؤرشف `409 supplier_archived`.
+- `POST /suppliers/:id/archive` · `/unarchive` — الأرشفة تُطفئ `is_active` معها.
+- `DELETE /suppliers/:id` — لمن لم تُسجَّل له فاتورة قط؛ غير ذلك `409 supplier_has_invoices` + `data.invoices_count`.
+
+### الاستلام (فاتورة شراء)
+- `POST /inventory/receipts` — `inventory.receive`. `{branch_id, supplier_id, supplier_invoice_no?, invoice_date, currency, exchange_rate?, note?, lines:[{variant_id, unit_id, qty, unit_cost, expires_at?}]}`. **يُرحَّل فوراً**: حركات `receipt` + طبقات استلام + أرصدة، بمعاملة واحدة. السطر يُحفظ **كما كُتب** (كرتونة ×١٢ بـ٦٠٬٠٠٠) **وبوحدة الأساس** (١٢٠ قطعة بـ٥٬٠٠٠) — الأول يُطابَق بالورقة والثاني تجمعه التقارير. `422 receipt_rate_required` (فاتورة بالدولار بلا سعر صرف — تكلفة دولارية مخمَّنة تلاحق البضاعة طوال عمرها) · `422 receipt_unit_mismatch` · `422 receipt_variant_unknown` · `409 receipt_product_archived`.
+- `GET /inventory/receipts?page&limit&branch_id&supplier_id` · `GET /inventory/receipts/:id` (بالسطور) — `inventory.view`.
+
+### المخزون
+- `GET /inventory/stock?branch_id&page&limit&search&flag` — `inventory.view`. الصف: `{variant_id, product_id, product_name_ar/_en, sku, on_hand, reserved, available, avg_cost_syp, avg_cost_usd, reorder_threshold, flag}`. و**`flag` يحسبه الخادم**: `negative` (تناقض يستدعي جرداً، لا «قليل جداً») · `out_of_stock` · `low` (تحت حدّ الفرع) · `ok`. الفلتر `flag=low` يشمل الثلاثة غير `ok`.
+- `GET /inventory/movements?branch_id&variant_id&page&limit` — الدفتر، الأحدث أولاً، مع من سجّله والمستند المصدر.
+- `PUT /inventory/variants/:id/threshold` `{branch_id, threshold|null}` — `inventory.receive`. **الفرع يحدده** (§٨)؛ `null` = بلا حدّ، وهو غير الصفر.
+- `GET /inventory/variants/:id/threshold-suggestion?branch_id` — `{suggestion, days, sold_base}`؛ `suggestion: null` حتى يتراكم تاريخ كافٍ (٣٠ يوماً)، لأن رقماً من ثلاثة أيام يُوثَق به كما يُوثَق برقم سنة.
+- `GET /inventory/signals?branch_id` — `{low_count, out_of_stock_count, negative_count, pending_adjustments, expiring[]}`؛ `expiring` من طبقات الاستلام التي لها تاريخ صلاحية وما زال فيها كمية.
+- `GET|PUT /inventory/settings` — `{approval_threshold_syp, expiry_alert_days, branches[]}`؛ التعديل بـ`inventory.approve`. **و`branches` تسافر مع الإعدادات** (كما تفعل إعدادات التسعير §21): كل شاشة مخزون تسأل «أي فرع؟» قبل أن تعرض رقماً، وقاعدة الفرونت `Features → Features ❌` تمنع موديول المخزون من قراءة موديول الفروع.
+- `GET /inventory/document-items?branch_id&search` — `inventory.view`. ما يصلح لسطر استلام أو تلف: `{variant_id, sku, product_name_ar, base_unit_id, on_hand, units[]}`، بحث بالعربية المطوية والـSKU **وبالباركود تماماً** (المسح يجد الصنف)، بسقف ٢٥ صفاً. **و`on_hand` جزء من الصف** لأن سطر التلف يُكتب بمواجهة ما على الرف لا بمعزل عنه.
+
+### التلف والفقد
+- `POST /inventory/adjustments` — `inventory.adjust`. `{branch_id, reason: damage|loss|expiry|sample|internal_use|other, note, lines:[{variant_id, qty_base}]}`. **السبب إلزامي**. يُقيَّم بمتوسط اللحظة: تحت الحدّ ← `posted` فوراً بحركاته، فوقه ← `pending_approval` **بلا أي حركة** (بضاعة «قيد الانتظار» كانت ستُعدّ مرتين).
+- `GET /inventory/adjustments?page&limit&branch_id&status` · `GET /inventory/adjustments/:id`.
+- `POST /inventory/adjustments/:id/approve` · `/reject` — `inventory.approve` **بفرع المستند**. قرار ثانٍ `409 adjustment_not_pending`.
+
+**مؤجَّل للشريحة 3-ب**: النقل بين الفروع · الجرد · مسودات الفروع · المرتجع للمورد.
+
+## 23. النقل بين الفروع والجرد (2026-09-23) · المرجع: `docs/reference/inventory_suppliers.md` §٤–§٥
+
+**النقل** — `inventory.transfer`، والنطاق يُفحص **بكل خطوة** بالخدمة: المرسِل يوافق ويشحن، والمستلم يستلم؛ حارس المسار لا يعرف أيّهما المتصل (`403 transfer_scope_denied`).
+
+```
+requested → approved → in_transit → received                   → closed
+          ↘ rejected            ↘ received_with_discrepancy → closed
+```
+
+**و`in_transit` حالة قائمة بذاتها**: البضاعة **لا تخصّ أي فرع** وهي بالطريق — لو حُسبت للمرسِل لبيعت مرتين، ولو حُسبت للمستلم لبيعت قبل وصولها. آلة الحالات دالة صافية (`services/transfer-rules.ts`, ١٣ اختباراً) والردّ يحمل `next_states` فتُبنى أزرار الشاشة منه لا من نسخة ثانية تنحرف.
+
+- `POST /inventory/transfers` `{from_branch_id, to_branch_id, note?, lines:[{variant_id, qty_requested}]}` — من يملك الصلاحية **بلا تقييد فرع** يُنشئ أمراً يبدأ `approved` مباشرة (أمر الإدارة، §٤)؛ غيره يطلب من فرعه فيبدأ `requested`. `422 transfer_same_branch`.
+- `POST /:id/approve` · `/reject` — **بيد الفرع المرسِل**: بضاعته.
+- `POST /:id/ship` `{lines:[{variant_id, qty}]}` (السطر الغائب = كما طُلب) — يُخرج الكمية من المرسِل **بتكلفته هو** (§٣: النقل ليس بيعاً، ولا ربح بين الفروع).
+- `POST /:id/receive` `{lines:[{variant_id, qty}]}` (الغائب = كما شُحن) — يُدخل **ما وصل فعلاً**. أي فرق ← `received_with_discrepancy`، **ولا يُبتلع**.
+- `POST /:id/resolve` `{resolution: loss|returned, note?}` — `loss` لا يُرحّل شيئاً (البضاعة غادرت المرسِل عند الشحن ولم تصل؛ حركة ثانية كانت ستخصم الكمية مرتين) · `returned` يعيدها لرفّ المرسِل. ثم `closed`. `409 transfer_no_discrepancy`.
+- `POST /:id/close` · `GET /inventory/transfers?branch_id&status` (الفرع يرى ما يرسله **وما ينتظره**) · `GET /inventory/transfers/:id`.
+
+**الجرد** — `inventory.count` (والاعتماد `inventory.approve`)، بلا إغلاق الفرع.
+
+- `POST /inventory/counts` `{branch_id, scope: full|category|list, category_id?, note?}` → `CNT-<فرع>-000001` بحالة `open`.
+- `POST /inventory/counts/:id/lines` `{variant_id, counted_qty}` — **جرد أعمى**: الرد `{recorded, counted_lines}` ولا يحمل رصيد النظام ولا الفرق. كل سطر يخزّن رصيد النظام **لحظة مسحه** (الحركة مستمرة أثناء الجرد)، ومسح الصنف ثانيةً **يستبدل** سطره لا يضيف إليه.
+- `POST /:id/close` — يقارن ويحسب قيمة الفروق **بالقيمة المطلقة** (نقص ١٠ وزيادة ١٠ مشكلتان لا صفر؛ الجمع الجبري كان يُمرّر جرداً كبيراً تحت حدّ الاعتماد). تحت الحدّ ← `closed` وتُرحَّل حركات `count_adjustment`؛ فوقه ← `pending_approval` **بلا أي حركة**.
+- `POST /:id/approve` · `/reject` — `inventory.approve` بفرع المحضر. `409 count_not_pending`.
+- `GET /inventory/counts?branch_id&status` · `GET /inventory/counts/:id` — `system_qty`/`diff` **`null` ما دام مفتوحاً** (إرسالهما «للواجهة فقط» يُنهي الجرد الأعمى).
+
+**حذف منتج له حركات** — `409 product_has_movements` + `data.movements_count`، و`is_deletable` بتفاصيل المنتج يعكسها. القيد يصل عبر منفذ `core/records/deletion-guards.ts` (الكتالوج لا يستورد المخزون): قبله كان الحذف يصطدم بمفتاح `RESTRICT` فيعود **500** — رفضٌ حقيقي بصياغة عُطل.
+
+
+## 24. مسودات الفروع والمرتجع للمورد (2026-09-23) · المرجع: `docs/reference/inventory_suppliers.md` §٢ و§٧
+
+**المسودة هي جواب «باركود لا يعرفه النظام والبضاعة على الرصيف»**: الفرع ينشئ صفاً ويستلم عليه فوراً ولا ينتظر أحداً. وهو **منتج عادي بجدول المنتجات** (`is_branch_draft` + `draft_branch_id`) لا جدولاً ثانياً — وإلا لزم نقل المخزون بين جدولين يوم يُعتمد. ولا يُباع: `status: draft`، لأن اسمه وتصنيفه لم يقرّرهما أحد بعد، وفاتورة تطبع اسماً قد يتغير الأسبوع القادم.
+
+- `POST /catalog/drafts` `{branch_id, name_ar, name_en?, category_id, base_unit_id, barcode?, image_id?, note?}` — `catalog.drafts.create` (بيد الفرع). يُنشئ منتجاً بمتغيّر واحد بلا خصائص ووحدة أساسية واحدة. التصنيف **نهائي إلزاماً** (`422 category_not_leaf`)، والباركود يُرفض لشكله فقط (`422 barcode_format_invalid`) — رقم التحقق لا يُفرض هنا (كودُ مصنعٍ لا يُقرأ نظيفاً هو بالضبط ما وُجدت له المسودة). **لكن كوداً يحمله منتج قائم يُرفض** `409 barcode_on_other_product`: مسحه كان سيجد ذلك المنتج، فالمسودة عليه تجعل المسح نفسه يعرض صنفين من بعدها — والرسالة تسمّي المنتج الذي كان الفرع يبحث عنه.
+- `GET /catalog/drafts?branch_id&include_decided` · `GET /catalog/drafts/:id` — الأقدم أولاً (من انتظر أطول هو من لا يزال عاجزاً عن البيع)، وكل صف يحمل `age_days` و`barcodes` و`on_hand` — ما يحتاجه المراجِع بلا فتح تفاصيل.
+- `POST /catalog/drafts/:id/approve` `{name_ar?, name_en?, category_id?, brand_id?}` — `catalog.drafts.review`. كل حقل اختياري: الغائب يعني «الفرع أصاب». يصير `status: active` و`is_branch_draft: false`.
+- `POST /catalog/drafts/:id/merge` `{variant_id}` — كان صنفاً نبيعه أصلاً. **المخزون ينتقل معه** (الأرصدة تُدمج كما تُدمج دفعة واردة، والحركات والطبقات وسطور الفواتير تُوجّه للمتغيّر الحقيقي) **وباركوداته تتبعه** — وإلا عاد المسح التالي إلى «باركود مجهول». `422 draft_merge_self` · `422 draft_merge_into_draft`.
+- `DELETE /catalog/drafts/:id` — لمسودة **لم تستلم شيئاً**. مع مخزون ← `409 draft_has_stock` (الجواب دمج أو اعتماد، لا محو بضاعة على رفّ). وقرار ثانٍ على مسودة مُبتّ بها ← `409 draft_already_decided`.
+
+**المرتجع للمورد** — `inventory.receive` (نفس اليد التي تستلم)، وهو **ليس تسوية**: التسوية تقول إن البضاعة ضاعت عندنا، والمرتجع يقول إن المورد استعادها — والثاني وحده يدخل بما ندين له.
+
+- `GET /inventory/receipts/:id/returnable` — ما يزال قابلاً للإرجاع بكل سطر: `received_base` − `returned_base` = `returnable_base`، مع تكلفة الوحدة كما دخلت. محسوب بالخادم فلا تعرض الشاشة كمية سيرفضها.
+- `POST /inventory/returns` `{receipt_id, note, lines:[{variant_id, qty_base}]}` → `PRT-<فرع>-000001`. **مقيّم بتكلفة الفاتورة لا بمتوسط الرف** (المورد يُدان بما قبضه)، والملاحظة **إلزامية**. يُرحّل `return_to_supplier` سالباً، ومتوسط التكلفة لا يُمسّ (الإخراج لا يعيد حساب المتوسط).
+- `GET /inventory/returns?branch_id&supplier_id&receipt_id` · `GET /inventory/returns/:id`.
+
+رفضان، والترتيب مقصود: `422 return_exceeds_receipt` (+`data.returnable_base`) يُفحص **قبل** `409 return_exceeds_stock` (+`data.available`) — «لم نشتر منك هذا القدر» حقيقة ثابتة، أما «ليس على الرفّ» فقد يعني أنه بيع، وهذا حديث آخر. و`422 return_not_on_receipt` لصنف ليس على تلك الفاتورة.
+
+## 25. تصفّح الزبون (2026-09-23) · المرجع: `docs/reference/store_system.md` §٨
+
+**كل مسارات `/storefront/*` عامة** — الضيف يرى المتجر كاملاً بأسعاره وحالات توفّره (§٨)، والبوابة حيث يتحرّك المال لا حيث يُقرأ الرف. والتوكن — إن أُرسل — يغيّر شيئاً واحداً: **الزبون المعتمَد جملةً يرى سعر جملته أيضاً**، ويُقرأ اعتماده من صفّه لا من الطلب (علمٌ يرسله العميل خصمٌ يطلبه أي أحد).
+
+**الفرع إلزامي بكل قراءة عن منتج**: التوفّر حقيقة عن مكان، والسعر يختلف بالفرع. وفرعٌ مغلق أو مؤرشف ← `404 branch_not_shoppable` («اختر فرعاً آخر») لا كتالوج لا يستطيع أحد تسليمه.
+
+**السعر لا يُحسب هنا**: موديول المتجر يسأل منفذ `core/pricing/price-port.ts`، والكتالوج يسجّل المُجيب (`installCatalogPriceResolver`). نسخة ثانية من «أي سعر يسود» كانت ستختلف أول تعديل، والاختلاف رقمٌ معقول على الرف بلا أي فشل.
+
+**حالات التوفّر السبع** (`services/availability-rules.ts`، ٩ اختبارات، كل حالة مع نقيضها):
+
+| الحالة | متى | ما يحمله الصف |
+|---|---|---|
+| `available` | مطروح ومسعَّر و`on_hand − reserved` > ٥ | السعر |
+| `low_stock` | ≤ ٥ (وأكثر من صفر) | `remaining` — الرقم يُقال بصوت عالٍ |
+| `out_here_available_elsewhere` | نفد هنا وموجود بفرع حيّ آخر | `other_branch{id,name,distance_km}` |
+| `out_everywhere` | نفد بكل مكان | — |
+| `not_listed_here` | مسحوب من هذا الفرع | فرعٌ يبيعه، **وإلا يُخفى الصف كلّه** |
+| `unpriced` | بلا سعر (أو سعر دولار بلا سعر صرف) | **لا يصل الزبون أبداً** — الصف يُخفى، والإشارة للإدارة |
+| `discontinued` | منتج متقاعد | يُخفى من التصفّح ويبقى قابلاً للفتح من طلب قديم |
+
+**والرصيد المحجوز يُخصم**: المعروض `on_hand − reserved`، فبضاعةٌ وعدنا بها طلباً مؤكَّداً ليست على الرف للزبون التالي. **والسالب صفر** بحسبة العرض — تناقضٌ جوابه جرد، لا كمية تُباع.
+
+**حالة المنتج أفضلُ حالات متغيّراته**: لونٌ نفد من خمسة ليس «نفد»، وقوله يُخفي أربعة على الرف.
+
+- `GET /storefront/categories` — الشجرة بأعداد المنتجات الحيّة، **والأب يحمل مجموع أبنائه** (تصنيفٌ لا منتج تحته مباشرةً ليس ممراً مسدوداً).
+- `GET /storefront/collections` — الرفوف الظاهرة **الآن** (مفعَّلة وداخل نافذتها) بأعدادها.
+- `GET /storefront/products?branch_id&category_id&collection_id&search&page&limit&lat&lng` — الصف: `{id, name_ar, name_en, brand_name, category_id, thumbnail, availability, price{amount_syp, wholesale?}, remaining, other_branch, variant_count}`. التصنيف يشمل **أبناءه**، والبحث بالعربية المطوية والمرادفات. **والصفّ غير القابل للبيع هنا يُستبعد بالاستعلام نفسه** لا بعد التصفيح: إسقاطه بعد الترقيم يُنتج صفحةً فارغة تحت `total: 9` — وصفحةٌ فارغة تُقرأ عطلاً لا «لم يُسعَّر شيء بعد».
+- `GET /storefront/products/:id?branch_id&lat&lng` — المنتج متغيّراً متغيّراً: صوره (والمتغيّر بلا صورة يأخذ صور منتجه)، وحالته وسعره ووحداته المتاحة أونلاين بسعر كلٍّ منها.
+
+`lat`/`lng` اختياريان **ونصفهما مرفوض** (`422`): إحداثية بلا أختها تضع الزبون على خط الاستواء فتسمّي أبعد فرع «الأقرب». وبلا إحداثيات يُسمّى الفرع بلا مسافة — الاسم وحده يستحق القول.
+
+**الاقتراحات** (§٨): `GET /storefront/products/:id` يحمل `alternatives` — **ولا يحملها إلا حين لا يستطيع الزبون الشراء هنا**. اقتراحٌ بجانب بضاعة متوفّرة يزاحم ما جاء الزبون لأجله، وبجانب «نفد» هو الفرق بين طريق مسدود وبيعٍ آخر. المرشّحون: **من نفس التصنيف، وعلى رفّ هذا الفرع فعلاً** (اقتراحٌ نافد هو الطريق المسدود نفسه)، وأقربهم سعراً لما كان ينظر إليه — «بديل» بضعف الثمن ليس بديلاً — وأرخص متغيّر يمثّل منتجه، بسقف خمسة.
+
+**«أعلمني عند التوفّر» و«اطلب توفيره بفرعي»** — جدول `storefront_demand` (`0028`). الغاية واحدة: **النقص يصير معلومة يتصرّف بها أحد**؛ بلا هذا تبقى «نفد حالياً» نهايةَ الحديث — يغادر الزبون ولا يعرف أحد أنه جاء.
+
+- `POST /storefront/interest` `{variant_id, branch_id, kind: notify|request_here}` — **للمسجَّل وحده** (`requireCustomer`، قرار 2026-09-23: الإشعار يصل بقناة الحساب القائمة، ورقمٌ يكتبه ضيف يفتح قناة ثانية غير مبنيّة). وليست `requireVerifiedCustomer`: طلبُ خبرٍ ليس شراءً. **والطلب مرّة واحدة** لكل (زبون × صنف × فرع × نوع) — الضغط مرتين يُعيد الصف نفسه، وإلا صار «١٢ زبوناً» رقماً يصنعه واحد بأصابعه. وصنفٌ لا يُباع ← `404`.
+- `GET /storefront/interest?branch_id` — طلبات هذا الزبون بهذا الفرع؛ بها تعرف الشاشة أن الزرّ صار «أُلغِ الطلب». وتسافر أيضاً مع صفحة المنتج (`my_requests`).
+- `DELETE /storefront/interest/:id` — طلبُ غيرك لا يُحذف، وغير الموجود `404`.
+- `GET /storefront/demand?branch_id` — **وجه المدير**، بحارس `inventory.view`. مجمَّع لكل صنف: `notify_count` (نفد بكل مكان ← الجواب شراء) · `request_count` (موجود بفرع آخر ← الجواب نقل) · `waiting_days` لأقدم طلب · `on_hand` الآن (طلبٌ لبضاعة وصلت يُغلق بلا أي أمر). **الأقدم أولاً**، والمُعلَم به يخرج — عدّادٌ يشمل ما أُجيب عنه أرشيفٌ لا طابور.
+
+**ولا نقل تلقائياً** (قرار 2026-09-23): أمر نقل لكل طلب زبون يُغرق الفروع بأوامر صغيرة، والقرار يبقى بيد من يرى العدد والعمر والرصيد معاً.
+
+**وحالتان لا تغادران الخادم بهذا الاسم**: `unpriced` و`not_published` تُرسَلان `not_listed_here` (§٨) — «غير مسعَّر» عطلٌ عندنا لا حقيقة عن البضاعة، والترجمة **بالخادم** لأن عميلاً آخر (متجر ويب لاحقاً) كان سيقرأ الاسم الداخلي ويعرضه كما هو.
+
+---
+
+## 26. العروض (2026-09-23) · المرجع: `docs/reference/store_system.md` §٥
+
+**العرض قاعدة مؤقتة تعلو السعر، لا سعرٌ ثانٍ.** كتابته كسعر ينتهي بتاريخ كانت ستجعل انتهاءه يحتاج من يمسحه، والعرض المنسيّ يبقى يبيع بخسارة. هنا الانتهاء **غياب**: نافذةٌ مغلقة ⇒ لا ينطبق، والسعر الأصلي يعود بلا أي كتابة.
+
+**مفتاحان**: `promotions.view` للقراءة (الكاشير يُسأل «لماذا هذا السعر؟» فيحتاج أن يقرأ، لا أن يغيّر) و`promotions.edit` للكتابة. والسقوف تحت `pricing.policy` — من يضع قواعد التسعير يقرّر كم يملك الفرع أن يخصم.
+
+| الحقل | القيم |
+|---|---|
+| `scope` | `all_branches` · `branches` (+`branch_ids`) — و«فرعٌ واحد» صفٌّ واحد بالقائمة، لا قيمةٌ ثالثة |
+| `target_kind` + `target_id` | `variant` · `product` · `category` (**يرث للأبناء**) · `brand` — **هدفٌ واحد بالضبط** يفرضه قيد `promotion_one_target` |
+| `kind` | `percent` · `amount` · `qty_tiers` (+`tiers[]`) · `buy_x_get_y` (+`buy_qty`/`get_qty`/`get_percent`) |
+| `starts_at` / `ends_at` | `null` = بلا حدّ. و`ends_at` **لحظة التوقّف** لا آخر لحظة سريان (نفس قاعدة `Collection`) |
+| `channel` | `online` · `pos` · `both` — عرض الكاشير الذي يظهر بالمتجر يُخسِّر مرتين |
+| `segment` | `retail` · `wholesale` · `all` |
+| `is_stackable` | `false` افتراضياً |
+
+**والكوبون مؤجَّل** (قرار 2026-09-23): رمزٌ يُدخله الزبون عند الدفع، ولا دفع بعد — عمودٌ بلا مكانٍ يُكتب فيه هو «المبنيّ بلا مستهلك» بعينه.
+
+### ما يقرّره الخادم وحده (`services/promotion-rules.ts` — ١٩ اختباراً، كل حالة مع نقيضها)
+
+- **الأفضل للزبون**: غير المتراكم يُختار منه **واحد** (الأكبر خصماً، ثم الأدقّ هدفاً، ثم الأقدم — فالجواب لا يتغيّر بترتيب الصفوف). جمعُ عرضين لم يُعلَن تراكمهما هو كيف يصير الصنف مجانياً بلا أن يقصد ذلك أحد.
+- **المتراكم يُطبَّق على المتبقّي** لا بجمع النسب: خصمان ٥٠٪ يعطيان ٧٥٪ لا ١٠٠٪.
+- **المبلغ مسقوف بسعر الوحدة**: حسمٌ أكبر من السعر يعني متجراً يدفع لمن يأخذ بضاعته، ورقمٌ سالب يمرّ بكل جمعٍ بعده بلا اعتراض.
+- **شرائح الكمية تأخذ الأعلى انطباقاً** لا مجموعها.
+- **`buy_x_get_y` لا يُحسب بسعر البند إطلاقاً**: المجموعة = `buy_qty + get_qty`، والهدية تُقيَّم **بالسعر بعد الخصم** (بالسعر قبله كان مجموع السطر يصير سالباً).
+
+### المسارات
+
+- `GET /promotions?search&branch_id&kind&status&archived&page&limit` — الأحدث أولاً. الصف يحمل `status` (`live`·`scheduled`·`ended`·`inactive`·`archived`) و`target_label` (**اسم** الهدف لا رقمه) و`max_discount_percent` (أقصى ما يصل إليه العرض — به يُقارن عرضان بلا حساب يدوي) و`is_deletable`/`is_archivable` من الخادم.
+- `POST /promotions` · `PUT /promotions/:id` — **كل الحقول بكل كتابة** (لا `PATCH` جزئي): العرض مجموعة قواعد تُقرأ معاً، وتعديل نوعه بلا قيمه يترك نسبة عرضٍ قديم على عرض مبلغ. والردّ `{promotion, loss_warnings[]}`.
+- `POST /promotions/:id/archive {archived}` — قابل للعكس. والمؤرشف **لا يُعدَّل** (`409 promotion_archived`).
+- `DELETE /promotions/:id`
+- `GET /promotions/caps` · `PUT /promotions/caps {branch_id, max_discount_percent}` — **نسبة واحدة لكل فرع** (قرار 2026-09-23؛ سقفٌ لكل «فرع × تصنيف» كان أدقّ وجدولاً ثانياً بوراثةٍ وشاشةً لإدارته). الافتراضي ٢٠٪، والصف يقول `is_default` — «١٥٪» المكتوبة تختلف عن الموروثة.
+- `GET /promotions/signals` — `{live, ending_soon, never_ending, scheduled}`. **و«بلا نهاية» إشارةٌ لا خطأ**: العرض المنسيّ هو الذي يبيع بخسارة شهوراً.
+- `POST /promotions/preview {branch_id, channel, segment, lines[]}` — **السلّة الافتراضية**: تُسعّر سلّةً مفترضة بكل العروض السارية وتردّ لكل سطر `unit_before_syp`/`unit_after_syp`/`applied[]`/`free`/`line_total_syp`/`avg_cost_syp`/`below_cost`. وهي **المستدعي الحيّ** لمحرّك السلّة — «اشترِ ٣ خذ ١» لا يظهر بسعر بندٍ ولا بصفحة منتج، فبلا هذا المسار كان يُحفظ ولا يراه أحد يعمل حتى تُبنى السلّة. وهي نفسها ما تستدعيه السلّة يوم تُبنى: دالّةٌ واحدة تُسعّر سلّة، لا نسخة للمعاينة وأخرى للبيع.
+
+### الرفض والسقف والخسارة
+
+| الحالة | الردّ |
+|---|---|
+| عرضٌ فرعي يتجاوز سقف فرعه | `409 promotion_above_branch_cap` + `{branch_id, cap_percent, promotion_percent}` — «مرفوض» بلا رقمٍ يجعل المحاولة التالية تخميناً. **والصفّ يُمحى** فلا يبقى عرضٌ مرفوضٌ ظاهرٌ بالقائمة |
+| النوع بلا قيمه | `422 promotion_percent_required` · `promotion_amount_required` · `promotion_tiers_required` · `promotion_bxgy_required` — الرسالة تسمّي الحقل الناقص |
+| شريحة بنسبة **ومبلغ** معاً (أو بلا أيٍّ منهما) | `422 promotion_tier_value_invalid` |
+| نطاق `branches` بلا فرع | `422 promotion_branches_required` |
+| `ends_at` قبل `starts_at` | `422` — وبقيدٍ بالقاعدة أيضاً (`promotion_window_ordered`) |
+
+**والسقف يقيّد الفرعي وحده**: الإدارة التي تحدّده لا تُحَدّ به، وإلا احتاج كل عرض مركزي رفعَ السقف ثم إعادته — وتلك دقيقةٌ يبقى فيها السقف مرفوعاً لكل الفروع.
+
+**وحارس الخسارة يحذّر ولا يمنع** (قرار 2026-09-23): البيع بخسارة قرارٌ تجاري مشروع (تصريف بضاعة راكدة)، والمنعُ يُلتَفّ عليه بتعديل السعر المركزي — وهناك يختفي الأثر تماماً: لا عرض ولا تحذير ولا إشارة، سعرٌ منخفض فحسب. والتكلفة تصل من منفذ `core/costing/cost-port.ts` يسجّله المخزون، و**التكلفة الغائبة `null` لا صفر**: صنفٌ لم يُستلم قط تُصيّره المقارنةُ بصفر خسارةً دائمة، ولوحةٌ تحذّر دائماً لا يقرؤها أحد.
+
+### ما يصل الزبون
+
+`price` بكل ردود `/storefront/*` صار يحمل `was_syp` و`promotion_names[]`. **و`null` لا صفر**: بطاقةٌ تقول «خصم ٠ ل.س» تُقرأ عرضاً وتُرسل من يبحث عنه. والاسم يسافر مع الرقم لأن «٥٬٠٠٠ بدل ٦٬٠٠٠» بلا سبب تُقرأ خطأً بالسعر.
+
+**والعرض يُطبَّق بمنفذ `core/promotions/promotion-port.ts`** داخل حلّ السعر نفسه، لا بموديول المتجر: تطبيقه هناك وحده كان سيترك كل مستهلك آخر للسعر يعرض الرقم قبل العرض — والفرق يظهر رقماً معقولاً بمكان وآخر بمكان، بلا أي فشل. و`PriceContext.promotions` (`apply` | `ignore`) **إلزامي** لأن حارس الخسارة والمعاينة يحتاجان السعر قبل العرض: قيمةٌ افتراضية كانت ستخصم مرتين بأحد الطرفين وتنقص بالآخر، وكلا الرقمين معقول.

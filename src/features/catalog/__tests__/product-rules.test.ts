@@ -6,6 +6,7 @@ import {
   internalBarcode,
   isInternalBarcode,
   normalizeBarcode,
+  sharedScopeOf,
 } from '../services/barcode-rules.js';
 import { combinationKey, variantSetProblem, type ValueRef } from '../services/variant-rules.js';
 
@@ -59,6 +60,18 @@ describe('barcodes', () => {
   it('refuses a sequence that would overflow the 10 digits', () => {
     expect(() => internalBarcode(0)).toThrow();
     expect(() => internalBarcode(10_000_000_000)).toThrow();
+  });
+
+  it('tells a code one product wears twice from a code on two products', () => {
+    // Proving the second case alone proves nothing: a function answering
+    // 'cross_product' for everything passes it, and that one sends a person
+    // to relabel every box/carton pair in the shop.
+    expect(sharedScopeOf([7, 7, 7])).toBe('in_product');
+    expect(sharedScopeOf([7, 9])).toBe('cross_product');
+    // One match is not shared at all, and neither is none — the signal lists
+    // codes with more than one row, and a single row must not read as a clash.
+    expect(sharedScopeOf([7])).toBe('in_product');
+    expect(sharedScopeOf([])).toBe('in_product');
   });
 
   it('tells a unit ambiguity from an item ambiguity', () => {

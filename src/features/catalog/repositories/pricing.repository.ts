@@ -245,6 +245,29 @@ export async function findSellableVariants() {
     );
 }
 
+/**
+ * The pricing facts of these variants: the product's own overrides and the
+ * category its rules are inherited from. Used by the price port, which is
+ * asked for a handful of variants at a time rather than for a whole scope.
+ */
+export async function findVariantsForPricing(variantIds: number[]) {
+  if (variantIds.length === 0) return [];
+  return db
+    .select({
+      variant_id: catalogVariantsTable.id,
+      product_id: catalogProductsTable.id,
+      category_id: catalogProductsTable.category_id,
+      /** يمسّه العرض المستهدِف ماركةً — يسافر مع السعر فلا يُستعلم عنه ثانيةً لكل صف. */
+      brand_id: catalogProductsTable.brand_id,
+      product_price_policy: catalogProductsTable.price_policy,
+      product_currency: catalogProductsTable.pricing_currency,
+      product_band_percent: catalogProductsTable.price_band_percent,
+    })
+    .from(catalogVariantsTable)
+    .innerJoin(catalogProductsTable, eq(catalogProductsTable.id, catalogVariantsTable.product_id))
+    .where(inArray(catalogVariantsTable.id, variantIds));
+}
+
 export async function bulkUpdateCentral(
   updates: { variant_id: number; amount: number; currency: PricingCurrency; old_amount: number }[],
   userId: number,

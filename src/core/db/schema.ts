@@ -62,3 +62,19 @@ export * from '../../features/catalog/schemas/brands.schema.js';
 export * from '../../features/catalog/schemas/products.schema.js';
 export * from '../../features/catalog/schemas/collections.schema.js';
 export * from '../../features/catalog/schemas/pricing.schema.js';
+
+// Stock, suppliers and purchase invoices (features/inventory/) —
+// docs/reference/inventory_suppliers.md §٢–§٨.
+export * from '../../features/inventory/schemas/inventory-enums.schema.js';
+export * from '../../features/inventory/schemas/suppliers.schema.js';
+export * from '../../features/inventory/schemas/stock.schema.js';
+export * from '../../features/inventory/schemas/receipts.schema.js';
+export * from '../../features/inventory/schemas/transfers.schema.js';
+export * from '../../features/inventory/schemas/returns.schema.js';
+
+// ما يطلبه الزبون وليس على الرف (features/storefront/) —
+// docs/reference/store_system.md §٨.
+export * from '../../features/storefront/schemas/demand.schema.js';
+
+// العروض والتخفيضات (features/promotions/) — docs/reference/store_system.md §٥.
+export * from '../../features/promotions/schemas/promotions.schema.js';

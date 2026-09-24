@@ -49,6 +49,10 @@ export const CATALOG_AUDIT = {
   bulkPriceUpdate: 'catalog.pricing.bulk_update',
   categoryPricingRules: 'catalog.category.pricing_rules',
   productPricingRules: 'catalog.product.pricing_rules',
+  draftCreate: 'catalog.draft.create',
+  draftApprove: 'catalog.draft.approve',
+  draftMerge: 'catalog.draft.merge',
+  draftReject: 'catalog.draft.reject',
 } as const;
 
 /** `target_entity` values — what `EntityHistorySection(targetEntity:)` filters by. */

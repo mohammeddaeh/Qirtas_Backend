@@ -158,6 +158,46 @@ export function findBarcodesByCode(code: string): Promise<CatalogBarcodeRow[]> {
     .orderBy(asc(catalogBarcodesTable.id));
 }
 
+/**
+ * Which products already carry each of [codes], excluding [exceptProductId].
+ *
+ * A code reused *inside* one product is the factory case §٧ was built for (the
+ * same code on the piece, the box and the carton, or on every colour of a pen).
+ * A code on a *second product* is a different thing: the scan then offers two
+ * unrelated items, and no one at the counter can tell which is right.
+ * Archived products are left out — a scan does not offer them either.
+ */
+export async function findProductsCarryingCodes(
+  codes: string[],
+  exceptProductId: number | null,
+): Promise<{ code: string; productId: number; nameAr: string; nameEn: string | null }[]> {
+  if (codes.length === 0) return [];
+  const conditions: SQL[] = [
+    inArray(catalogBarcodesTable.code, codes),
+    isNull(catalogProductsTable.archived_at),
+  ];
+  if (exceptProductId !== null)
+    conditions.push(sql`${catalogProductsTable.id} <> ${exceptProductId}`);
+  return db
+    .select({
+      code: catalogBarcodesTable.code,
+      productId: catalogProductsTable.id,
+      nameAr: catalogProductsTable.name_ar,
+      nameEn: catalogProductsTable.name_en,
+    })
+    .from(catalogBarcodesTable)
+    .innerJoin(
+      catalogVariantUnitsTable,
+      eq(catalogVariantUnitsTable.id, catalogBarcodesTable.variant_unit_id),
+    )
+    .innerJoin(
+      catalogVariantsTable,
+      eq(catalogVariantsTable.id, catalogVariantUnitsTable.variant_id),
+    )
+    .innerJoin(catalogProductsTable, eq(catalogProductsTable.id, catalogVariantsTable.product_id))
+    .where(and(...conditions));
+}
+
 /** How many (variant, unit) rows share each of [codes] — `> 1` is an ambiguity. */
 export async function countByCodes(codes: string[]): Promise<Map<string, number>> {
   if (codes.length === 0) return new Map();

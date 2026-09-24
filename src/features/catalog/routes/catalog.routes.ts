@@ -43,6 +43,7 @@ import * as categoriesController from '../controllers/categories.controller.js';
 import * as brandsController from '../controllers/brands.controller.js';
 import * as productsController from '../controllers/products.controller.js';
 import * as collectionsController from '../controllers/collections.controller.js';
+import * as draftsController from '../controllers/drafts.controller.js';
 import {
   addBarcodeBodySchema,
   barcodeLookupQuerySchema,
@@ -59,6 +60,12 @@ import {
   replaceCollectionProductsBodySchema,
   updateCollectionBodySchema,
 } from '../dtos/collections.dto.js';
+import {
+  approveDraftBodySchema,
+  createDraftBodySchema,
+  draftsFilterQuerySchema,
+  mergeDraftBodySchema,
+} from '../dtos/drafts.dto.js';
 
 /**
  * The central catalog — docs/reference/store_system.md §قرارات 2026-09-22.
@@ -387,6 +394,45 @@ catalogRouter.delete(
   withId,
   asyncHandler(collectionsController.deleteCollection),
 );
+
+// ── Branch drafts (inventory_suppliers.md §٢) ────────────────────────
+// Creating one is a counter act, not a catalogue act: the branch that met the
+// unknown barcode must not wait for anybody. Deciding one is the opposite —
+// it names an item the whole chain will sell, so it sits with the reviewers.
+const canDraft = requirePermission('catalog.drafts.create', {
+  display: { ar: 'إنشاء مسودة صنف بالفرع', en: 'Create Branch Item Draft' },
+});
+const canReviewDraft = requirePermission('catalog.drafts.review', {
+  display: { ar: 'مراجعة مسودات الفروع', en: 'Review Branch Item Drafts' },
+});
+catalogRouter.get(
+  '/drafts',
+  canDraft,
+  validate(paginationQuerySchema.merge(draftsFilterQuerySchema), 'query'),
+  asyncHandler(draftsController.listDrafts),
+);
+catalogRouter.get('/drafts/:id', canDraft, withId, asyncHandler(draftsController.getDraft));
+catalogRouter.post(
+  '/drafts',
+  canDraft,
+  validate(createDraftBodySchema, 'body'),
+  asyncHandler(draftsController.createDraft),
+);
+catalogRouter.post(
+  '/drafts/:id/approve',
+  canReviewDraft,
+  withId,
+  validate(approveDraftBodySchema, 'body'),
+  asyncHandler(draftsController.approveDraft),
+);
+catalogRouter.post(
+  '/drafts/:id/merge',
+  canReviewDraft,
+  withId,
+  validate(mergeDraftBodySchema, 'body'),
+  asyncHandler(draftsController.mergeDraft),
+);
+catalogRouter.delete('/drafts/:id', canReviewDraft, withId, asyncHandler(draftsController.deleteDraft));
 
 // ── Pricing (store_system.md §١١) ─────────────────────────────────────────
 // Reading a price is part of viewing the catalog. Writing needs `pricing.edit`

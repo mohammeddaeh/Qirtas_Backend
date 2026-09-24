@@ -246,6 +246,15 @@ export const sharedBarcodeSchema = z.object({
   code: z.string(),
   matches_count: z.number().int(),
   ambiguity: z.enum(['unit', 'item']),
+  /**
+   * `cross_product` is the row that actually breaks a scan — two unrelated
+   * items under one code. New ones can no longer be created
+   * (`barcode_on_other_product`), so these are rows written before that rule
+   * and the only ones that need a person. `in_product` is the factory case
+   * the scanner already resolves with one tap.
+   */
+  scope: z.enum(['in_product', 'cross_product']),
+  products: z.array(z.object({ id: z.number().int(), name_ar: z.string() })),
 });
 
 export interface WireRef {

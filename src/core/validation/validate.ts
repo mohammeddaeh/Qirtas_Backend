@@ -16,7 +16,15 @@ export function validate(schema: ZodSchema, source: Source) {
     const result = schema.safeParse(req[source]);
 
     if (!result.success) {
-      const fieldErrors = result.error.flatten().fieldErrors as Record<string, string[]>;
+      const flat = result.error.flatten();
+      const fieldErrors = flat.fieldErrors as Record<string, string[]>;
+      // A refusal that names no field is a refusal nobody can act on. Zod files
+      // whole-object issues — `.strict()` above all — under `formErrors`, not
+      // `fieldErrors`, so sending `fieldErrors` alone answered an unknown query
+      // key with `{"message":"Validation failed","errors":{}}`: 422 with the
+      // reason stripped out, on the client and in the log. It cost a live
+      // debugging session on `GET /inventory/receipts?branch_id=…`.
+      if (flat.formErrors.length > 0) fieldErrors[source] = flat.formErrors;
       throw new ValidationError(fieldErrors);
     }
 
