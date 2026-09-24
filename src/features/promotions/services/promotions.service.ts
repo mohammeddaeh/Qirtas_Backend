@@ -525,6 +525,14 @@ export async function removePromotion(actor: RequestActorContext, id: number): P
   await recordAudit(actor, PROMOTION_AUDIT.delete, promotionTarget.one(id), before, null);
 }
 
+export async function listTargets(
+  kind: 'variant' | 'product' | 'category' | 'brand',
+  search: string | undefined,
+  limit: number,
+): Promise<{ id: number; label: string; subtitle: string | null }[]> {
+  return repo.findTargets(kind, search, limit);
+}
+
 // ── السقوف ──────────────────────────────────────────────────────────────────
 
 export interface WireCaps {

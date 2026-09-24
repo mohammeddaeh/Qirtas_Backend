@@ -265,6 +265,87 @@ export async function findVariantsForTarget(target: {
   return [];
 }
 
+/**
+ * ما يصلح هدفاً لعرض — بحثٌ واحد لكل نوع.
+ *
+ * **يعيش هنا لا بموديول الكتالوج**: منتقي الهدف يحتاج صفّاً بعنوانه فقط،
+ * وقراءة **جدول** موديول آخر مسموحة بينما قراءة خدمته ليست (نفس حلّ
+ * `GET /inventory/document-items`). وبلا هذا المسار كانت شاشة العرض تستورد
+ * كتالوجاً كاملاً لتعرض قائمة أسماء.
+ */
+export async function findTargets(
+  kind: 'variant' | 'product' | 'category' | 'brand',
+  search: string | undefined,
+  limit: number,
+): Promise<{ id: number; label: string; subtitle: string | null }[]> {
+  const like = search ? `%${search}%` : null;
+  switch (kind) {
+    case 'variant': {
+      const rows = await db
+        .select({
+          id: catalogVariantsTable.id,
+          label: catalogProductsTable.name_ar,
+          subtitle: catalogVariantsTable.sku,
+        })
+        .from(catalogVariantsTable)
+        .innerJoin(catalogProductsTable, eq(catalogVariantsTable.product_id, catalogProductsTable.id))
+        .where(
+          like === null
+            ? isNull(catalogProductsTable.archived_at)
+            : and(
+                isNull(catalogProductsTable.archived_at),
+                or(ilike(catalogProductsTable.name_ar, like), ilike(catalogVariantsTable.sku, like)),
+              ),
+        )
+        .orderBy(asc(catalogProductsTable.name_ar))
+        .limit(limit);
+      return rows.map((r) => ({ id: r.id, label: r.label, subtitle: r.subtitle }));
+    }
+    case 'product': {
+      const rows = await db
+        .select({ id: catalogProductsTable.id, label: catalogProductsTable.name_ar })
+        .from(catalogProductsTable)
+        .where(
+          like === null
+            ? isNull(catalogProductsTable.archived_at)
+            : and(isNull(catalogProductsTable.archived_at), ilike(catalogProductsTable.name_ar, like)),
+        )
+        .orderBy(asc(catalogProductsTable.name_ar))
+        .limit(limit);
+      return rows.map((r) => ({ id: r.id, label: r.label, subtitle: null }));
+    }
+    case 'category': {
+      const rows = await db
+        .select({ id: catalogCategoriesTable.id, label: catalogCategoriesTable.name_ar })
+        .from(catalogCategoriesTable)
+        .where(
+          like === null
+            ? isNull(catalogCategoriesTable.archived_at)
+            : and(
+                isNull(catalogCategoriesTable.archived_at),
+                ilike(catalogCategoriesTable.name_ar, like),
+              ),
+        )
+        .orderBy(asc(catalogCategoriesTable.name_ar))
+        .limit(limit);
+      return rows.map((r) => ({ id: r.id, label: r.label, subtitle: null }));
+    }
+    case 'brand': {
+      const rows = await db
+        .select({ id: catalogBrandsTable.id, label: catalogBrandsTable.name })
+        .from(catalogBrandsTable)
+        .where(
+          like === null
+            ? isNull(catalogBrandsTable.archived_at)
+            : and(isNull(catalogBrandsTable.archived_at), ilike(catalogBrandsTable.name, like)),
+        )
+        .orderBy(asc(catalogBrandsTable.name))
+        .limit(limit);
+      return rows.map((r) => ({ id: r.id, label: r.label, subtitle: null }));
+    }
+  }
+}
+
 /** تصنيف كل متغيّر وماركته — ما تحتاجه القواعد لتقرّر الانطباق. */
 export async function findVariantContext(
   variantIds: number[],

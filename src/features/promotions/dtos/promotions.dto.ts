@@ -69,6 +69,15 @@ export const promotionBodySchema = z
     { message: 'The promotion must end after it starts', path: ['ends_at'] },
   );
 
+/** منتقي الهدف: نوعٌ إلزامي — «ابحث بلا أن تقول عمّاذا» سؤالٌ بلا جدول. */
+export const targetsQuerySchema = z
+  .object({
+    kind: promotionTargetSchema,
+    search: z.string().trim().min(1).max(100).optional(),
+    limit: z.coerce.number().int().min(1).max(50).default(20),
+  })
+  .strict();
+
 export const archiveBodySchema = z.object({ archived: z.boolean() }).strict();
 
 export const capBodySchema = z

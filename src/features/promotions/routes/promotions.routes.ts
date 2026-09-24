@@ -9,6 +9,7 @@ import {
   previewBodySchema,
   promotionBodySchema,
   promotionsQuerySchema,
+  targetsQuerySchema,
 } from '../dtos/promotions.dto.js';
 import * as controller from '../controllers/promotions.controller.js';
 
@@ -45,6 +46,14 @@ promotionsRouter.get('/', canView(), validate(promotionsQuerySchema, 'query'), a
 promotionsRouter.get('/signals', canView(), asyncHandler(controller.signals));
 
 promotionsRouter.get('/caps', canView(), asyncHandler(controller.getCaps));
+
+// ما يصلح هدفاً لعرض — أسماءٌ للمنتقي، بحثاً بالخادم.
+promotionsRouter.get(
+  '/targets',
+  canView(),
+  validate(targetsQuerySchema, 'query'),
+  asyncHandler(controller.targets),
+);
 
 promotionsRouter.put(
   '/caps',

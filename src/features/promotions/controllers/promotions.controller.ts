@@ -48,6 +48,15 @@ export async function remove(req: Request, res: Response): Promise<void> {
   noContentOk(res);
 }
 
+export async function targets(req: Request, res: Response): Promise<void> {
+  const q = req.query as unknown as {
+    kind: 'variant' | 'product' | 'category' | 'brand';
+    search?: string;
+    limit: number;
+  };
+  ok(res, await service.listTargets(q.kind, q.search, q.limit));
+}
+
 export async function getCaps(_req: Request, res: Response): Promise<void> {
   ok(res, await service.getCaps());
 }

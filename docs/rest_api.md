@@ -1315,6 +1315,7 @@ requested → approved → in_transit → received                   → closed
 - `POST /promotions/:id/archive {archived}` — قابل للعكس. والمؤرشف **لا يُعدَّل** (`409 promotion_archived`).
 - `DELETE /promotions/:id`
 - `GET /promotions/caps` · `PUT /promotions/caps {branch_id, max_discount_percent}` — **نسبة واحدة لكل فرع** (قرار 2026-09-23؛ سقفٌ لكل «فرع × تصنيف» كان أدقّ وجدولاً ثانياً بوراثةٍ وشاشةً لإدارته). الافتراضي ٢٠٪، والصف يقول `is_default` — «١٥٪» المكتوبة تختلف عن الموروثة.
+- `GET /promotions/targets?kind&search&limit` — **ما يصلح هدفاً**: متغيّر (باسم منتجه وSKU) · منتج · تصنيف · ماركة، بحثاً بالخادم. يعيش بموديول العروض لا بالكتالوج لأن المنتقي يحتاج صفّاً بعنوانه فقط، **وقراءة جدول موديول آخر مسموحة بينما قراءة خدمته ليست** (نفس حلّ `GET /inventory/document-items`). وبلا هذا المسار كانت شاشة العرض تستورد كتالوجاً كاملاً لتعرض قائمة أسماء.
 - `GET /promotions/signals` — `{live, ending_soon, never_ending, scheduled}`. **و«بلا نهاية» إشارةٌ لا خطأ**: العرض المنسيّ هو الذي يبيع بخسارة شهوراً.
 - `POST /promotions/preview {branch_id, channel, segment, lines[]}` — **السلّة الافتراضية**: تُسعّر سلّةً مفترضة بكل العروض السارية وتردّ لكل سطر `unit_before_syp`/`unit_after_syp`/`applied[]`/`free`/`line_total_syp`/`avg_cost_syp`/`below_cost`. وهي **المستدعي الحيّ** لمحرّك السلّة — «اشترِ ٣ خذ ١» لا يظهر بسعر بندٍ ولا بصفحة منتج، فبلا هذا المسار كان يُحفظ ولا يراه أحد يعمل حتى تُبنى السلّة. وهي نفسها ما تستدعيه السلّة يوم تُبنى: دالّةٌ واحدة تُسعّر سلّة، لا نسخة للمعاينة وأخرى للبيع.
 

@@ -12,6 +12,7 @@ import {
   previewBodySchema,
   promotionBodySchema,
   promotionsQuerySchema,
+  targetsQuerySchema,
 } from './dtos/promotions.dto.js';
 
 /**
@@ -51,6 +52,17 @@ registry.registerPath({
   summary: 'The discount ceiling each branch may give',
   description: 'Requires `promotions.view`.',
   responses: { 200: ok('Caps', shape), ...commonErrorResponses },
+});
+
+registry.registerPath({
+  method: 'get',
+  path: '/api/v1/promotions/targets',
+  tags,
+  summary: 'Names a promotion may target — variants, products, categories or brands',
+  description:
+    'Requires `promotions.view`. Search is the server-side one; the picker shows names, not ids.',
+  request: { query: targetsQuerySchema },
+  responses: { 200: ok('Targets', z.array(shape)), ...commonErrorResponses },
 });
 
 registry.registerPath({
