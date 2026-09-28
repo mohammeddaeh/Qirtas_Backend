@@ -1,5 +1,7 @@
+import { sql } from 'drizzle-orm';
 import {
   boolean,
+  check,
   index,
   integer,
   numeric,
@@ -17,8 +19,12 @@ import { branchesTable } from '../../identity/schemas/branches.schema.js';
 import { rolesTable } from '../../identity/schemas/roles.schema.js';
 import { usersTable } from '../../identity/schemas/users.schema.js';
 import { customersTable } from '../../customers/schemas/customers.schema.js';
-import { catalogVariantsTable, catalogProductsTable } from '../../catalog/schemas/products.schema.js';
+import {
+  catalogVariantsTable,
+  catalogProductsTable,
+} from '../../catalog/schemas/products.schema.js';
 import { catalogUnitsTable } from '../../catalog/schemas/units.schema.js';
+import type { ServiceKind } from '../../../core/till/service-line-port.js';
 
 /**
  * نقطة البيع والفاتورة — `orders_delivery.md` §قرارات الفوترة 2026-09-22.
@@ -95,7 +101,9 @@ export const salesTable = pgTable(
      * خصم الكاشير على **الفاتورة كلّها** (§٦)، نسبةً. يُوزَّع على السطور عند
      * السداد ويُجمَّد بكلٍّ منها — والمرتجع يقرأ ما دُفع فعلاً لا السعر المعلن.
      */
-    discount_percent: numeric('discount_percent', { precision: 5, scale: 2 }).notNull().default('0'),
+    discount_percent: numeric('discount_percent', { precision: 5, scale: 2 })
+      .notNull()
+      .default('0'),
     /** السبب **إلزامي مع أي خصم** (§٦): «خصم ١٥٪» بلا سبب لا يُدقَّق. */
     discount_reason: text('discount_reason'),
     /**
@@ -136,12 +144,21 @@ export const saleLinesTable = pgTable(
     sale_id: integer('sale_id')
       .notNull()
       .references(() => salesTable.id, { onDelete: 'cascade' }),
-    variant_id: integer('variant_id')
-      .notNull()
-      .references(() => catalogVariantsTable.id, { onDelete: 'restrict' }),
-    product_id: integer('product_id')
-      .notNull()
-      .references(() => catalogProductsTable.id, { onDelete: 'restrict' }),
+    /** `null` لسطر خدمة (`service_kind`) — لا بضاعة تغادر الرفّ. */
+    variant_id: integer('variant_id').references(() => catalogVariantsTable.id, {
+      onDelete: 'restrict',
+    }),
+    product_id: integer('product_id').references(() => catalogProductsTable.id, {
+      onDelete: 'restrict',
+    }),
+
+    /**
+     * سطر خدمة — «خدمة طباعة» (قرار 2026-09-28: طلب الطباعة يُدفع سطراً بفاتورة
+     * الصندوق). `service_ref_id` صفّ الخدمة (طلب الطباعة)، والموديول المالك
+     * يُبلَّغ بالإضافة والحذف والسداد عبر `core/till/service-line-port.ts`.
+     */
+    service_kind: varchar('service_kind', { length: 20 }).$type<ServiceKind>(),
+    service_ref_id: integer('service_ref_id'),
 
     /**
      * الاسم **منسوخ** لا مقروء بانضمام: إعادة تسمية المنتج بعد شهر كانت ستغيّر
@@ -188,6 +205,15 @@ export const saleLinesTable = pgTable(
      * يضيف سطراً — سطران بخمسة يفوّتان شريحة العشرة، ويقرأ الزبون صنفه مرتين.
      */
     once: uniqueIndex('sale_lines_once').on(table.sale_id, table.variant_id, table.unit_id),
+    /** الخدمة مرةً بالسلّة: طلبٌ واحد مرتين يُدفع مرتين. */
+    serviceOnce: uniqueIndex('sale_lines_service_once')
+      .on(table.sale_id, table.service_kind, table.service_ref_id)
+      .where(sql`${table.service_kind} IS NOT NULL`),
+    /** صنفٌ **أو** خدمة — لا الاثنان ولا لا شيء. */
+    goodsOrService: check(
+      'sale_lines_goods_or_service',
+      sql`(${table.variant_id} IS NOT NULL AND ${table.product_id} IS NOT NULL AND ${table.service_kind} IS NULL AND ${table.service_ref_id} IS NULL) OR (${table.variant_id} IS NULL AND ${table.product_id} IS NULL AND ${table.service_kind} IS NOT NULL AND ${table.service_ref_id} IS NOT NULL)`,
+    ),
   }),
 );
 

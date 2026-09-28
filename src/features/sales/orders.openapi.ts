@@ -36,7 +36,7 @@ registry.registerPath({
   tags,
   summary: "The customer's cart at this branch, priced and checked now",
   description:
-    'A signed-in customer. The cart **reserves nothing**: abandoned carts would freeze stock the till can see but cannot sell. Price and availability are read live — a stored price shows last week\'s amount.',
+    "A signed-in customer. The cart **reserves nothing**: abandoned carts would freeze stock the till can see but cannot sell. Price and availability are read live — a stored price shows last week's amount.",
   request: { query: cartQuerySchema },
   responses: { 200: ok('Cart', shape), ...commonErrorResponses },
 });
@@ -57,7 +57,8 @@ registry.registerPath({
   path: '/api/v1/cart/items',
   tags,
   summary: 'Set a line quantity — zero deletes the line',
-  description: 'A signed-in customer. A zero row left in place reads as «I ordered it and it never came».',
+  description:
+    'A signed-in customer. A zero row left in place reads as «I ordered it and it never came».',
   request: { query: cartQuerySchema, body: body(cartQtyBodySchema) },
   responses: { 200: ok('Cart', shape), ...commonErrorResponses },
 });

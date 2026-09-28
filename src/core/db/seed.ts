@@ -32,6 +32,7 @@ import { seedCore } from './seed-core.js';
 import { bootstrapSuperAdminIfMissing } from './bootstrap-super-admin.js';
 import { seedDemoArabicData } from './seed-demo-arabic-data.js';
 import { seedCatalogReference } from './seed-catalog.js';
+import { seedPrintingReference } from './seed-printing.js';
 import { seedFrenchUiTranslations } from './seed-french-ui-translations.js';
 import { seedUiTextOverridesDemo } from './seed-ui-text-overrides-demo.js';
 import { logger } from '../logger/logger.js';
@@ -172,6 +173,8 @@ async function main(): Promise<void> {
   // Catalog starting data (units, attributes, category tree, brands) —
   // insert-if-missing, so admin edits survive every re-run.
   await seedCatalogReference();
+  // Print spec options (structure only — prices are never seeded).
+  await seedPrintingReference();
 
   if (parsed.admin) {
     await bootstrapSuperAdminIfMissing();

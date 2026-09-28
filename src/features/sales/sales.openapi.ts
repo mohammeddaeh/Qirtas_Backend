@@ -8,6 +8,7 @@ import {
 import { idParamsSchema } from '../catalog/dtos/common.dto.js';
 import {
   addLineBodySchema,
+  addServiceBodySchema,
   approveDiscountBodySchema,
   capBodySchema,
   creditLimitBodySchema,
@@ -55,7 +56,8 @@ registry.registerPath({
   path: '/api/v1/sales/open',
   tags,
   summary: "This cashier's open and held baskets",
-  description: 'Requires `sales.sell`. Only this cashier: a colleague basket read here as forgotten gets cancelled while its customer waits at the other till.',
+  description:
+    'Requires `sales.sell`. Only this cashier: a colleague basket read here as forgotten gets cancelled while its customer waits at the other till.',
   request: { query: openSalesQuerySchema },
   responses: { 200: ok('Sales', z.array(shape)), ...commonErrorResponses },
 });
@@ -96,7 +98,8 @@ registry.registerPath({
   path: '/api/v1/sales/caps',
   tags,
   summary: 'Set one role ceiling',
-  description: 'Requires `sales.manage`. A number on the role, not a permission key — RBAC answers yes/no, and "how much may you discount" is answered by a percentage.',
+  description:
+    'Requires `sales.manage`. A number on the role, not a permission key — RBAC answers yes/no, and "how much may you discount" is answered by a percentage.',
   request: { body: body(capBodySchema) },
   responses: { 200: ok('Caps', shape), ...commonErrorResponses },
 });
@@ -130,6 +133,17 @@ registry.registerPath({
   description:
     'Requires `sales.sell`. A price sent by the device is a discount written by whoever holds it, with nothing on the invoice saying so. Scanning the same item twice **raises the quantity**.',
   request: { params: idParamsSchema, body: body(addLineBodySchema) },
+  responses: { 200: ok('Sale', shape), ...commonErrorResponses },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/sales/{id}/services',
+  tags,
+  summary: 'Add a service (a print order by its number) — the amount comes from its module',
+  description:
+    'Requires `sales.sell`. Quantity is fixed at one; paying the sale settles the service in the same transaction, and removing the line or voiding the sale hands it back to its own deadline.',
+  request: { params: idParamsSchema, body: body(addServiceBodySchema) },
   responses: { 200: ok('Sale', shape), ...commonErrorResponses },
 });
 
@@ -177,7 +191,8 @@ registry.registerPath({
   path: '/api/v1/sales/{id}/discount',
   tags,
   summary: 'Apply a manual discount (reason required)',
-  description: 'Requires `sales.sell`. Above the cashier cap the call is refused until a manager approves.',
+  description:
+    'Requires `sales.sell`. Above the cashier cap the call is refused until a manager approves.',
   request: { params: idParamsSchema, body: body(discountBodySchema) },
   responses: { 200: ok('Sale', shape), ...commonErrorResponses },
 });
@@ -211,7 +226,8 @@ registry.registerPath({
   path: '/api/v1/sales/settings',
   tags,
   summary: 'The return window, in days',
-  description: 'Requires `sales.view`. One window for the whole company — two windows make a customer who bought at one branch and returns at another face two rules.',
+  description:
+    'Requires `sales.view`. One window for the whole company — two windows make a customer who bought at one branch and returns at another face two rules.',
   responses: { 200: ok('Settings', shape), ...commonErrorResponses },
 });
 
@@ -220,7 +236,8 @@ registry.registerPath({
   path: '/api/v1/sales/settings',
   tags,
   summary: 'Set the return window',
-  description: 'Requires `sales.manage`. Zero means no returns at all — a legitimate decision, written explicitly rather than read as an absent limit.',
+  description:
+    'Requires `sales.manage`. Zero means no returns at all — a legitimate decision, written explicitly rather than read as an absent limit.',
   request: { body: body(salesSettingsBodySchema) },
   responses: { 200: ok('Settings', shape), ...commonErrorResponses },
 });
@@ -283,7 +300,8 @@ registry.registerPath({
   path: '/api/v1/customers/{id}/account',
   tags,
   summary: 'Customer balance, limit and ledger',
-  description: 'Requires `sales.view`. The balance is the **sum of the ledger**, never a stored column.',
+  description:
+    'Requires `sales.view`. The balance is the **sum of the ledger**, never a stored column.',
   request: { params: idParamsSchema },
   responses: { 200: ok('Account', shape), ...commonErrorResponses },
 });
@@ -293,7 +311,8 @@ registry.registerPath({
   path: '/api/v1/customers/{id}/account/limit',
   tags,
   summary: 'Set the credit limit',
-  description: 'Requires `sales.manage`. No row means **no credit at all** — an open default lends to every customer silently.',
+  description:
+    'Requires `sales.manage`. No row means **no credit at all** — an open default lends to every customer silently.',
   request: { params: idParamsSchema, body: body(creditLimitBodySchema) },
   responses: { 200: ok('Account', shape), ...commonErrorResponses },
 });
@@ -303,7 +322,8 @@ registry.registerPath({
   path: '/api/v1/customers/{id}/account/entries',
   tags,
   summary: 'Settle a debt or deposit credit',
-  description: 'Requires `sales.manage`. Append-only: a correction is another entry, never an edit.',
+  description:
+    'Requires `sales.manage`. Append-only: a correction is another entry, never an edit.',
   request: { params: idParamsSchema, body: body(ledgerBodySchema) },
   responses: { 200: ok('Account', shape), ...commonErrorResponses },
 });

@@ -142,12 +142,32 @@ const envSchema = z.object({
 
   // ── File storage (core/media/) ────────────────────────────────────────────
   /**
-   * Where uploaded files live. `local` is the only driver today: a directory on
-   * this machine. The code writes to the `StorageDriver` port, never to a path,
-   * so moving to MinIO/S3 later is a new adapter plus this value — no caller
-   * changes.
+   * Where uploaded files live — the code writes to the `StorageDriver` port,
+   * never to a path, so this value is the whole switch.
+   *
+   * - `local` — a directory on this machine. Development and tests only.
+   * - `s3` — any S3-compatible store (MinIO in `docker-compose.yml`, R2, AWS).
+   *   **Required in production**: the server runs on more than one machine
+   *   (2026-09-28), and a file on one machine's disk does not exist on the next.
    */
-  STORAGE_DRIVER: z.enum(['local']).default('local'),
+  STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
+  /** Where this server reaches the store, e.g. `http://localhost:9000`. Unset = AWS. */
+  S3_ENDPOINT: z.string().url().optional(),
+  /**
+   * Where **phones** reach the store, when that differs from `S3_ENDPOINT`
+   * (e.g. the LAN address in development). Presigned links carry their host in
+   * the signature, so they must be signed for the address the phone uses.
+   */
+  S3_PUBLIC_ENDPOINT: z.string().url().optional(),
+  S3_REGION: z.string().min(1).default('us-east-1'),
+  S3_BUCKET: z.string().min(3).optional(),
+  S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+  S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  /** `true` for MinIO (`host/bucket/key`). */
+  S3_FORCE_PATH_STYLE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
   /** Root directory for `local`, relative to the process cwd. Kept out of git (`.gitignore`). */
   STORAGE_LOCAL_ROOT: z.string().min(1).default('storage'),
   /**
@@ -233,6 +253,22 @@ const parsed = envSchema
     message: 'STORAGE_SIGNING_KEY is required when NODE_ENV=production',
     path: ['STORAGE_SIGNING_KEY'],
   })
+  .refine((e) => !(e.NODE_ENV === 'production' && e.STORAGE_DRIVER === 'local'), {
+    message:
+      'STORAGE_DRIVER=local is not allowed when NODE_ENV=production — the server runs on more than one machine; use s3',
+    path: ['STORAGE_DRIVER'],
+  })
+  .refine(
+    (e) =>
+      e.STORAGE_DRIVER !== 's3' ||
+      (e.S3_BUCKET !== undefined &&
+        e.S3_ACCESS_KEY_ID !== undefined &&
+        e.S3_SECRET_ACCESS_KEY !== undefined),
+    {
+      message: 'STORAGE_DRIVER=s3 requires S3_BUCKET, S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY',
+      path: ['STORAGE_DRIVER'],
+    },
+  )
   .refine((e) => e.PASSWORD_POLICY === 'relaxed' || e.PASSWORD_MIN_LENGTH >= 8, {
     message: 'PASSWORD_MIN_LENGTH below 8 requires PASSWORD_POLICY=relaxed',
     path: ['PASSWORD_MIN_LENGTH'],

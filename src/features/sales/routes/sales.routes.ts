@@ -5,6 +5,7 @@ import { validate } from '../../../core/validation/validate.js';
 import { idParamsSchema } from '../../catalog/dtos/common.dto.js';
 import {
   addLineBodySchema,
+  addServiceBodySchema,
   approveDiscountBodySchema,
   capBodySchema,
   creditLimitBodySchema,
@@ -65,7 +66,12 @@ const canManage = () =>
 
 // ── السلّة ──────────────────────────────────────────────────────────────────
 
-salesRouter.post('/', canSell(), validate(openSaleBodySchema, 'body'), asyncHandler(controller.open));
+salesRouter.post(
+  '/',
+  canSell(),
+  validate(openSaleBodySchema, 'body'),
+  asyncHandler(controller.open),
+);
 
 /** سلّات الكاشير المفتوحة — قبل `/:id` وإلا ابتلعها معرّفٌ اسمه «open». */
 salesRouter.get(
@@ -103,11 +109,21 @@ salesRouter.put(
 
 salesRouter.get('/caps', canView(), asyncHandler(controller.getCaps));
 
-salesRouter.put('/caps', canManage(), validate(capBodySchema, 'body'), asyncHandler(controller.setCap));
+salesRouter.put(
+  '/caps',
+  canManage(),
+  validate(capBodySchema, 'body'),
+  asyncHandler(controller.setCap),
+);
 
 salesRouter.get('/', canView(), validate(salesQuerySchema, 'query'), asyncHandler(controller.list));
 
-salesRouter.get('/:id', canView(), validate(idParamsSchema, 'params'), asyncHandler(controller.getOne));
+salesRouter.get(
+  '/:id',
+  canView(),
+  validate(idParamsSchema, 'params'),
+  asyncHandler(controller.getOne),
+);
 
 salesRouter.post(
   '/:id/lines',
@@ -115,6 +131,18 @@ salesRouter.post(
   validate(idParamsSchema, 'params'),
   validate(addLineBodySchema, 'body'),
   asyncHandler(controller.addLine),
+);
+
+/**
+ * خدمةٌ بالسلّة — طلب طباعة بالرقم (قرار 2026-09-28: الدفع سطرٌ بالفاتورة).
+ * نفس حارس إضافة صنف: من يبيع هو من يقبض.
+ */
+salesRouter.post(
+  '/:id/services',
+  canSell(),
+  validate(idParamsSchema, 'params'),
+  validate(addServiceBodySchema, 'body'),
+  asyncHandler(controller.addService),
 );
 
 salesRouter.patch(

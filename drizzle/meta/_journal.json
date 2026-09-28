@@ -232,6 +232,41 @@
       "when": 1790236740226,
       "tag": "0032_cart_orders",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790249677810,
+      "tag": "0033_printing_setup",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790577430185,
+      "tag": "0034_media_documents",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1790579326286,
+      "tag": "0035_print_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1790580791103,
+      "tag": "0036_print_till",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1790585229938,
+      "tag": "0037_print_consumption",
+      "breakpoints": true
     }
   ]
 }

@@ -4,6 +4,8 @@ export const privateFileQuerySchema = z
   .object({
     expires: z.coerce.number().int().positive(),
     signature: z.string().regex(/^[0-9a-f]{64}$/),
+    /** The name offered to the reader — signed, so it cannot be swapped for `invoice.exe`. */
+    name: z.string().min(1).max(255).optional(),
   })
   .strict();
 

@@ -56,7 +56,9 @@ export function clearStockIssuer(): void {
  */
 export async function issueStock(request: StockIssueRequest): Promise<void> {
   if (issuer === null) {
-    throw new Error('Stock issuer not configured — call installInventoryStockIssuer() in buildApp()');
+    throw new Error(
+      'Stock issuer not configured — call installInventoryStockIssuer() in buildApp()',
+    );
   }
   if (request.lines.length === 0) return;
   return issuer(request);

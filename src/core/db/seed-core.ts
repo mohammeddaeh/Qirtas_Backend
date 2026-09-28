@@ -228,6 +228,27 @@ const PERMISSIONS: SeedPermission[] = [
     display: { ar: 'إنشاء طلب طباعة', en: 'Create Print Order' },
   },
   {
+    // الطباعة قبل الدفع — دَينٌ يُقرَّر باسم أحد (قرار 2026-09-24: «مؤجَّل بموافقة صلاحية»).
+    key: 'printing.payment.defer',
+    module: 'printing',
+    is_sensitive: true,
+    display: { ar: 'تأجيل دفع طلب طباعة', en: 'Defer Print Order Payment' },
+  },
+  {
+    // الجدول المركزي ونطاق الفرع قرارٌ يحرّك كل فرع — حسّاس كـ`pricing.policy`.
+    key: 'printing.settings',
+    module: 'printing',
+    is_sensitive: true,
+    display: { ar: 'إعداد الطباعة وأسعارها المركزية', en: 'Printing Setup & Central Prices' },
+  },
+  {
+    // ما يطبعه فرعٌ بعينه وسعره ضمن النطاق — قرار مديره، والنطاق يُفحص بالفرع.
+    key: 'printing.branch_settings',
+    module: 'printing',
+    is_sensitive: false,
+    display: { ar: 'خيارات الطباعة وأسعارها بالفرع', en: 'Branch Printing Options & Prices' },
+  },
+  {
     key: 'customization.queue.view',
     module: 'customization',
     is_sensitive: false,
@@ -556,7 +577,12 @@ const ROLES: SeedRole[] = [
     category: 'system',
     level: null,
     is_system_default: true,
-    permissionKeys: ['reports.financial.view', 'reports.operational.view', 'audit_log.view', 'catalog.view'],
+    permissionKeys: [
+      'reports.financial.view',
+      'reports.operational.view',
+      'audit_log.view',
+      'catalog.view',
+    ],
   },
   {
     name: 'مدير الفرع',
@@ -574,6 +600,10 @@ const ROLES: SeedRole[] = [
       'suppliers.manage',
       'printing.queue.view',
       'printing.status.update',
+      // يقرّر ما تطبعه آلات فرعه وسعره ضمن نطاق الإدارة.
+      'printing.branch_settings',
+      // ويقرّر من يُطبع له قبل أن يدفع (زبون موثوق، جملة).
+      'printing.payment.defer',
       'customization.queue.view',
       'customization.proof.approve',
       'customization.status.update',
@@ -693,9 +723,7 @@ async function seedPermissions(): Promise<void> {
   const planned = PERMISSIONS.length - live.length;
   logger.info(
     `Seeded ${live.length} enforced permissions` +
-      (planned > 0
-        ? ` — ${planned} planned key(s) held back until a route declares them`
-        : ''),
+      (planned > 0 ? ` — ${planned} planned key(s) held back until a route declares them` : ''),
   );
 }
 

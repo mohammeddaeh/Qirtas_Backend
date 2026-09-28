@@ -9,10 +9,11 @@
 ```powershell
 cd "d:\awqaf_app\Qirtas\qirtas_backend"
 
-docker compose up -d       # شغّل قاعدة البيانات
+docker compose up -d       # شغّل قاعدة البيانات ومخزن الملفات (SeaweedFS على 8333)
 docker compose ps          # تأكد إن الحالة "healthy"
 
 npm run db:setup           # الجداول + الأدوار والصلاحيات + حساب Super Admin + بيانات تجريبية
+npm run storage:setup      # مرة واحدة، فقط لو STORAGE_DRIVER=s3 بـ.env — ينشئ الحاوية (القيم بـ.env.example)
 
 npm run dev                # شغّل السيرفر — سيبها شغّالة في هذي الطرفية
 ```

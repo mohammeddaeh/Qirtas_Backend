@@ -5,7 +5,13 @@ import { BusinessError } from '../../../core/http/api-error.js';
 import { buildActorContext, requireActorId } from '../../../core/http/require-actor.js';
 import { paginated, toPaginationParams } from '../../../core/pagination/pagination.js';
 import { created, ok } from '../../../core/http/response.js';
-import type { CreateReturnBody, DiscountBody, PayBody, SalesQuery } from '../dtos/sales.dto.js';
+import type {
+  AddServiceBody,
+  CreateReturnBody,
+  DiscountBody,
+  PayBody,
+  SalesQuery,
+} from '../dtos/sales.dto.js';
 import * as service from '../services/sales.service.js';
 import * as returns from '../services/returns.service.js';
 import * as repo from '../repositories/sales.repository.js';
@@ -46,7 +52,14 @@ export async function searchItems(req: Request, res: Response): Promise<void> {
 }
 
 export async function addLine(req: Request, res: Response): Promise<void> {
-  ok(res, await service.addLine(actorOf(req), idOf(req), req.body as { variant_id: number; qty: number }));
+  ok(
+    res,
+    await service.addLine(actorOf(req), idOf(req), req.body as { variant_id: number; qty: number }),
+  );
+}
+
+export async function addService(req: Request, res: Response): Promise<void> {
+  ok(res, await service.addService(idOf(req), req.body as AddServiceBody));
 }
 
 export async function setLineQty(req: Request, res: Response): Promise<void> {
@@ -145,7 +158,10 @@ const toReturnInput = (body: CreateReturnBody) => ({
 });
 
 export async function createReturn(req: Request, res: Response): Promise<void> {
-  created(res, await returns.createReturn(actorOf(req), toReturnInput(req.body as CreateReturnBody)));
+  created(
+    res,
+    await returns.createReturn(actorOf(req), toReturnInput(req.body as CreateReturnBody)),
+  );
 }
 
 /**
@@ -175,7 +191,12 @@ export async function getReturn(req: Request, res: Response): Promise<void> {
 }
 
 export async function listReturns(req: Request, res: Response): Promise<void> {
-  const query = req.query as unknown as { page: number; limit: number; branch_id?: number; sale_id?: number };
+  const query = req.query as unknown as {
+    page: number;
+    limit: number;
+    branch_id?: number;
+    sale_id?: number;
+  };
   const params = toPaginationParams(query);
   const { items, total } = await returns.listReturns(
     { branchId: query.branch_id, saleId: query.sale_id },

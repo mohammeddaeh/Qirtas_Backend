@@ -1,4 +1,5 @@
 import { registerStockIssuer } from '../../../core/stock/stock-port.js';
+import { registerConsumptionPoster } from '../../../core/stock/consumption-port.js';
 import { postMovements } from './stock.service.js';
 
 /**
@@ -25,6 +26,30 @@ export function installInventoryStockIssuer(): void {
       lines: lines.map((line) => ({
         variantId: line.variantId,
         qtyBase: docType === 'sale' ? -Math.abs(line.qtyBase) : Math.abs(line.qtyBase),
+        note: line.note ?? null,
+      })),
+      userId,
+    }),
+  );
+}
+
+/**
+ * Production consumption (a print job's paper, ink, binding) — `production_consume`
+ * movements pointing at the job. The consumer sends **used = positive**; the
+ * ledger stores leaving as negative, so the sign flips here and nowhere else.
+ * A negative consumption (a reconciliation returning over-estimated ink) goes
+ * back at the current average, like a return.
+ */
+export function installInventoryConsumptionPoster(): void {
+  registerConsumptionPoster(({ exec, branchId, lines, printJobId, userId }) =>
+    postMovements(exec, {
+      branchId,
+      type: 'production_consume',
+      docType: printJobId === null ? null : 'print_job',
+      docId: printJobId,
+      lines: lines.map((line) => ({
+        variantId: line.variantId,
+        qtyBase: -line.qtyBase,
         note: line.note ?? null,
       })),
       userId,

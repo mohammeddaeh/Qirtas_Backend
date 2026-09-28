@@ -336,7 +336,8 @@ export async function checkout(
   const discount = priced.reduce((sum, l) => sum + l.promotionDiscountSyp, 0);
   const total = priced.reduce((sum, l) => sum + l.wire.line_total_syp, 0);
   const tax = priced.reduce(
-    (sum, l) => sum + (l.taxPercent > 0 ? (l.wire.line_total_syp * l.taxPercent) / (100 + l.taxPercent) : 0),
+    (sum, l) =>
+      sum + (l.taxPercent > 0 ? (l.wire.line_total_syp * l.taxPercent) / (100 + l.taxPercent) : 0),
     0,
   );
 
@@ -381,7 +382,8 @@ export async function checkout(
         qty: String(l.wire.qty),
         unit_price_syp: String(l.wire.was_syp ?? l.wire.unit_price_syp ?? 0),
         promotion_discount_syp: String(l.promotionDiscountSyp),
-        promotion_names: l.wire.promotion_names.length === 0 ? null : l.wire.promotion_names.join(' · '),
+        promotion_names:
+          l.wire.promotion_names.length === 0 ? null : l.wire.promotion_names.join(' · '),
         tax_percent: String(l.taxPercent),
         line_total_syp: String(l.wire.line_total_syp),
       })),
@@ -402,9 +404,14 @@ function refuseCheckout(problem: CheckoutProblem): never {
   }
   if (problem.kind === 'unpriced') {
     // «غير مسعَّر» عطلٌ عندنا لا حقيقة عن البضاعة — ولا يُقال للزبون بهذه الكلمات.
-    throw new BusinessError(409, 'An item in the cart is not available here', 'order_item_unavailable', {
-      variant_id: problem.variantId,
-    });
+    throw new BusinessError(
+      409,
+      'An item in the cart is not available here',
+      'order_item_unavailable',
+      {
+        variant_id: problem.variantId,
+      },
+    );
   }
   throw new BusinessError(409, 'Not enough stock for an item', 'order_not_enough_stock', {
     variant_id: problem.variantId,
@@ -459,7 +466,11 @@ export async function cancelOrder(
   const row = await repo.findOrderById(orderId);
   if (!row) throw new NotFoundError('Order not found');
   // الزبون يلغي **طلبه هو**: معرّفٌ يصل بالمسار لا يكفي حارساً.
-  if (input.customerId !== undefined && input.customerId !== null && row.customer_id !== input.customerId) {
+  if (
+    input.customerId !== undefined &&
+    input.customerId !== null &&
+    row.customer_id !== input.customerId
+  ) {
     throw new NotFoundError('Order not found');
   }
   await closeOrder(orderId, 'cancelled', input.reason?.trim() || null, input.userId ?? null);

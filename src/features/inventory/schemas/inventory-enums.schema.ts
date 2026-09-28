@@ -22,7 +22,7 @@ export type StockMovementType = (typeof STOCK_MOVEMENT_TYPES)[number];
 export const stockMovementTypeEnum = pgEnum('stock_movement_type', STOCK_MOVEMENT_TYPES);
 
 /** What a document is, for the movement's `source_doc_type` and for numbering. */
-export const INVENTORY_DOC_TYPES = ['receipt', 'adjustment', 'transfer', 'count', 'return'] as const;
+export const INVENTORY_DOC_TYPES = ['receipt', 'adjustment', 'transfer', 'count', 'return', 'print_job'] as const;
 export type InventoryDocType = (typeof INVENTORY_DOC_TYPES)[number];
 export const inventoryDocTypeEnum = pgEnum('inventory_doc_type', INVENTORY_DOC_TYPES);
 

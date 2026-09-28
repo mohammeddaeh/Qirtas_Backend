@@ -2,7 +2,10 @@ import { and, desc, eq, inArray, lte, sql } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { branchesTable } from '../../identity/schemas/branches.schema.js';
 import { customersTable } from '../../customers/schemas/customers.schema.js';
-import { catalogProductsTable, catalogVariantsTable } from '../../catalog/schemas/products.schema.js';
+import {
+  catalogProductsTable,
+  catalogVariantsTable,
+} from '../../catalog/schemas/products.schema.js';
 import { stockBalancesTable } from '../../inventory/schemas/stock.schema.js';
 import {
   cartLinesTable,
@@ -132,7 +135,11 @@ export async function findAvailable(
   return out;
 }
 
-export async function upsertCartLine(cartId: number, variantId: number, qty: number): Promise<void> {
+export async function upsertCartLine(
+  cartId: number,
+  variantId: number,
+  qty: number,
+): Promise<void> {
   await db
     .insert(cartLinesTable)
     .values({ cart_id: cartId, variant_id: variantId, qty: String(qty) })
@@ -143,7 +150,11 @@ export async function upsertCartLine(cartId: number, variantId: number, qty: num
     });
 }
 
-export async function setCartLineQty(cartId: number, variantId: number, qty: number): Promise<void> {
+export async function setCartLineQty(
+  cartId: number,
+  variantId: number,
+  qty: number,
+): Promise<void> {
   await db
     .update(cartLinesTable)
     .set({ qty: String(qty) })
@@ -162,7 +173,11 @@ export async function clearCart(exec: Exec, cartId: number): Promise<void> {
 
 // ── الطلب ───────────────────────────────────────────────────────────────────
 
-export async function nextOrderSequence(exec: Exec, branchId: number, year: number): Promise<number> {
+export async function nextOrderSequence(
+  exec: Exec,
+  branchId: number,
+  year: number,
+): Promise<number> {
   const result = await exec.execute(
     sql`INSERT INTO ${orderSequencesTable} (branch_id, year, last_sequence)
         VALUES (${branchId}, ${year}, 1)
@@ -207,8 +222,15 @@ export async function lockOrder(exec: Exec, id: number): Promise<OrderRow | unde
 }
 
 /** الطلب المرتبط بهذه الفاتورة — به يُغلق الطلب حين تُسدَّد، لا بنداء ثانٍ. */
-export async function findOrderBySaleId(saleId: number, exec: Exec = db): Promise<OrderRow | undefined> {
-  const [row] = await exec.select().from(ordersTable).where(eq(ordersTable.sale_id, saleId)).limit(1);
+export async function findOrderBySaleId(
+  saleId: number,
+  exec: Exec = db,
+): Promise<OrderRow | undefined> {
+  const [row] = await exec
+    .select()
+    .from(ordersTable)
+    .where(eq(ordersTable.sale_id, saleId))
+    .limit(1);
   return row;
 }
 
@@ -235,7 +257,8 @@ export async function findOrders(
 ): Promise<{ rows: OrderRow[]; total: number }> {
   const clauses = [];
   if (filters.branchId !== undefined) clauses.push(eq(ordersTable.branch_id, filters.branchId));
-  if (filters.customerId !== undefined) clauses.push(eq(ordersTable.customer_id, filters.customerId));
+  if (filters.customerId !== undefined)
+    clauses.push(eq(ordersTable.customer_id, filters.customerId));
   if (filters.status !== undefined) clauses.push(eq(ordersTable.status, filters.status));
   const where = clauses.length > 0 ? and(...clauses) : undefined;
 
@@ -247,7 +270,10 @@ export async function findOrders(
       .orderBy(desc(ordersTable.created_at), desc(ordersTable.id))
       .limit(limit)
       .offset(offset),
-    db.select({ count: sql<string>`count(*)` }).from(ordersTable).where(where),
+    db
+      .select({ count: sql<string>`count(*)` })
+      .from(ordersTable)
+      .where(where),
   ]);
   return { rows, total: Number(counted[0]?.count ?? 0) };
 }

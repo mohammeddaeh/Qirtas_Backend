@@ -1,0 +1,9 @@
+{
+  "identities": [
+    {
+      "name": "qirtas",
+      "credentials": [{ "accessKey": "qirtas", "secretKey": "qirtas-dev-secret" }],
+      "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+    }
+  ]
+}

@@ -1051,6 +1051,176 @@ export const MESSAGES = {
     en: 'This file link has expired — open the file again',
     ar: 'انتهت صلاحية رابط الملف — افتح الملف من جديد',
   },
+  // ── المستندات (core/media/documents.service.ts) ──
+  /** قبل الرفع: الهاتف لا يصرف بياناته على ملفٍ سيُرفض. data.max_bytes. */
+  document_too_large: {
+    en: 'The file is larger than allowed',
+    ar: 'حجم الملف أكبر من المسموح',
+  },
+  /** data.allowed = الأنواع المقبولة. الحكم الأخير للبايتات عند التأكيد لا للاسم. */
+  document_type_not_allowed: {
+    en: 'This file type is not accepted',
+    ar: 'هذا النوع من الملفات غير مقبول',
+  },
+  /** التأكيد قبل اكتمال الرفع — الحجز باقٍ، فأكمل الرفع وأعد المحاولة. */
+  document_not_uploaded: {
+    en: 'The file has not finished uploading',
+    ar: 'لم يكتمل رفع الملف بعد',
+  },
+  upload_link_invalid: {
+    en: 'This upload link has expired — start the upload again',
+    ar: 'انتهت صلاحية رابط الرفع — ابدأ الرفع من جديد',
+  },
+  upload_size_mismatch: {
+    en: 'The uploaded file is not the size that was declared',
+    ar: 'حجم الملف المرفوع لا يطابق الحجم المُعلَن',
+  },
+  // ── الطباعة (printing_system.md §قرارات التنفيذ) ──
+  print_option_unknown: {
+    en: 'Unknown print option',
+    ar: 'خيار طباعة غير معروف',
+  },
+  print_option_wrong_kind: {
+    en: 'That option does not belong in this field',
+    ar: 'هذا الخيار لا ينتمي لهذا الحقل',
+  },
+  /** الخيار أُوقف — يظهر لمن فتح الشاشة قبل إيقافه. */
+  print_option_inactive: {
+    en: 'This option is no longer offered',
+    ar: 'هذا الخيار لم يعد متاحاً',
+  },
+  print_option_disabled_at_branch: {
+    en: 'This branch does not offer that option',
+    ar: 'هذا الفرع لا يقدّم هذا الخيار',
+  },
+  /** رفضٌ لا صفر: خليةٌ بلا سعر كانت ستطبع مجاناً. */
+  print_spec_unpriced: {
+    en: 'This combination has no price yet — ask the branch',
+    ar: 'هذه المواصفة غير مسعَّرة بعد — اسأل الفرع',
+  },
+  // ── طلب الطباعة (9-ج-2) ──
+  /** المسودة وحدها تُعدَّل — data.status. */
+  print_job_not_editable: {
+    en: 'This print order can no longer be changed',
+    ar: 'لم يعد ممكناً تعديل طلب الطباعة هذا',
+  },
+  print_job_too_many_files: {
+    en: 'Too many files in one print order',
+    ar: 'عدد الملفات أكبر من المسموح للطلب الواحد',
+  },
+  print_job_too_many_links: {
+    en: 'Too many links in one print order',
+    ar: 'عدد الروابط أكبر من المسموح للطلب الواحد',
+  },
+  /** الخادم لا يجلب الرابط أبداً — https وحدها. */
+  print_link_invalid: {
+    en: 'Only secure (https) links can be printed',
+    ar: 'تُقبل الروابط الآمنة (https) فقط',
+  },
+  print_job_nothing_to_print: {
+    en: 'Add a file or a link first',
+    ar: 'أضف ملفاً أو رابطاً أولاً',
+  },
+  print_job_files_uploading: {
+    en: 'Wait until every file finishes uploading',
+    ar: 'انتظر حتى يكتمل رفع كل الملفات',
+  },
+  print_job_files_unusable: {
+    en: 'Remove the files that cannot be printed first',
+    ar: 'احذف الملفات التي لا يمكن طباعتها أولاً',
+  },
+  print_job_not_cancellable: {
+    en: 'This print order can no longer be cancelled',
+    ar: 'لم يعد ممكناً إلغاء طلب الطباعة هذا',
+  },
+  /** التسعير أو المرحلة لا تناسب حالة الطلب الآن — data.status. */
+  print_job_wrong_status: {
+    en: 'This print order cannot move to that step now',
+    ar: 'لا يمكن نقل طلب الطباعة إلى هذه المرحلة الآن',
+  },
+  /** بوابة الإنتاج: لا ورق ولا حبر قبل دفعٍ مثبَّت. */
+  print_job_unpaid: {
+    en: 'This print order is not paid yet',
+    ar: 'طلب الطباعة لم يُدفع بعد',
+  },
+  // ── دفع الطباعة بالصندوق (9-ج-3) ──
+  print_job_not_found: {
+    en: 'No print order with this number',
+    ar: 'لا يوجد طلب طباعة بهذا الرقم',
+  },
+  print_job_other_branch: {
+    en: 'This print order belongs to another branch',
+    ar: 'طلب الطباعة هذا تابع لفرع آخر',
+  },
+  /** مدفوع، أو لم يُسعَّر بعد، أو أُلغي — data.status و data.payment_status. */
+  print_job_not_payable: {
+    en: 'This print order cannot be paid now',
+    ar: 'لا يمكن دفع طلب الطباعة هذا الآن',
+  },
+  print_job_in_other_sale: {
+    en: 'This print order is already in another basket at the till',
+    ar: 'طلب الطباعة هذا موجود في سلّة أخرى بالصندوق',
+  },
+  /** بسلّة صندوقٍ لم تُدفع: لا تسعير ولا إلغاء حتى تُدفع أو يُزال منها. */
+  print_job_at_till: {
+    en: 'This print order is at the till right now — remove it from the basket first',
+    ar: 'طلب الطباعة هذا عند الصندوق الآن — أزله من السلّة أولاً',
+  },
+  sale_service_other_customer: {
+    en: 'This service belongs to another customer',
+    ar: 'هذه الخدمة تخصّ زبوناً آخر',
+  },
+  sale_service_qty_fixed: {
+    en: 'A service line has a fixed quantity — remove it instead',
+    ar: 'كمية سطر الخدمة ثابتة — احذفه بدلاً من ذلك',
+  },
+  // ── وصفة الاستهلاك (9-هـ) ──
+  /** data.problem: duplicate · amount_missing · yield_needs_page_basis. */
+  print_consumption_rule_invalid: {
+    en: 'Each rule needs a quantity or a page yield (not both), once per option and material',
+    ar: 'كل قاعدة تحتاج كمية أو مردود صفحات (لا الاثنين)، ومرة واحدة لكل خيار ومادة',
+  },
+  print_consumption_material_unknown: {
+    en: 'This material is not in the catalog',
+    ar: 'هذه المادة غير موجودة بالكتالوج',
+  },
+  print_consumable_not_tracked: {
+    en: 'This material is not tracked by page yield',
+    ar: 'هذه المادة لا تُتابَع بمردود الصفحات',
+  },
+  print_file_not_ready: {
+    en: 'This file cannot be opened',
+    ar: 'لا يمكن فتح هذا الملف',
+  },
+  print_too_many_pages: {
+    en: 'Too many pages for one job',
+    ar: 'عدد الصفحات أكبر من الحد المسموح للطلب الواحد',
+  },
+  print_option_code_taken: {
+    en: 'An option with this code already exists',
+    ar: 'يوجد خيار بهذا الرمز',
+  },
+  print_tier_invalid: {
+    en: 'Each tier needs a positive page count and a discount between 0 and 100',
+    ar: 'كل شريحة تحتاج عدد صفحات موجباً ونسبة خصم بين ٠ و١٠٠',
+  },
+  print_tier_duplicate: {
+    en: 'Two tiers start at the same page count',
+    ar: 'شريحتان تبدآن بنفس عدد الصفحات',
+  },
+  print_rate_no_central: {
+    en: 'Set a central price first — the branch range is measured from it',
+    ar: 'حدّد السعر المركزي أولاً — نطاق الفرع يُقاس عليه',
+  },
+  /** الحدّان يسافران مع الرفض (`min_syp`/`max_syp`). */
+  print_rate_outside_band: {
+    en: 'This price is outside the range allowed for branches',
+    ar: 'السعر خارج النطاق المسموح للفروع',
+  },
+  print_scope_denied: {
+    en: 'You cannot change printing settings at this branch',
+    ar: 'لا تملك تعديل إعداد الطباعة بهذا الفرع',
+  },
 } as const satisfies Record<string, Record<Lang, string>>;
 
 export type MessageKey = keyof typeof MESSAGES;

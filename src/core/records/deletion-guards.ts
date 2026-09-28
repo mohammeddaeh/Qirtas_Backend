@@ -36,7 +36,10 @@ export function clearDeletionGuards(): void {
  * registered it is also `0`, which is the honest answer for a server that
  * does not run those modules.
  */
-export async function countExternalReferences(entity: GuardedEntity, ids: number[]): Promise<number> {
+export async function countExternalReferences(
+  entity: GuardedEntity,
+  ids: number[],
+): Promise<number> {
   if (ids.length === 0 || guards.length === 0) return 0;
   const counts = await Promise.all(guards.map((guard) => guard(entity, ids)));
   return counts.reduce((sum, value) => sum + value, 0);

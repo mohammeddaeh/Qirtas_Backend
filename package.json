@@ -25,15 +25,19 @@
     "test:mail": "tsx tests/email-recipient.test.ts",
     "test:import": "tsx tests/import-duplicate-detection.test.ts",
     "check:permissions": "tsx src/core/authz/check-permissions.ts",
-    "print:permissions": "tsx src/core/authz/print-permissions.ts"
+    "print:permissions": "tsx src/core/authz/print-permissions.ts",
+    "storage:setup": "tsx src/core/media/setup-bucket.ts"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^7.3.0",
+    "@aws-sdk/client-s3": "^3.1141.0",
+    "@aws-sdk/s3-request-presigner": "^3.1141.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.4",
     "exceljs": "^4.4.0",
     "express": "^4.21.1",
+    "file-type": "^21.3.4",
     "firebase-admin": "^14.4.0",
     "helmet": "^8.3.0",
     "multer": "^2.2.0",

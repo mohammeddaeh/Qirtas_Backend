@@ -16,5 +16,22 @@ services:
       timeout: 5s
       retries: 5
 
+  # S3-compatible file store for `STORAGE_DRIVER=s3` (core/media/adapters/s3.driver.ts).
+  # Production runs on more than one server machine, so uploads cannot live on
+  # one machine's disk. SeaweedFS rather than MinIO: MinIO's images are no
+  # longer published for free (pull is refused), and the driver speaks plain S3,
+  # so any compatible store works. Keys: docker/seaweedfs-s3.json.
+  # Create the bucket once with `npm run storage:setup`.
+  s3:
+    image: chrislusf/seaweedfs:latest
+    restart: unless-stopped
+    command: server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
+    ports:
+      - '8333:8333'
+    volumes:
+      - s3_data:/data
+      - ./docker/seaweedfs-s3.json:/etc/seaweedfs/s3.json:ro
+
 volumes:
   postgres_data:
+  s3_data:

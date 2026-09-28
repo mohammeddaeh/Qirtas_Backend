@@ -13,7 +13,8 @@ export function roundSyp(value: number): number {
 }
 
 export interface SaleLineInput {
-  variantId: number;
+  /** `null` لسطر خدمة. */
+  variantId: number | null;
   qty: number;
   /** سعر الوحدة المُباع بها **شاملاً الضريبة** (§١١: ما على الرف هو ما يُدفع). */
   unitPriceSyp: number;
@@ -24,7 +25,8 @@ export interface SaleLineInput {
 }
 
 export interface SaleLineAmounts {
-  variantId: number;
+  /** `null` لسطر خدمة. */
+  variantId: number | null;
   /** السعر المعلن × الكمية — قبل أي خصم. */
   grossSyp: number;
   promotionDiscountSyp: number;
@@ -224,13 +226,5 @@ export function formatSaleNumber(prefix: string, year: number, sequence: number)
   return `${clean}-${year}-${String(sequence).padStart(6, '0')}`;
 }
 
-/**
- * بادئة الفرع من اسمه: أول حرفين لاتينيين، وإلا `BR<id>`.
- *
- * الاسم العربي لا يُشتقّ منه حرفان لاتينيان، ورقمُ الفرع جوابٌ صادق يبقى
- * فريداً — بخلاف بادئةٍ مخترَعة يتشاركها فرعان فيتصادم رقماهما.
- */
-export function branchPrefix(name: string, branchId: number): string {
-  const letters = name.replace(/[^A-Za-z]/g, '');
-  return letters.length >= 2 ? letters.slice(0, 2).toUpperCase() : `BR${branchId}`;
-}
+/** بادئة الفرع — مشتركة مع ترقيم الطباعة، فمكانها `core/records/branch-prefix.ts`. */
+export { branchPrefix } from '../../../core/records/branch-prefix.js';

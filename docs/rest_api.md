@@ -1060,7 +1060,7 @@ Accept-language: ar | en
 
 ## 18. الملفات والصور (2026-09-22) — `core/media/` · المرجع: `docs/reference/store_system.md` §١٠
 
-**منطقتان من البداية**: `public` (صور الكتالوج، للجميع بمن فيهم الضيف) و`private` (ملفات الزبائن، برابط موقَّع قصير العمر فقط). الكود يكتب لمنفذ `StorageDriver`، واليوم `LocalDiskDriver` (`STORAGE_LOCAL_ROOT`، خارج git). الصف في `media_assets` يخزّن **مفاتيح لا روابط**، فنقل التخزين لا يُفسد أي صف.
+**منطقتان من البداية**: `public` (صور الكتالوج، للجميع بمن فيهم الضيف) و`private` (ملفات الزبائن، برابط موقَّع قصير العمر فقط). الكود يكتب لمنفذ `StorageDriver`، والمحوّل بـ`STORAGE_DRIVER`: `local` (قرص، تطوير واختبار فقط — **مرفوض بالإنتاج**) أو `s3` (أي مخزن S3-compatible — SeaweedFS بـdocker-compose للتطوير، ومزوّد يُختار للإنتاج). **`s3` إلزامي بالإنتاج لأن الخادم يعمل على أكثر من جهاز** (قرار 2026-09-28). الصف في `media_assets` يخزّن **مفاتيح لا روابط**، فنقل التخزين لا يُفسد أي صف.
 
 **شكل `Image`** (يُرجعه كل endpoint يقبل أو يعرض صورة):
 
@@ -1075,7 +1075,19 @@ Accept-language: ar | en
 
 - `POST /catalog/media/images` — `catalog.edit`. multipart، حقل `file`. الحارس **قبل** محلّل الملف (من لا صلاحية له لا يرفع ١٠MB للذاكرة أولاً). يُحفظ WebP بثلاثة أحجام (٣٢٠ · ٨٠٠ · ١٦٠٠، بلا تكبير)، وEXIF محذوف (موقع GPS). ← `201 Image`. الأخطاء: `413 image_too_large` (> ١٠MB) · `422 image_unsupported_format` (غير JPEG/PNG/WebP — HEIC يحوّله التطبيق قبل الرفع) · `422 image_too_small` (أقصر ضلع < ٢٠٠) · `422 image_unreadable` (ليس صورة، أو يتجاوز ٤٠ ميغابكسل). الصورة **غير مرتبطة** (`attached_at: null`) حتى يُحفظ سجل كتالوج يشير لمعرّفها.
 - `GET /files/public/<key>` — عام. `Cache-Control: public, max-age=31536000, immutable` (المفتاح لا يتكرر: صورة مستبدلة = مفتاح جديد). مفتاح مخالف للقواعد أو غير موجود ← `404` بنفس الشكل.
-- `GET /files/private/<key>?expires=&signature=` — عام، **والتوقيع هو التفويض** (بلا Bearer: يقرؤه ودجت صورة أو مدير تنزيل). `403 file_link_invalid` لمنتهٍ أو معدَّل · `Cache-Control: private, no-store`. التوقيع HMAC-SHA256 على `zone:key:expires` بـ`STORAGE_SIGNING_KEY` (إلزامي بالإنتاج). **لا مُصدِر له بعد** — أول من يُصدره وحدة الطباعة، بعد فحص حقّ القارئ.
+- `GET /files/private/<key>?expires=&signature=` — عام، **والتوقيع هو التفويض** (بلا Bearer: يقرؤه ودجت صورة أو مدير تنزيل). `403 file_link_invalid` لمنتهٍ أو معدَّل · `Cache-Control: private, no-store`. التوقيع HMAC-SHA256 على `zone:key:expires[:name]` بـ`STORAGE_SIGNING_KEY` (إلزامي بالإنتاج، **وواحد على كل الأجهزة**). `name` اختياري **وموقَّع**: يُرجع `Content-Disposition: attachment` بالاسم الأصلي (RFC 5987، العربي يبقى)، فلا يُعاد تسمية الرابط `invoice.exe`. مع `s3` يُصدَر رابط التنزيل **presigned GET مباشراً للمخزن** بنفس الاسم، وهذا المسار يبقى للمحوّل المحلي.
+- `PUT /files/uploads/<token>` — عام، **والرمز هو التفويض**. نقطة الرفع المباشر للمحوّل **المحلي وحده** (بديل presigned PUT)، و`404` حين `STORAGE_DRIVER=s3`. الرمز موقَّع ويسمّي مفتاحاً واحداً وحجماً **مضبوطاً** ونوع محتوى: `Content-Type` مختلف ← `403 upload_link_invalid` · جسم أكبر ← `413 upload_size_mismatch` · أصغر ← `422 upload_size_mismatch` · منتهٍ أو معدَّل ← `403 upload_link_invalid`. النجاح `204`. الجسم يُكتب بالتدفق (لا بالذاكرة) إلى ملف مؤقت ثم يُعاد تسميته.
+
+### المستندات — الرفع المباشر بثلاث خطوات (9-ج-1، 2026-09-28)
+
+خدمة عامة بـ`core/media/documents.service.ts` **بلا نقاط خاصة بها**: الموديول المالك (الطباعة، 9-ج-2) يفحص حقّ المستدعي بطلبه ثم يستدعيها، ويعرض نقاطه هو. الخطوات: **حجز** (`reserveDocument` ← صفّ `pending` + `upload: {method: "PUT", url, headers, expires_at}`) ← **العميل يرفع مباشرة** إلى `url` بالـ`headers` حرفياً و`Content-Length` = الحجم المُعلَن (مع `s3` رابط presigned للمخزن نفسه والملف لا يمرّ بالخادم؛ مع المحلي `PUT /files/uploads/<token>`) ← **تأكيد** (`completeDocument`: الحجم الفعلي + **النوع من البايتات** ← `ready` أو `rejected`). الرابط ١٥ دقيقة.
+
+- **الحجز يرفض مبكراً** ما سيُرفض حتماً: `422 document_too_large` (`data.max_bytes`) · `422 document_type_not_allowed` (`data.allowed`) — فلا يصرف الهاتف ٥٠ ميغابايت على ملف مرفوض. وليس هذا الحكم.
+- **الحكم للبايتات** (`document-types.ts`، مكتبة `file-type`): PDF · DOCX/XLSX/PPTX · DOC/XLS/PPT (حاوية `cfb` — تُقبل **باسم doc/xls/ppt فقط**، لأن `.msi` يستعمل الحاوية نفسها) · JPG/PNG/WEBP/HEIC · TXT (UTF-8 بلا NUL، مُعلَن `.txt`). ملفٌ تنفيذي باسم `invoice.pdf` ← `rejected` **ويُحذف فوراً**.
+- **التأكيد قبل اكتمال الرفع** ← `409 document_not_uploaded` والحجز باقٍ. **والتأكيد مرتين ليس خطأ** (يُرجع الحالة المستقرة).
+- **الحالات** التي يستطيع الخادم إثباتها فقط: `pending` · `ready` · `rejected` · `deleted` — لا `uploading`: الخادم لا يرى الرفع وهو يجري.
+- **المفتاح** `doc/YYYY/MM/<uuid>.bin` دائماً — لا يقول نوعاً لم تُثبته البايتات، والاسم الذي يراه القارئ من `original_filename`.
+- **الاحتفاظ** بـ`expires_at`: الحجز غير المكتمل يومٌ، والملف الجاهز غير المُطالَب به ٧ أيام، والموديول المالك يستبدل المدة بمدّته (`setDocumentExpiry` — `null` = يبقى). **كنّاس كل ساعة** (`document-sweeper.ts`) يحذف الكائن ويُبقي الصف `deleted` بسببه (`upload_abandoned` · `retention_expired`)، **بقفل `pg_try_advisory_xact_lock`** فيعمل جهاز واحد بكل جولة.
 
 ## 19. الكتالوج المركزي — البيانات المرجعية (2026-09-22) · المرجع: `docs/reference/store_system.md` §٩–١٠
 
@@ -1361,6 +1373,7 @@ requested → approved → in_transit → received                   → closed
 - `GET /sales/items?branch_id&search` — **ما يصلح لسطر بيع**، بسعره بالفرع ورصيده، بحثاً بالاسم أو الـSKU أو **الباركود تماماً**. يعيش بموديول المبيعات لا بالكتالوج: الصندوق يحتاج صفّاً بسعره، وقراءة **جدول** موديول آخر مسموحة بينما قراءة خدمته ليست (نفس حلّ `document-items` و`promotions/targets`). والصفّ الذي طابق رمزاً تماماً يُعلَّم `exact_barcode` — **مسحةٌ واحدة تُضيف صنفاً واحداً** بدل أن تعرض خمسة أسماء يقرؤها الكاشير. و«غير مسعَّر» يصل `price_syp: null` لا صفراً: صفرٌ يُقرأ مجاناً ويضيفه الكاشير.
 - `POST /sales/:id/lines {variant_id, qty, unit_id?}` — **السعر يُقرأ من الخادم لا من الجهاز**: ثمنٌ يرسله العميل خصمٌ يكتبه من يمسك الجهاز، ولا شيء بالفاتورة يقول إنه اختُرع. ومسحُ الصنف مرتين **يزيد الكمية** ولا يضيف سطراً (سطران بخمسة يفوّتان شريحة العشرة، ويقرأ الزبون صنفه مرتين).
 - `PATCH /sales/:id/lines/:lineId {qty}` — **صفرٌ يحذف السطر**: سطرٌ بصفر يُطبع بالإيصال ويُربك من يعدّ الأكياس.
+- `POST /sales/:id/services {kind: "print_job", reference}` (9-ج-3، 2026-09-28) — **خدمةٌ بالسلّة**: طلب طباعة برقمه كما يقرؤه الزبون (`BR1-P-2026-000052`، بلا حساسية لحالة الأحرف) أو بمعرّفه. **المبلغ من موديول الطباعة لا من الجهاز** (`quoted_total_syp`)، والسطر `variant_id: null` و`service: {kind, ref_id}` وكميته **ثابتة ١** (`409 sale_service_qty_fixed`؛ الحذف مسموح). الإضافة مرتين لا تضيف سطراً. والفاتورة بلا زبون تصير باسم صاحب الطلب، وباسم زبونٍ آخر `409 sale_service_other_customer`. الرفوض من الطباعة: `404 print_job_not_found` · `409 print_job_other_branch` · `409 print_job_not_payable` (مدفوع/لم يُسعَّر/ملغى) · `409 print_job_in_other_sale`. **حذف السطر أو إلغاء السلّة يعيد الطلب لانتظاره بمهلة جديدة، و`pay` يُسدّده بنفس المعاملة — ورفضُه يُسقط الفاتورة كلها**. سطر الخدمة **لا يُخرج بضاعة** ولا يُعرض بـ`returnable` (لا رفّ يعود إليه).
 - `DELETE /sales/:id/lines/:lineId` · `POST /sales/:id/hold {held}` · `POST /sales/:id/void`
 
 ### السطر لقطةٌ كاملة
@@ -1491,3 +1504,131 @@ requested → approved → in_transit → received                   → closed
 **والكنس كسِلٌ بلا جدولة**: كل قراءة للطابور أو للطلبات تُغلق ما سقطت مهلته (حتى ٥٠ صفاً). مهمّةٌ دورية كانت ستصير جزءاً ثانياً يجب أن يعمل ليكون الرقم صحيحاً، وإيقافه يُجمّد المخزون بلا أي خطأ.
 
 **والترقيم `MZ-O-2026-000001`** — تسلسلٌ ثالث مستقل عن البيع (`MZ-…`) والمرتجع (`MZ-R-…`): رقمٌ مشترك يترك بترقيم الفواتير فجوةً يلاحقها المدقّق ولا وجود لها.
+
+---
+
+## 29. إعداد الطباعة وتسعيرها (9-أ، 2026-09-24) · المرجع: `docs/reference/printing_system.md` §قرارات التنفيذ
+
+**السعر يُعرض قبل الدفع دائماً، والخادم يحسبه.** الشريحة الأولى تبني الجدول والحساب بلا ملفات: عدد الصفحات يُكتب يدوياً، والطلب نفسه (رفع · عدّ · بوابة الدفع) بالشريحة 9-ج.
+
+**المواصفة خمسة أبعاد إلزامية**: `paper_size` · `color_mode` · `sides` · `binding` · `cover`. «بلا تجليد» و«بلا غلاف» خياران مبذوران (`code: none`) بسعر يُحدَّد — لا حقلان يُتركان. **والأسعار لا تُبذَر**: خليةٌ فارغة ترفض حتى تملأها الإدارة.
+
+| المسار | الصلاحية | ما يفعله |
+|---|---|---|
+| `GET /printing/offer?branch_id=` | **عام** | الخيارات الفعّالة **وغير المعطَّلة بالفرع** مجمّعة بالنوع + الشرائح + `max_file_mb`/`max_pages` |
+| `POST /printing/quote` | **عام** | السعر بالفرع (الجسم أدناه) |
+| `GET /printing/config?branch_id=` | `printing.settings` **أو** `printing.branch_settings` | `branches` (الحيّة، للمنتقي) · كل الخيارات (والموقوفة) · الأسعار المركزية · استثناءات الفرع · **النطاق المسموح لكل خلية** · الشرائح · الإعدادات · `can_edit_central`/`can_edit_branch`. بفرعٍ لا يملك القارئ صلاحيته ⇒ `403 print_scope_denied` |
+| `POST /printing/options` · `PATCH /printing/options/:id` | `printing.settings` | خيارٌ جديد · تعديل الاسم/الترتيب/**الإيقاف**. **الرمز والنوع لا يُعدَّلان، ولا حذف** (طلبٌ سابق يسمّيه) |
+| `PUT /printing/rates` | `printing.settings` | خلايا مركزية: `page_rates[]` بـ(مقاس × لون × وجه) و`finishing_rates[]` (تجليد/غلاف **لكل نسخة**). **المرسل وحده يُكتب**، و`amount_syp: null` يحذف الخلية |
+| `PUT /printing/tiers` | `printing.settings` | استبدال الشرائح كاملة |
+| `PATCH /printing/settings` | `printing.settings` | `branch_band_percent` (٢٠) · `file_retention_days` (٣٠) · `max_file_mb` (٥٠) · `max_pages` (٢٠٠٠) · `unpaid_timeout_days` (٣، **صفر = بلا مهلة**) |
+| `PUT /printing/branches/:branchId/options` | `printing.branch_settings` **بذاك الفرع** | تفعيل/تعطيل خيارات. **الغياب «مفعَّل»** — الصف يوجد ليقول «لا» |
+| `PUT /printing/branches/:branchId/rates` | `printing.branch_settings` **بذاك الفرع** | استثناءات الفرع — نفس شكل `/rates`، **ضمن النطاق حول المركزي** |
+
+**جسم `POST /quote`**: `branch_id` · `pages` · `copies` · `paper_size_id` · `color_mode_id` · `sides_id` · `binding_id` · `cover_id`.
+
+**الرد**:
+
+| الحقل | المعنى |
+|---|---|
+| `page_rate_syp` + `page_rate_source` | سعر الصفحة المطبوعة و`central`/`branch` — **الفرع أولاً ثم المركزي لكل خلية على حدة** |
+| `printed_pages` | الصفحات × النسخ — ما تُحسب عليه الشريحة |
+| `sheets` | الورق المستهلك (الوجهان: `ceil(pages/2) × copies`) |
+| `pages_subtotal_syp` · `tier` · `tier_discount_syp` | **الشريحة الأعلى التي بلغها المجموع لا مجموع الشرائح**، وتخصم من الصفحات وحدها |
+| `finishing[]` | `option_id` · `kind` · `per_copy_syp` · `source` · `subtotal_syp` — التجليد لا يرخص بالعدد |
+| `total_syp` | **بالليرة الكاملة** |
+
+**الرفض** (`data.option_id` يسمّي الخيار المسبِّب — «غير مسعَّر» بلا اسمٍ يجعل الزبون يغيّر الخيارات عشوائياً):
+
+| `message_key` | الحالة | متى |
+|---|---|---|
+| `print_spec_unpriced` | 409 | خليةٌ بلا سعر بالفرع ولا بالمركز — **رفضٌ لا صفر** |
+| `print_option_disabled_at_branch` | 409 | الفرع عطّل الخيار |
+| `print_option_inactive` | 409 | الخيار موقوف |
+| `print_option_unknown` · `print_option_wrong_kind` | 422 | معرّفٌ لا يوجد، أو معرّف تجليد بمكان المقاس |
+| `print_too_many_pages` | 422 | فوق `max_pages` |
+| `print_rate_outside_band` | 409 | سعر فرعٍ خارج النطاق — **مع `min_syp`/`max_syp`** |
+| `print_rate_no_central` | 409 | سعر فرعٍ لخلية بلا مركزي — النطاق يُقاس على شيء |
+| `print_tier_invalid` · `print_tier_duplicate` | 422 | عتبة غير موجبة/نسبة خارج (٠، ١٠٠) · عتبتان متساويتان |
+| `print_option_code_taken` | 409 | رمزٌ مكرَّر بنفس النوع |
+| `print_scope_denied` | 403 | كتابة/قراءة إعداد فرعٍ بلا صلاحيته **بذاك الفرع** |
+
+## 30. طلب الطباعة (9-ج-2، 2026-09-28) · المرجع: `docs/reference/printing_system.md` §قرارات مراجعة المرفقات
+
+**مساران لا واحد** (نفس قاعدة الطلبات §28): `/print-jobs` للزبون بجلسته وطلباته وحده، و`/printing/jobs` للموظف بمفتاحه **بفرع الطلب** (`holdsPermissionAt` داخل الخدمة — الحارس بالمسار لا يعرف أي فرع). **طلبُ غيره `404` لا `403`**، والمسودة لا يراها الموظف (`404`). **الملفات عامة بـ`core/media`** (§18 «المستندات»): الطلب يملك لمن الملف ومن يقرؤه ومتى يُحذف.
+
+**الحالات** (الأزرار من `next_states` بالرد، لا آلة ثانية بالعميل):
+
+```
+draft ─submit→ awaiting_quote ─quote→ awaiting_payment ─(الدفع 9-ج-3)→ queued → in_production → ready → picked_up
+  └──────────── cancelled ←──────────────┘   └→ expired (مرّت المهلة)
+```
+
+- **الموظف يكتب صفحات النسخة، والخادم يسعّر** (قرار 2026-09-28: لا عدّ آلي ولا LibreOffice) — بمنطق `POST /printing/quote` نفسه، و**التفصيل يُجمَّد** بـ`quote` (شكل §29). يُعاد التسعير ما دام لم يُدفع، والمهلة تبدأ من آخر تسعير.
+- **بوابة الإنتاج**: `in_production` يفحص `payment_status` (`paid`/`deferred`) **بنفسه** لا بالحالة وحدها ← `409 print_job_unpaid`. `queued` يصله الدفع وحده (9-ج-3، سطر بفاتورة الصندوق).
+- **المهلة** `unpaid_timeout_days` (٣) ← `expired` **بالكنس الكسول عند القراءة** (نمط الطلبات)، و`hours_left` بالرد. **و`expired` ليست `cancelled`**: الأولى «لم يدفع أحد»، والثانية «قرّر أحد».
+- **الإلغاء قبل الدفع وحده** (الزبون: مسودة/انتظار تسعير/انتظار دفع · الموظف: بعد الإرسال **بسبب إلزامي يراه الزبون**). بعد الدفع طريقه مرتجع الصندوق.
+- **الاحتفاظ بالملفات**: المسودة على مهلة `core/media` (٧ أيام للجاهز غير المُطالَب به) · من الإرسال حتى الاستلام **تبقى** · بعد الاستلام `file_retention_days` (٣٠) · الملغى/المنتهي أسبوع. والملف المحذوف من المسودة يُسلَّم للكنّاس فوراً.
+- **الرقم** `MZ-P-2026-000001` يُصرف **عند الإرسال** (المسودة المتروكة لا تثقب التسلسل)، و`P` يفصله عن الفواتير والطلبات.
+
+### الزبون — `/print-jobs`
+
+| المسار | الحارس | ما يفعله |
+|---|---|---|
+| `GET /print-jobs?status=a,b` | زبون | طلباتي، الأحدث أولاً. `status` حالة أو عدّة بفاصلة |
+| `POST /print-jobs` | **زبون موثَّق** | مسودة: `branch_id` · الأبعاد الخمسة · `copies` · `note`. **المواصفة تُفحص الآن** (خيارٌ موقوف أو معطَّل بالفرع يُرفض بمفاتيح §29 قبل أي رفع). ← `201` |
+| `GET /print-jobs/:id` | زبون | طلبي |
+| `PATCH /print-jobs/:id` | موثَّق | المواصفة/النسخ/الملاحظة — **المسودة وحدها** (`409 print_job_not_editable`). الفرع لا يتغيّر |
+| `POST /print-jobs/:id/files` | موثَّق | `{filename, bytes}` ← `201 {file, upload}`. **ارفع إلى `upload.url` بـ`PUT` و`upload.headers` حرفياً وبالحجم المُعلَن بالضبط** (§18). سقف ٢٠ ملفاً (`print_job_too_many_files`) · `max_file_mb` (`document_too_large`) · النوع المُعلَن (`document_type_not_allowed`) |
+| `POST /print-jobs/:id/files/:fileId/complete` | موثَّق | بعد الرفع: الحجم والنوع **من البايتات** ← الطلب كاملاً. الملف المرفوض **يبقى بحالته** `rejected` ليُرى ويُحذف. قبل اكتمال الرفع `409 document_not_uploaded` |
+| `DELETE /print-jobs/:id/files/:fileId` | موثَّق | من المسودة |
+| `GET /print-jobs/:id/files/:fileId/link` | زبون | `{url}` لعشر دقائق باسم الملف الأصلي. الملف غير الجاهز `409 print_file_not_ready` |
+| `POST /print-jobs/:id/links` · `DELETE …/links/:linkId` | موثَّق | رابط **`https` وحده** (`422 print_link_invalid`)، يُحفظ نصاً **والخادم لا يجلبه أبداً** (لا SSRF). سقف ٢٠ |
+| `POST /print-jobs/:id/submit` | موثَّق | يُصرف الرقم ← `awaiting_quote`. يُرفض: لا ملف ولا رابط `422 print_job_nothing_to_print` · ملفٌ لم يُؤكَّد `409 print_job_files_uploading` · ملفٌ مرفوض/محذوف ما زال `409 print_job_files_unusable` · والمواصفة تُعاد فحصاً |
+| `POST /print-jobs/:id/cancel` | زبون | `{reason?}` قبل الدفع، وإلا `409 print_job_not_cancellable` |
+
+### الموظف — `/printing/jobs`
+
+| المسار | المفتاح **بفرع الطلب** | ما يفعله |
+|---|---|---|
+| `GET /printing/jobs/branches` | `printing.queue.view` | الفروع الحيّة التي يحمل القارئ فيها المفتاح — منتقي الطابور (موظف الإنتاج لا يملك مفتاح الإعداد ولا المخزون فقائمتاهما لا تصلانه) |
+| `GET /printing/jobs?branch_id=&status=a,b` | `printing.queue.view` | طابور الفرع، **الأقدم إرسالاً أولاً**، بلا مسودات. فرعٌ لا يملك مفتاحه `403 print_scope_denied` |
+| `GET /printing/jobs/:id` | `printing.queue.view` | الطلب — مع `customer_phone` |
+| `GET /printing/jobs/:id/files/:fileId/link` | `printing.queue.view` | فتح الملف — **يُسجَّل بالتدقيق** (`printing.job.file.open`: قد يكون نسخة هوية) |
+| `POST /printing/jobs/:id/quote` | `printing.status.update` | `{pages}` صفحات **النسخة الواحدة** ← `awaiting_payment` + `quote` + `payment_due_at`. من غير `awaiting_quote`/`awaiting_payment` `409 print_job_wrong_status` |
+| `POST /printing/jobs/:id/status` | `printing.status.update` | `{status: in_production\|ready\|picked_up}` خطوةً خطوة (`409 print_job_wrong_status`)، والإنتاج **يحتاج دفعاً** (`409 print_job_unpaid`) |
+| `POST /printing/jobs/:id/cancel` | `printing.status.update` | `{reason}` **إلزامي** (٣ أحرف+) — قبل الدفع وحده |
+| `POST /printing/jobs/:id/defer` | `printing.payment.defer` (**حسّاس**) | `{reason}` **إلزامي** — الطباعة قبل الدفع بموافقة: `queued` + `payment_status: deferred` + `deferred {by, at, reason}`. من `awaiting_payment` غير المدفوع وحده. **والدَّين يُقبض لاحقاً بالصندوق** بأي مرحلة، والمرحلة لا تتغيّر بالسداد |
+
+**الدفع (9-ج-3)**: سطرٌ بفاتورة الصندوق (`POST /sales/:id/services`، §27) — لا نقطة دفع هنا. ما دام الطلب بسلّةٍ لم تُدفع (`at_till: true`) **المهلة موقوفة، ولا تسعير ولا إلغاء** (`409 print_job_at_till`). السداد: `awaiting_payment → queued` + `payment_status: paid` + `paid_at` + `sale_id`.
+
+**شكل الطلب**: `id` · `number` (`null` بالمسودة) · `at_till` · `sale_id` · `paid_at` · `deferred` (`{by, at, reason}` أو `null`) · `branch_id`/`branch_name` · `customer_id`/`customer_name`/`customer_phone` · `status` · `next_states` · `payment_status` (`unpaid`/`paid`/`deferred`) · `spec` (`paper_size`/`color_mode`/`sides`/`binding`/`cover` ← `{id, code, name_ar, name_en}`) · `copies` · `note` · `total_pages` · `quote` (شكل §29 أو `null`) · `quoted_total_syp` · `quoted_at` · `payment_due_at` · `hours_left` · `files[]` (`id`/`name`/`bytes`/`status`/`type`) · `links[]` (`id`/`url`/`note`) · `cancel_reason` · `created_at`/`submitted_at`/`production_started_at`/`ready_at`/`picked_up_at`. **كل كتابة تُرجع الطلب كاملاً** والعميل يستبدل.
+
+**التحقق**: `tests/print-jobs.e2e.ts` حيّ عبر HTTP (٤٦/٤٦) · `tests/print-till.e2e.ts` (٢٨/٢٨: الإضافة بالرقم · المهلة تتوقف وتعود · سلّتان · سداد مرفوض يُسقط الفاتورة · بضاعة وخدمة بفاتورة واحدة · التأجيل ثم السداد عند الاستلام) · `job-rules.test.ts` (٣٢) · نظير الحارس `wire-contract.test.ts` (عيّنة Flutter تأتي مع الشاشات 9-د).
+
+## 31. وصفة الاستهلاك (9-هـ، 2026-09-28) · المرجع: `docs/reference/printing_system.md` §خطة 9-هـ
+
+**الطباعة بيعٌ واحد يستهلك عدة أصناف** من مخزون الفرع. الوصفة تقول لكل خيار مواصفة ما يستهلكه وعلى أي أساس، و**الخصم عند بدء الطباعة** (`POST /printing/jobs/:id/status {in_production}`) **بمعاملتها نفسها** عبر منفذ `core/stock/consumption-port.ts` (حركات `production_consume` تشير لـ`print_job`). **والنقص مسموح**: الرصيد السالب يظهر بالمخزون تناقضاً يحتاج جرداً.
+
+| الأساس | يُضرب بـ | مثال |
+|---|---|---|
+| `per_sheet` | الأوراق (`quote.sheets` — الوجهان صفحتان بالورقة) | ورق A4 × ١ |
+| `per_printed_page` | الصفحات المطبوعة (الصفحات × النسخ) | الحبر |
+| `per_copy` | النسخ | سلك التجليد، الغلاف |
+| `per_job` | ١ | ظرف |
+
+- **كمية أو مردود، لا الاثنان**: `qty` (وحدة أساس المادة لكل وحدة أساس) أو `yield_pages` (للحبر: «العلبة تكفي N صفحة» ⇒ ١/N لكل صفحة؛ **بالصفحة أو الورقة وحدهما**).
+- **لا كسرٌ يضيع**: المخزون بثلاث خانات، فالكسور تتجمّع بعدّاد المادة بالفرع ويُرحَّل ما بلغ ٠٫٠٠١ فما فوق (صفحة حبر واحدة تنتظر بدل أن تُقرَّب لصفر).
+- **التكلفة من الكمية الدقيقة** بمتوسط التكلفة لحظة الخصم، مجمَّدةً على الطلب (`materials_cost_syp`).
+
+| المسار | الحارس | ما يفعله |
+|---|---|---|
+| `GET /printing/consumption-rules` | `printing.settings` **أو** `printing.branch_settings` | القواعد مع اسم المادة ورمزها |
+| `PUT /printing/consumption-rules` | `printing.settings` | `{rules: [{option_id, variant_id, basis, qty?, yield_pages?}]}` **تستبدل الوصفة كاملةً** (مركزية). `422 print_consumption_rule_invalid` (`data.problem`: `duplicate` · `amount_missing` · `yield_needs_page_basis`) · `422 print_consumption_material_unknown` · `422 print_option_unknown`. لا تمسّ ما خُصم قبلها |
+| `GET /printing/consumables?branch_id=` | `printing.status.update` **بذاك الفرع** | المواد بالمردود وعدّاداتها: `installed_at` · `pages_since_install` · `estimated_since_install` · **`correction_if_installed_now`** (ما سيُرحَّل لو رُكِّبت علبة الآن — يُقال قبل التأكيد؛ `null` قبل أول تركيب) |
+| `POST /printing/consumables/:variantId/install` | `printing.status.update` بالفرع | «ركّبت علبة جديدة» `{branch_id, actual?=1}`: ما رُحِّل منذ آخر تركيب يُقارَن بالمستهلَك فعلاً ← **الفرق يُرحَّل تسويةً** (موجب يُخصم، سالب يُعاد) ويُصفَّر العدّاد ← `{baseline, estimated, actual, correction, pages, suggested_yield_pages}`. **أول تركيبٍ خطُّ بداية** (`baseline: true`) بلا تسوية. مادة بلا مردود `422 print_consumable_not_tracked` |
+| `GET /printing/materials?search=` | `printing.settings` | منتقي مادة الوصفة (أضيف مع 9-هـ-2): أصناف الكتالوج غير المؤرشفة بالاسم (مطويّاً عربياً) أو SKU ← `[{variant_id, name_ar, sku, unit_name_ar}]`. **الوحدة وحدة الأساس** — الكمية بالوصفة تُكتب بها (الورقة لا الرزمة) |
+
+**وبطلب الموظف** (`/printing/jobs`، §30) مفتاحٌ جديد `materials`: `{consumed_at, cost_syp, profit_syp, lines[{variant_id, name_ar, sku, qty, cost_syp}]}` — **لمن يقرّر الأسعار وحده** (`printing.settings`، أو `printing.branch_settings` بفرع الطلب)، وإلا `null`. **والزبون لا يرى المفتاح أصلاً**.
+
+**التحقق**: `consumption-rules.test.ts` (١٩) · `tests/print-consumption.e2e.ts` حيّ ٢٠/٢٠ على دفتر حقيقي (الورق بالأوراق لا الصفحات · الحبر بالمردود · صفحة واحدة تنتظر بالعدّاد · خطّ البداية · تسوية حقيقية تلحق الرفّ بالواقع · الزبون لا يرى التكلفة).

@@ -6,8 +6,9 @@ import { urlSigner } from './composition.js';
 import * as mediaAssetsRepository from './repositories/media-assets.repository.js';
 import type { MediaAssetRow } from './schemas/media-assets.schema.js';
 
-/** Path under which `files.routes.ts` is mounted. URLs on the wire are relative to the API host. */
-export const FILES_BASE_PATH = '/api/v1/files';
+import { FILES_BASE_PATH } from './files-path.js';
+
+export { FILES_BASE_PATH };
 
 /**
  * What a client receives for an image. URLs, not keys: the client should not
@@ -94,7 +95,8 @@ export function toWireImage(row: MediaAssetRow): WireImage {
   for (const variant of row.variants) {
     urls[variant.name as ImageVariantName] = fileUrl(row.zone, variant.key);
   }
-  return { id: row.id, width: row.width, height: row.height, urls };
+  // Images always carry dimensions; the columns are nullable for documents.
+  return { id: row.id, width: row.width ?? 0, height: row.height ?? 0, urls };
 }
 
 /**

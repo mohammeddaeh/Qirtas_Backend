@@ -133,7 +133,11 @@ export async function insertReturnLines(
 }
 
 export async function findReturnById(id: number): Promise<SaleReturnRow | undefined> {
-  const [row] = await db.select().from(saleReturnsTable).where(eq(saleReturnsTable.id, id)).limit(1);
+  const [row] = await db
+    .select()
+    .from(saleReturnsTable)
+    .where(eq(saleReturnsTable.id, id))
+    .limit(1);
   return row;
 }
 
@@ -151,7 +155,8 @@ export async function findReturns(
   offset: number,
 ): Promise<{ rows: SaleReturnRow[]; total: number }> {
   const clauses = [];
-  if (filters.branchId !== undefined) clauses.push(eq(saleReturnsTable.branch_id, filters.branchId));
+  if (filters.branchId !== undefined)
+    clauses.push(eq(saleReturnsTable.branch_id, filters.branchId));
   if (filters.saleId !== undefined) clauses.push(eq(saleReturnsTable.sale_id, filters.saleId));
   const where = clauses.length > 0 ? and(...clauses) : undefined;
 
@@ -163,7 +168,10 @@ export async function findReturns(
       .orderBy(desc(saleReturnsTable.created_at), desc(saleReturnsTable.id))
       .limit(limit)
       .offset(offset),
-    db.select({ count: sql<string>`count(*)` }).from(saleReturnsTable).where(where),
+    db
+      .select({ count: sql<string>`count(*)` })
+      .from(saleReturnsTable)
+      .where(where),
   ]);
   return { rows, total: Number(counted[0]?.count ?? 0) };
 }

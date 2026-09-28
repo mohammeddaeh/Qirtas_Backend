@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SERVICE_KINDS } from '../../../core/till/service-line-port.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 
 /** نقطة البيع — `qirtas_backend/docs/rest_api.md` §27. */
@@ -22,6 +23,19 @@ export const addLineBodySchema = z
     unit_id: id.nullable().optional(),
   })
   .strict();
+
+/**
+ * خدمةٌ للسلّة بمرجعها كما يقرؤه الزبون — رقم طلب الطباعة (`BR1-P-2026-000001`)
+ * أو معرّفه. **بلا مبلغ**: المبلغ من الموديول المالك لا من الجهاز.
+ */
+export const addServiceBodySchema = z
+  .object({
+    kind: z.enum(SERVICE_KINDS),
+    reference: z.string().trim().min(1).max(40),
+  })
+  .strict();
+
+export type AddServiceBody = z.infer<typeof addServiceBodySchema>;
 
 export const lineQtyBodySchema = z.object({ qty: z.number().min(0).max(100000) }).strict();
 
@@ -67,9 +81,7 @@ export const paymentSchema = z
   })
   .strict();
 
-export const payBodySchema = z
-  .object({ payments: z.array(paymentSchema).min(1).max(5) })
-  .strict();
+export const payBodySchema = z.object({ payments: z.array(paymentSchema).min(1).max(5) }).strict();
 
 export const salesQuerySchema = paginationQuerySchema
   .extend({

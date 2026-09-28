@@ -2,7 +2,10 @@ import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { branchesTable } from '../../identity/schemas/branches.schema.js';
 import { userRoleAssignmentsTable } from '../../identity/schemas/user-role-assignments.schema.js';
-import { catalogProductsTable, catalogVariantsTable } from '../../catalog/schemas/products.schema.js';
+import {
+  catalogProductsTable,
+  catalogVariantsTable,
+} from '../../catalog/schemas/products.schema.js';
 import { stockBalancesTable } from '../../inventory/schemas/stock.schema.js';
 import {
   customerCreditLimitsTable,
@@ -82,7 +85,8 @@ export async function findSales(
 ): Promise<{ rows: SaleRow[]; total: number }> {
   const clauses = [];
   if (filters.branchId !== undefined) clauses.push(eq(salesTable.branch_id, filters.branchId));
-  if (filters.cashierId !== undefined) clauses.push(eq(salesTable.cashier_user_id, filters.cashierId));
+  if (filters.cashierId !== undefined)
+    clauses.push(eq(salesTable.cashier_user_id, filters.cashierId));
   if (filters.status !== undefined) clauses.push(eq(salesTable.status, filters.status));
   const where = clauses.length > 0 ? and(...clauses) : undefined;
 
@@ -94,7 +98,10 @@ export async function findSales(
       .orderBy(desc(salesTable.created_at), desc(salesTable.id))
       .limit(limit)
       .offset(offset),
-    db.select({ count: sql<string>`count(*)` }).from(salesTable).where(where),
+    db
+      .select({ count: sql<string>`count(*)` })
+      .from(salesTable)
+      .where(where),
   ]);
   return { rows, total: Number(counted[0]?.count ?? 0) };
 }
@@ -140,6 +147,25 @@ export async function findLineFor(
   return row;
 }
 
+export async function findServiceLine(
+  saleId: number,
+  kind: string,
+  refId: number,
+): Promise<SaleLineRow | undefined> {
+  const [row] = await db
+    .select()
+    .from(saleLinesTable)
+    .where(
+      and(
+        eq(saleLinesTable.sale_id, saleId),
+        eq(saleLinesTable.service_kind, kind as 'print_job'),
+        eq(saleLinesTable.service_ref_id, refId),
+      ),
+    )
+    .limit(1);
+  return row;
+}
+
 export async function insertLine(
   values: typeof saleLinesTable.$inferInsert,
   exec: Exec = db,
@@ -156,8 +182,8 @@ export async function updateLine(
   await exec.update(saleLinesTable).set(values).where(eq(saleLinesTable.id, lineId));
 }
 
-export async function deleteLine(saleId: number, lineId: number): Promise<void> {
-  await db
+export async function deleteLine(saleId: number, lineId: number, exec: Exec = db): Promise<void> {
+  await exec
     .delete(saleLinesTable)
     .where(and(eq(saleLinesTable.sale_id, saleId), eq(saleLinesTable.id, lineId)));
 }
@@ -199,7 +225,9 @@ export async function nextSequence(exec: Exec, branchId: number, year: number): 
   return Number(list[0]?.last_sequence ?? 1);
 }
 
-export async function findBranch(branchId: number): Promise<{ id: number; name: string } | undefined> {
+export async function findBranch(
+  branchId: number,
+): Promise<{ id: number; name: string } | undefined> {
   const [row] = await db
     .select({ id: branchesTable.id, name: branchesTable.name })
     .from(branchesTable)
@@ -225,12 +253,12 @@ export async function findDiscountCapFor(
       canApprove: roleDiscountCapsTable.can_approve,
     })
     .from(userRoleAssignmentsTable)
-    .innerJoin(roleDiscountCapsTable, eq(roleDiscountCapsTable.role_id, userRoleAssignmentsTable.role_id))
+    .innerJoin(
+      roleDiscountCapsTable,
+      eq(roleDiscountCapsTable.role_id, userRoleAssignmentsTable.role_id),
+    )
     .where(
-      and(
-        eq(userRoleAssignmentsTable.user_id, userId),
-        isNull(userRoleAssignmentsTable.valid_to),
-      ),
+      and(eq(userRoleAssignmentsTable.user_id, userId), isNull(userRoleAssignmentsTable.valid_to)),
     );
   let cap = 0;
   let canApprove = false;

@@ -31,6 +31,9 @@ export function clearVariantMergeHandlers(): void {
  * variant. A handler that throws aborts the merge — which is the right
  * outcome: half-moved stock is worse than an unmerged draft.
  */
-export async function moveVariantRecords(fromVariantId: number, toVariantId: number): Promise<void> {
+export async function moveVariantRecords(
+  fromVariantId: number,
+  toVariantId: number,
+): Promise<void> {
   for (const handler of handlers) await handler(fromVariantId, toVariantId);
 }

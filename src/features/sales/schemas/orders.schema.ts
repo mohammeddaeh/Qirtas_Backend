@@ -15,7 +15,10 @@ import {
 import { branchesTable } from '../../identity/schemas/branches.schema.js';
 import { usersTable } from '../../identity/schemas/users.schema.js';
 import { customersTable } from '../../customers/schemas/customers.schema.js';
-import { catalogVariantsTable, catalogProductsTable } from '../../catalog/schemas/products.schema.js';
+import {
+  catalogVariantsTable,
+  catalogProductsTable,
+} from '../../catalog/schemas/products.schema.js';
 import { salesTable } from './sales.schema.js';
 
 /**

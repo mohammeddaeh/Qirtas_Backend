@@ -86,13 +86,27 @@ const order: WireOrder = {
 
 describe('cart wire shape', () => {
   it('carries the keys the cart screen hangs on', () => {
-    for (const key of ['branch_id', 'lines', 'subtotal_syp', 'discount_syp', 'total_syp', 'can_checkout']) {
+    for (const key of [
+      'branch_id',
+      'lines',
+      'subtotal_syp',
+      'discount_syp',
+      'total_syp',
+      'can_checkout',
+    ]) {
       expect(cart).toHaveProperty(key);
     }
   });
 
   it('a line says what it costs, what is left, and what is wrong with it', () => {
-    for (const key of ['variant_id', 'qty', 'unit_price_syp', 'line_total_syp', 'available_qty', 'problem']) {
+    for (const key of [
+      'variant_id',
+      'qty',
+      'unit_price_syp',
+      'line_total_syp',
+      'available_qty',
+      'problem',
+    ]) {
       expect(line).toHaveProperty(key);
     }
     // **`problem: null` is a value, not an absence**: the client reads an

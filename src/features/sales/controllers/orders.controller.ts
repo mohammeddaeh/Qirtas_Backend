@@ -65,10 +65,7 @@ export async function getMyOrder(req: Request, res: Response): Promise<void> {
 
 export async function cancelMyOrder(req: Request, res: Response): Promise<void> {
   const { reason } = req.body as { reason?: string | null };
-  ok(
-    res,
-    await service.cancelOrder(idOf(req), { reason, customerId: requireCustomerId(req) }),
-  );
+  ok(res, await service.cancelOrder(idOf(req), { reason, customerId: requireCustomerId(req) }));
 }
 
 // ── الطابور (الموظف) ────────────────────────────────────────────────────────

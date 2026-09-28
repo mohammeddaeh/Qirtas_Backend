@@ -4,6 +4,7 @@ import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
 import type { RequestActorContext } from '../../../core/http/require-actor.js';
 import { resolvePricesAt } from '../../../core/pricing/price-port.js';
 import { issueStock } from '../../../core/stock/stock-port.js';
+import { serviceLineHandler, type ServiceKind } from '../../../core/till/service-line-port.js';
 import { SALES_AUDIT, saleTarget } from '../audit-actions.js';
 import * as repo from '../repositories/sales.repository.js';
 import { closePaidOrder, reopenVoidedOrder } from './orders.service.js';
@@ -36,8 +37,11 @@ const POS_PRICES = { promotions: 'apply', channel: 'pos', segment: 'retail' } as
 
 export interface WireSaleLine {
   id: number;
-  variant_id: number;
-  product_id: number;
+  /** `null` لسطر خدمة. */
+  variant_id: number | null;
+  product_id: number | null;
+  /** سطر خدمة (طلب طباعة): الكمية ثابتة، ولا بضاعة تغادر الرفّ. */
+  service: { kind: ServiceKind; ref_id: number } | null;
   name_ar: string;
   sku: string;
   unit_id: number | null;
@@ -79,6 +83,10 @@ function wireLine(row: SaleLineRow): WireSaleLine {
     id: row.id,
     variant_id: row.variant_id,
     product_id: row.product_id,
+    service:
+      row.service_kind === null || row.service_ref_id === null
+        ? null
+        : { kind: row.service_kind, ref_id: row.service_ref_id },
     name_ar: row.name_ar,
     sku: row.sku,
     unit_id: row.unit_id,
@@ -117,7 +125,10 @@ export async function getSale(id: number): Promise<WireSale> {
         }
       : computeTotals(lines.map(toRuleLine), num(sale.discount_percent));
 
-  const computed = sale.status === 'paid' ? null : computeTotals(lines.map(toRuleLine), num(sale.discount_percent));
+  const computed =
+    sale.status === 'paid'
+      ? null
+      : computeTotals(lines.map(toRuleLine), num(sale.discount_percent));
   return {
     id: sale.id,
     branch_id: sale.branch_id,
@@ -194,13 +205,14 @@ export interface WireSellableItem {
  * **والمسحة التي طابقت رمزاً تماماً تُعلَّم**: صفٌّ واحد بعلامة يُضاف مباشرةً،
  * وقائمةٌ بلا تمييز تجعل الكاشير يقرأ خمسة أسماء ليجد ما بيده.
  */
-export async function searchItems(
-  branchId: number,
-  search: string,
-): Promise<WireSellableItem[]> {
+export async function searchItems(branchId: number, search: string): Promise<WireSellableItem[]> {
   const rows = await repo.searchSellableItems(search.trim(), branchId, 25);
   if (rows.length === 0) return [];
-  const prices = await resolvePricesAt(branchId, rows.map((r) => r.variant_id), POS_PRICES);
+  const prices = await resolvePricesAt(
+    branchId,
+    rows.map((r) => r.variant_id),
+    POS_PRICES,
+  );
   return rows.map((row) => {
     const price = prices.get(row.variant_id);
     const priced = price?.status === 'priced' ? price : null;
@@ -304,10 +316,87 @@ export async function addLine(
   return getSale(saleId);
 }
 
+/**
+ * يضيف **خدمة** للسلّة — طلب طباعة بالرقم الذي يقرؤه الزبون (قرار 2026-09-28:
+ * الدفع سطرٌ بفاتورة الصندوق). **المبلغ من الموديول المالك** لا من الجهاز،
+ * والإضافة تُبلغه بنفس المعاملة فيوقف مهلته: الزبون واقفٌ عند الصندوق، وكنسٌ
+ * يُسقط طلبه الآن يجعل الكاشير يقبض ثمن طلبٍ منتهٍ.
+ */
+export async function addService(
+  saleId: number,
+  input: { kind: ServiceKind; reference: string },
+): Promise<WireSale> {
+  const sale = await requireOpen(saleId);
+  const handler = serviceLineHandler(input.kind);
+  const quote = await handler.resolve({
+    reference: input.reference,
+    branchId: sale.branch_id,
+    saleId,
+  });
+  if (
+    quote.customerId !== null &&
+    sale.customer_id !== null &&
+    sale.customer_id !== quote.customerId
+  ) {
+    // فاتورةٌ باسم زبونٍ تسدّد خدمةَ زبونٍ آخر: الآجل والرصيد يُقيَّدان على الخطأ.
+    throw new BusinessError(
+      409,
+      'This service belongs to another customer',
+      'sale_service_other_customer',
+    );
+  }
+  const existing = await repo.findServiceLine(saleId, input.kind, quote.refId);
+  if (existing) return getSale(saleId);
+
+  await db.transaction(async (tx) => {
+    await repo.insertLine(
+      {
+        sale_id: saleId,
+        variant_id: null,
+        product_id: null,
+        service_kind: input.kind,
+        service_ref_id: quote.refId,
+        name_ar: quote.nameAr,
+        sku: quote.sku.slice(0, 40),
+        unit_id: null,
+        unit_factor: '1',
+        qty: '1',
+        unit_price_syp: String(quote.amountSyp),
+        promotion_discount_syp: '0',
+        promotion_names: null,
+        tax_percent: String(quote.taxPercent),
+      },
+      tx,
+    );
+    if (sale.customer_id === null && quote.customerId !== null) {
+      await repo.updateSale(tx, saleId, { customer_id: quote.customerId });
+    }
+    await handler.attach(tx, quote.refId, saleId);
+  });
+  return getSale(saleId);
+}
+
+/** يُبلغ الموديول المالك أن خدمته غادرت السلّة — **بنفس معاملة الحذف**. */
+async function detachServices(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  saleId: number,
+  lines: SaleLineRow[],
+): Promise<void> {
+  for (const line of lines) {
+    if (line.service_kind === null || line.service_ref_id === null) continue;
+    await serviceLineHandler(line.service_kind).detach(tx, line.service_ref_id, saleId);
+  }
+}
+
 export async function setLineQty(saleId: number, lineId: number, qty: number): Promise<WireSale> {
   await requireOpen(saleId);
   const line = await repo.findLineById(saleId, lineId);
   if (!line) throw new NotFoundError('Line not found');
+  if (line.service_kind !== null && qty > 0) {
+    // «٣ × طلب الطباعة» يقبض ثلاثة أضعاف سعرٍ سُعِّر مرة. الحذف وحده مسموح.
+    throw new BusinessError(409, 'A service line has a fixed quantity', 'sale_service_qty_fixed');
+  }
+  if (line.service_kind !== null) return removeLine(saleId, lineId);
   // كميةٌ صفر **تحذف السطر**: سطرٌ بصفر يُطبع بالإيصال ويُربك من يعدّ الأكياس.
   if (qty <= 0) await repo.deleteLine(saleId, lineId);
   else await repo.updateLine(db, lineId, { qty: String(qty) });
@@ -316,7 +405,12 @@ export async function setLineQty(saleId: number, lineId: number, qty: number): P
 
 export async function removeLine(saleId: number, lineId: number): Promise<WireSale> {
   await requireOpen(saleId);
-  await repo.deleteLine(saleId, lineId);
+  const line = await repo.findLineById(saleId, lineId);
+  if (!line) return getSale(saleId);
+  await db.transaction(async (tx) => {
+    await repo.deleteLine(saleId, lineId, tx);
+    await detachServices(tx, saleId, [line]);
+  });
   return getSale(saleId);
 }
 
@@ -331,13 +425,21 @@ export async function voidSale(actor: RequestActorContext, saleId: number): Prom
   const sale = await requireOpen(saleId);
   await db.transaction(async (tx) => {
     await repo.updateSale(tx, saleId, { status: 'void', voided_at: new Date() });
+    // والخدمات تعود لانتظارها بمهلة جديدة، كطلب الاستلام تماماً.
+    await detachServices(tx, saleId, await repo.findLines(saleId, tx));
     // سلّةُ استلامٍ أُلغيت: الطلب يعود لانتظاره بمهلة جديدة. وتركُه مربوطاً
     // بفاتورة ملغاة يُجمّد بضاعته بلا مهلة تُسقطها أبداً.
     await reopenVoidedOrder(tx, saleId);
   });
-  await recordAudit(actor, SALES_AUDIT.void, saleTarget.one(saleId), { status: sale.status }, {
-    status: 'void',
-  });
+  await recordAudit(
+    actor,
+    SALES_AUDIT.void,
+    saleTarget.one(saleId),
+    { status: sale.status },
+    {
+      status: 'void',
+    },
+  );
   return getSale(saleId);
 }
 
@@ -376,7 +478,11 @@ export async function setDiscount(
   const sale = await requireOpen(saleId);
   const reason = input.reason.trim();
   if (input.percent > 0 && reason.length === 0) {
-    throw new BusinessError(422, 'A manual discount needs a reason', 'sale_discount_reason_required');
+    throw new BusinessError(
+      422,
+      'A manual discount needs a reason',
+      'sale_discount_reason_required',
+    );
   }
 
   const check = await checkDiscount(actor.userId, input.percent);
@@ -487,9 +593,14 @@ export async function paySale(
       });
     }
     if (onAccount > creditAvailable(balance - spent, limit) + 1e-9) {
-      throw new BusinessError(422, 'Above this customer credit limit', 'sale_credit_limit_exceeded', {
-        available_syp: roundSyp(creditAvailable(balance - spent, limit)),
-      });
+      throw new BusinessError(
+        422,
+        'Above this customer credit limit',
+        'sale_credit_limit_exceeded',
+        {
+          available_syp: roundSyp(creditAvailable(balance - spent, limit)),
+        },
+      );
     }
   }
 
@@ -537,7 +648,8 @@ export async function paySale(
         sale_id: saleId,
         method: p.method,
         amount_syp: String(roundSyp(p.amountSyp)),
-        tendered_syp: p.tenderedSyp === null || p.tenderedSyp === undefined ? null : String(p.tenderedSyp),
+        tendered_syp:
+          p.tenderedSyp === null || p.tenderedSyp === undefined ? null : String(p.tenderedSyp),
       })),
     );
 
@@ -571,10 +683,12 @@ export async function paySale(
     await issueStock({
       exec: tx,
       branchId: preview.branch_id,
-      lines: lines.map((line) => ({
-        variantId: line.variant_id,
-        qtyBase: num(line.qty) * num(line.unit_factor),
-      })),
+      // سطر الخدمة لا يُخرج بضاعة: الورق والحبر وصفة استهلاك (9-هـ) لا سطرٌ هنا.
+      lines: lines.flatMap((line) =>
+        line.variant_id === null
+          ? []
+          : [{ variantId: line.variant_id, qtyBase: num(line.qty) * num(line.unit_factor) }],
+      ),
       docType: 'sale',
       docId: saleId,
       userId: actor.userId,
@@ -584,6 +698,19 @@ export async function paySale(
     // يُحرَّر هنا تماماً حيث يُخصم `on_hand`، وإلا خُصمت البضاعة مرتين —
     // مرة من الرفّ ومرة من المتاح — فيكفّ الصنف عن الظهور للبيع وهو موجود.
     await closePaidOrder(tx, saleId);
+
+    // **والخدمة تُسدَّد بنفس المعاملة**: فاتورةٌ مدفوعة وطلب طباعةٍ ما زال «غير
+    // مدفوع» يعني درجاً وطابوراً يختلفان بلا أي فشل. وإن رفض الموديول (الطلب
+    // أُلغي منذ أُضيف) تُرفض الفاتورة كلها — لا مال لخدمةٍ لن تُقدَّم.
+    for (const line of lines) {
+      if (line.service_kind === null || line.service_ref_id === null) continue;
+      await serviceLineHandler(line.service_kind).settle(
+        tx,
+        line.service_ref_id,
+        saleId,
+        actor.userId,
+      );
+    }
 
     return number;
   });

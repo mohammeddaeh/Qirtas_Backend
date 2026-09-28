@@ -47,8 +47,17 @@ export interface WireReturnable {
   lines: WireReturnableLine[];
 }
 
+/**
+ * **الخدمات لا تُرجَع من هنا**: المرتجع يُعيد بضاعةً للرفّ ويَرُدّ ثمنها، وطلب
+ * طباعةٍ مطبوع لا يعود لرفّ. ردُّ ثمن خدمة قرارٌ آخر (لم يُبنَ بعد).
+ */
+const goodsOnly = <T extends { variant_id: number | null }>(
+  lines: T[],
+): (T & { variant_id: number })[] =>
+  lines.filter((l): l is T & { variant_id: number } => l.variant_id !== null);
+
 async function soldLinesOf(saleId: number): Promise<SoldLine[]> {
-  const lines = await repo.findLines(saleId);
+  const lines = goodsOnly(await repo.findLines(saleId));
   const returned = await returnsRepo.findReturnedQty(lines.map((l) => l.id));
   return lines.map((line) => ({
     saleLineId: line.id,
@@ -216,7 +225,7 @@ export async function createReturn(
   const created = await db.transaction(async (tx) => {
     // الأسطر مقفلة: بين حساب السقف وكتابة المرتجع لا يُرجع جهازٌ آخر القطعة نفسها.
     await returnsRepo.lockSaleLines(tx, input.sale_id);
-    const lines = await repo.findLines(input.sale_id, tx);
+    const lines = goodsOnly(await repo.findLines(input.sale_id, tx));
     const returned = await returnsRepo.findReturnedQty(
       lines.map((l) => l.id),
       tx,
@@ -244,18 +253,18 @@ export async function createReturn(
         case 'line_not_in_sale':
           throw new BusinessError(422, 'That line is not on this sale', 'return_line_not_in_sale');
         case 'qty_not_positive':
-          throw new BusinessError(422, 'A returned quantity must be above zero', 'return_qty_invalid');
+          throw new BusinessError(
+            422,
+            'A returned quantity must be above zero',
+            'return_qty_invalid',
+          );
         case 'nothing_to_return':
           throw new BusinessError(422, 'A return needs at least one line', 'return_empty');
       }
     }
 
     const sequence = await returnsRepo.nextReturnSequence(tx, input.branch_id, year);
-    const number = formatReturnNumber(
-      branchPrefix(branch.name, input.branch_id),
-      year,
-      sequence,
-    );
+    const number = formatReturnNumber(branchPrefix(branch.name, input.branch_id), year, sequence);
     const nameById = new Map(lines.map((l) => [l.id, { name: l.name_ar, sku: l.sku }]));
 
     const row = await returnsRepo.insertReturn(tx, {
