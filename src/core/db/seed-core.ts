@@ -436,6 +436,14 @@ const PERMISSIONS: SeedPermission[] = [
     is_sensitive: false,
     display: { ar: 'توليد الباركود وطباعة الملصقات', en: 'Generate Barcodes & Print Labels' },
   },
+  {
+    // شكل ما يُطبع باسم المحل على كل فاتورة وملصق — قرار إدارة لا فرع.
+    // القراءة لا تحتاجه: من يبيع أو يطبع ملصقاً يقرأ القالب بمفتاحه هو.
+    key: 'documents.templates',
+    module: 'documents',
+    is_sensitive: false,
+    display: { ar: 'تصميم الفواتير والملصقات', en: 'Design Receipts & Labels' },
+  },
 ];
 
 /**
@@ -468,6 +476,7 @@ const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
   customers: { ar: 'العملاء', en: 'Customers' },
   catalog: { ar: 'الكتالوج', en: 'Catalog' },
   pricing: { ar: 'التسعير', en: 'Pricing' },
+  documents: { ar: 'الفواتير والملصقات', en: 'Receipts & Labels' },
   promotions: { ar: 'العروض', en: 'Promotions' },
   sales: { ar: 'المبيعات ونقطة البيع', en: 'Sales & Till' },
   barcodes: { ar: 'الباركود', en: 'Barcodes' },

@@ -2,7 +2,12 @@ import type { Request, Response } from 'express';
 import { paginated, toPaginationParams } from '../../../core/pagination/pagination.js';
 import { buildActorContext, requireActorId } from '../../../core/http/require-actor.js';
 import { created, noContentOk, ok } from '../../../core/http/response.js';
-import type { PreviewBody, PromotionBody, PromotionsQuery } from '../dtos/promotions.dto.js';
+import type {
+  PreviewBody,
+  PromotionBody,
+  PromotionBulkBody,
+  PromotionsQuery,
+} from '../dtos/promotions.dto.js';
 import * as service from '../services/promotions.service.js';
 
 const actorOf = (req: Request) => buildActorContext(req, requireActorId(req));
@@ -46,6 +51,10 @@ export async function setArchived(req: Request, res: Response): Promise<void> {
 export async function remove(req: Request, res: Response): Promise<void> {
   await service.removePromotion(actorOf(req), (req.params as unknown as { id: number }).id);
   noContentOk(res);
+}
+
+export async function bulk(req: Request, res: Response): Promise<void> {
+  ok(res, await service.bulkPromotions(actorOf(req), req.body as PromotionBulkBody, req.lang));
 }
 
 export async function targets(req: Request, res: Response): Promise<void> {

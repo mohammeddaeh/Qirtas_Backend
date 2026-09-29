@@ -3,7 +3,11 @@ import { asyncHandler } from '../../../core/http/async-handler.js';
 import { validate } from '../../../core/validation/validate.js';
 import { requireAuth } from '../../../core/http/require-actor.js';
 import { publicRoute } from '../../../core/http/route-marker.js';
-import { requirePermission } from '../../../core/http/require-permission.js';
+import {
+  requireAnyPermission,
+  requirePermission,
+  requirePermissionWhen,
+} from '../../../core/http/require-permission.js';
 import { loginRateLimit, mfaLoginRateLimit } from '../../../core/middleware/login-rate-limit.js';
 import { passwordResetRateLimit } from '../../../core/middleware/password-reset-rate-limit.js';
 import { bootstrapRateLimit, registerRateLimit } from '../../../core/middleware/register-rate-limit.js';
@@ -24,6 +28,11 @@ import {
   createUserByAdminBodySchema,
   usersFilterQuerySchema,
   currentUserQuerySchema,
+  userBulkBodySchema,
+  USER_BULK_ARCHIVE_ACTIONS,
+  USER_BULK_REMOVAL_ACTIONS,
+  USER_BULK_STATUS_ACTIONS,
+  type UserBulkBody,
 } from '../dtos/users.dto.js';
 import * as usersController from '../controllers/users.controller.js';
 import * as overridesController from '../../../core/authz/controllers/overrides.controller.js';
@@ -99,6 +108,31 @@ usersRouter.post(
   requireAuth,
   validate(resubmitRegistrationBodySchema, 'body'),
   asyncHandler(usersController.resubmitRegistration),
+);
+
+// Multi-select on the user list. Every id runs through the same service call
+// as its single-record route (core/bulk/bulk.ts), so the guards mirror them per
+// action: suspend/disable/reactivate need users.status, removals users.delete,
+// and archive/unarchive records.archive on top. The entry guard refuses a
+// caller holding neither users key before the body is read (and classifies the
+// route for check:permissions); then the body is validated — the action decides
+// which keys apply — and each guard answers for the whole request before any
+// row is touched. Registered above the `/:id` routes.
+const bulkActionOf = (req: { body: unknown }) => (req.body as UserBulkBody).action;
+usersRouter.post(
+  '/bulk',
+  requireAnyPermission(['users.status', 'users.delete']),
+  validate(userBulkBodySchema, 'body'),
+  requirePermissionWhen('users.status', (req) =>
+    USER_BULK_STATUS_ACTIONS.includes(bulkActionOf(req)),
+  ),
+  requirePermissionWhen('users.delete', (req) =>
+    USER_BULK_REMOVAL_ACTIONS.includes(bulkActionOf(req)),
+  ),
+  requirePermissionWhen('records.archive', (req) =>
+    USER_BULK_ARCHIVE_ACTIONS.includes(bulkActionOf(req)),
+  ),
+  asyncHandler(usersController.bulkUsers),
 );
 
 /** Another person's record — same boundary as the list above. */

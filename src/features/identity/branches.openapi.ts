@@ -12,7 +12,9 @@ import {
   updateBranchBodySchema,
   branchResponseSchema,
   branchesFilterQuerySchema,
+  branchBulkBodySchema,
 } from './dtos/branches.dto.js';
+import { bulkResultResponseSchema } from '../../core/bulk/bulk.js';
 
 const tags = ['Branches'];
 const jsonBody = <T extends z.ZodTypeAny>(schema: T) => ({
@@ -134,6 +136,20 @@ registry.registerPath({
   request: { params: branchIdParamsSchema },
   responses: {
     200: { description: 'Branch restored', ...jsonBody(successEnvelope(branchResponseSchema)) },
+    ...commonErrorResponses,
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/branches/bulk',
+  tags,
+  summary: 'Apply one action to several branches',
+  description:
+    'Multi-select on the branch list. `action` is `delete` | `archive` | `unarchive` | `set_status` (the last requires `status`, the others forbid it); `ids` is 1..100 positive integers, duplicates dropped. Each id runs through the same service call as its single-record endpoint, sequentially, so rules and audit entries are identical. Partial success is a 200: `done` lists applied ids in request order, `refused` gives `{ id, message_key, message }` per refused row (unknown id → `record_not_found`). Requires `branches.manage`; archive/unarchive also require `records.archive` (403 `permission_missing` for the whole request).',
+  request: { body: jsonBody(branchBulkBodySchema) },
+  responses: {
+    200: { description: 'Per-row outcome', ...jsonBody(successEnvelope(bulkResultResponseSchema)) },
     ...commonErrorResponses,
   },
 });

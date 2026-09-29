@@ -65,6 +65,8 @@ export interface WireSale {
   customer_id: number | null;
   customer_name: string | null;
   cashier_user_id: number;
+  /** Read at request time — `null` only when the account is gone. */
+  cashier_name: string | null;
   discount_percent: number;
   discount_reason: string | null;
   discount_approved_by: number | null;
@@ -113,7 +115,11 @@ function wireLine(row: SaleLineRow): WireSaleLine {
 export async function getSale(id: number): Promise<WireSale> {
   const sale = await repo.findSaleById(id);
   if (!sale) throw new NotFoundError('Sale not found');
-  const [lines, payments] = await Promise.all([repo.findLines(id), repo.findPayments(id)]);
+  const [lines, payments, cashierName] = await Promise.all([
+    repo.findLines(id),
+    repo.findPayments(id),
+    repo.findUserName(sale.cashier_user_id),
+  ]);
 
   const totals =
     sale.status === 'paid'
@@ -137,6 +143,7 @@ export async function getSale(id: number): Promise<WireSale> {
     customer_id: sale.customer_id,
     customer_name: sale.customer_name,
     cashier_user_id: sale.cashier_user_id,
+    cashier_name: cashierName,
     discount_percent: num(sale.discount_percent),
     discount_reason: sale.discount_reason,
     discount_approved_by: sale.discount_approved_by,

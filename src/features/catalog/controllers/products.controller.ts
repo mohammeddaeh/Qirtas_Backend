@@ -8,6 +8,7 @@ import type {
   AddBarcodeBody,
   CreateProductBody,
   GenerateBarcodeBody,
+  ProductBulkBody,
   ProductsFilterQuery,
   ReplaceVariantUnitsBody,
   UpdateProductBody,
@@ -49,6 +50,10 @@ export async function archiveProduct(req: Request, res: Response): Promise<void>
 
 export async function unarchiveProduct(req: Request, res: Response): Promise<void> {
   ok(res, await productsService.unarchiveProduct(actorOf(req), idOf(req)));
+}
+
+export async function bulkProducts(req: Request, res: Response): Promise<void> {
+  ok(res, await productsService.bulkProducts(actorOf(req), req.body as ProductBulkBody, req.lang));
 }
 
 export async function addVariant(req: Request, res: Response): Promise<void> {

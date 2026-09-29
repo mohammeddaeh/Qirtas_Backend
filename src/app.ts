@@ -61,6 +61,7 @@ import {
   myPrintJobsRouter,
   printJobsQueueRouter,
 } from './features/printing/routes/print-jobs.routes.js';
+import { documentsRouter } from './features/documents/routes/documents.routes.js';
 import { installCatalogPriceResolver } from './features/catalog/services/price-provider.js';
 import { installPromotionResolver } from './features/promotions/services/promotion-provider.js';
 import { installInventoryCostResolver } from './features/inventory/services/cost-provider.js';
@@ -110,6 +111,8 @@ export const API_ROUTERS: ReadonlyArray<{ path: string; router: Router }> = [
   { path: '/api/v1/print-jobs', router: myPrintJobsRouter },
   /** Printing setup and pricing — the quote and the offer are public. */
   { path: '/api/v1/printing', router: printingRouter },
+  /** Receipt and label templates, the shop profile, and what a label prints. */
+  { path: '/api/v1/documents', router: documentsRouter },
   // حساب الزبون يعيش تحت `/customers/:id/account` — الرصيد صفةٌ للزبون،
   // والموديول الذي يملك الدفتر هو الذي يخدمه.
   { path: '/api/v1/customers', router: customerAccountsRouter },

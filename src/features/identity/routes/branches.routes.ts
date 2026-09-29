@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { asyncHandler } from '../../../core/http/async-handler.js';
 import { validate } from '../../../core/validation/validate.js';
 import { requireApprovedStaff } from '../../../core/http/require-actor.js';
-import { requirePermission } from '../../../core/http/require-permission.js';
+import { requirePermission, requirePermissionWhen } from '../../../core/http/require-permission.js';
 import { publicRoute } from '../../../core/http/route-marker.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 import {
@@ -11,6 +11,9 @@ import {
   updateBranchBodySchema,
   branchesFilterQuerySchema,
   nearestBranchBodySchema,
+  branchBulkBodySchema,
+  BRANCH_BULK_ARCHIVE_ACTIONS,
+  type BranchBulkBody,
 } from '../dtos/branches.dto.js';
 import * as branchesController from '../controllers/branches.controller.js';
 
@@ -45,6 +48,22 @@ branchesRouter.post(
   publicRoute,
   validate(nearestBranchBodySchema, 'body'),
   asyncHandler(branchesController.resolveNearestBranch),
+);
+
+// Multi-select on the branch list. Every id runs through the same service call
+// as its single-record route (core/bulk/bulk.ts), so the guards mirror them
+// too: `branches.manage` always, and `records.archive` on top for
+// archive/unarchive — checked for the whole request before any row is touched.
+// Registered above the `/:id` routes (no POST `/:id` exists today, but a
+// literal segment belongs before a param one regardless).
+branchesRouter.post(
+  '/bulk',
+  requirePermission('branches.manage'),
+  validate(branchBulkBodySchema, 'body'),
+  requirePermissionWhen('records.archive', (req) =>
+    BRANCH_BULK_ARCHIVE_ACTIONS.includes((req.body as BranchBulkBody).action),
+  ),
+  asyncHandler(branchesController.bulkBranches),
 );
 
 branchesRouter.get(

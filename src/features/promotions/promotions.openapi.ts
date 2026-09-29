@@ -5,12 +5,14 @@ import {
   paginatedSchema,
   commonErrorResponses,
 } from '../../core/openapi/registry.js';
+import { bulkResultResponseSchema } from '../../core/bulk/bulk.js';
 import { idParamsSchema } from '../catalog/dtos/common.dto.js';
 import {
   archiveBodySchema,
   capBodySchema,
   previewBodySchema,
   promotionBodySchema,
+  promotionBulkBodySchema,
   promotionsQuerySchema,
   targetsQuerySchema,
 } from './dtos/promotions.dto.js';
@@ -141,4 +143,18 @@ registry.registerPath({
   description: 'Requires `promotions.edit`.',
   request: { params: idParamsSchema },
   responses: { 200: ok('Deleted', z.null()), ...commonErrorResponses },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/promotions/bulk',
+  tags,
+  summary: 'Apply one action to several promotions',
+  description:
+    'Multi-select on the promotions list. `action` is `archive` | `unarchive` | `delete`; `ids` is 1..100 positive integers, duplicates dropped. Each id runs through the same service call as `POST /:id/archive` / `DELETE /:id`, sequentially, so rules and audit entries are identical. Partial success is a 200: `done` lists applied ids in request order, `refused` gives `{ id, message_key, message }` per refused row (unknown id → `record_not_found`). Requires `promotions.edit`, like the single routes.',
+  request: { body: { content: { 'application/json': { schema: promotionBulkBodySchema } } } },
+  responses: {
+    200: ok('Per-row outcome', bulkResultResponseSchema),
+    ...commonErrorResponses,
+  },
 });

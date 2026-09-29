@@ -20,7 +20,9 @@ import {
   loginResponseSchema,
   currentUserResponseSchema,
   usersFilterQuerySchema,
+  userBulkBodySchema,
 } from './dtos/users.dto.js';
+import { bulkResultResponseSchema } from '../../core/bulk/bulk.js';
 
 const tags = ['Users & Authentication'];
 const jsonBody = <T extends z.ZodTypeAny>(schema: T) => ({
@@ -324,7 +326,7 @@ registry.registerPath({
   tags,
   summary: 'Delete an account with no recorded history',
   description:
-    'Hard delete, permitted only when the account has no assignment, no ownership and no audit entry to its name, is not root-protected, and is not the caller. Refuses 409 `user_has_audit_history` / `user_has_history` otherwise — archive it instead. Requires `users.manage`.',
+    'Hard delete, permitted only when the account has no assignment, no ownership and no audit entry to its name, is not root-protected, and is not the caller. Refuses 409 `user_has_audit_history` / `user_has_history` otherwise — archive it instead. Requires `users.delete`.',
   request: { params: userIdParamsSchema },
   responses: {
     200: { description: 'User deleted', ...jsonBody(successEnvelope(z.null())) },
@@ -338,7 +340,7 @@ registry.registerPath({
   tags,
   summary: 'Archive an account (hide it and lock it, keeping its history)',
   description:
-    'Requires `users.manage` AND `records.archive`. Permitted when the person holds no open assignment and no open ownership, is not root-protected, and is not the caller. Writes `status: disabled` in the same statement, so sign-in keeps exactly one gate. Refuses 409 `user_has_active_assignments` / `user_has_active_ownerships`. Idempotent.',
+    'Requires `users.delete` AND `records.archive`. Permitted when the person holds no open assignment and no open ownership, is not root-protected, and is not the caller. Writes `status: disabled` in the same statement, so sign-in keeps exactly one gate. Refuses 409 `user_has_active_assignments` / `user_has_active_ownerships`. Idempotent.',
   request: { params: userIdParamsSchema },
   responses: {
     200: { description: 'User archived', ...jsonBody(successEnvelope(userResponseSchema)) },
@@ -352,10 +354,24 @@ registry.registerPath({
   tags,
   summary: 'Restore an archived account (still disabled)',
   description:
-    'Requires `users.manage` AND `records.archive`. Clears `archived_at` only — the account returns `disabled`, and reinstating access stays the separate `POST /{id}/reactivate` decision. Idempotent.',
+    'Requires `users.delete` AND `records.archive`. Clears `archived_at` only — the account returns `disabled`, and reinstating access stays the separate `POST /{id}/reactivate` decision. Idempotent.',
   request: { params: userIdParamsSchema },
   responses: {
     200: { description: 'User restored', ...jsonBody(successEnvelope(userResponseSchema)) },
+    ...commonErrorResponses,
+  },
+});
+
+registry.registerPath({
+  method: 'post',
+  path: '/api/v1/users/bulk',
+  tags,
+  summary: 'Apply one action to several users',
+  description:
+    'Multi-select on the user list. `action` is `suspend` | `disable` | `reactivate` | `delete` | `archive` | `unarchive` (no other field); `ids` is 1..100 positive integers, duplicates dropped. Each id runs through the same service call as its single-record endpoint, sequentially, so rules (root account, own account, last qualified holder, archived account, history) and audit entries are identical. Partial success is a 200: `done` lists applied ids in request order, `refused` gives `{ id, message_key, message }` per refused row (unknown id → `record_not_found`). Status actions require `users.status`; removals require `users.delete`, and archive/unarchive also `records.archive` (403 `permission_missing` for the whole request).',
+  request: { body: jsonBody(userBulkBodySchema) },
+  responses: {
+    200: { description: 'Per-row outcome', ...jsonBody(successEnvelope(bulkResultResponseSchema)) },
     ...commonErrorResponses,
   },
 });

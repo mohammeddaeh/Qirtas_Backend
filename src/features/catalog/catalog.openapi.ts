@@ -7,6 +7,7 @@ import {
 } from '../../core/openapi/registry.js';
 import { imageResponseSchema } from '../../core/media/dtos/files.dto.js';
 import { idParamsSchema } from './dtos/common.dto.js';
+import { bulkResultResponseSchema } from '../../core/bulk/bulk.js';
 import {
   branchPriceBodySchema,
   branchVariantParamsSchema,
@@ -41,6 +42,7 @@ import {
   updateCategoryBodySchema,
 } from './dtos/categories.dto.js';
 import {
+  brandBulkBodySchema,
   brandResponseSchema,
   brandsFilterQuerySchema,
   createBrandBodySchema,
@@ -52,6 +54,7 @@ import {
   barcodeLookupResponseSchema,
   createProductBodySchema,
   generateBarcodeBodySchema,
+  productBulkBodySchema,
   productDetailSchema,
   productListItemSchema,
   productsFilterQuerySchema,
@@ -334,6 +337,16 @@ route(
     ...body(updateBrandBodySchema),
   },
 );
+route(
+  'post',
+  '/brands/bulk',
+  'Apply one action to several brands',
+  'catalog.delete · + records.archive for archive/unarchive',
+  ok('Per-row outcome', bulkResultResponseSchema),
+  body(brandBulkBodySchema),
+  'Multi-select on the brand list (docs/rest_api.md §33). `action` is `delete` | `archive` | `unarchive`; `ids` is 1..100, duplicates dropped. Each id runs through the single-record service call (DELETE /brands/{id} · archive · unarchive), sequentially — refusals carry that endpoint’s own `message_key` (`brand_in_use`; unknown id → `record_not_found`). Partial success is a 200.',
+  200,
+);
 route('delete', '/brands/{id}', 'Delete a brand', 'catalog.delete', deleted, params);
 route(
   'post',
@@ -389,6 +402,16 @@ route(
   ok('Updated', productDetailSchema),
   { ...params, ...body(updateProductBodySchema) },
   '409 `product_archived` · 409 `product_attributes_not_allowed_in_category` on a category change · 422 `product_needs_active_variant`.',
+);
+route(
+  'post',
+  '/products/bulk',
+  'Apply one action to several products',
+  'catalog.edit for set_* · catalog.delete for delete · catalog.delete + records.archive for archive/unarchive',
+  ok('Per-row outcome', bulkResultResponseSchema),
+  body(productBulkBodySchema),
+  'Multi-select on the product list (docs/rest_api.md §33). `action` is `delete` | `archive` | `unarchive` | `set_status` (`status`: active | discontinued) | `set_sellable` (`is_sellable`) | `set_category` (`category_id`) | `set_brand` (`brand_id`, null removes it); the action’s own field is required and every other one is 422. `ids` is 1..100, duplicates dropped. Each id runs through the single-record service call (PATCH /products/{id} with that one field · DELETE · archive · unarchive), sequentially — refusals carry that endpoint’s own `message_key` (unknown id → `record_not_found`). Partial success is a 200.',
+  200,
 );
 route('delete', '/products/{id}', 'Delete a product', 'catalog.delete', deleted, params);
 route(

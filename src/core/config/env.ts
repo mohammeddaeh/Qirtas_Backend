@@ -258,6 +258,14 @@ const parsed = envSchema
       'STORAGE_DRIVER=local is not allowed when NODE_ENV=production — the server runs on more than one machine; use s3',
     path: ['STORAGE_DRIVER'],
   })
+  // Same reason as STORAGE_DRIVER: with more than one machine, memory counters
+  // give each one its own budget (three servers = fifteen login tries, not
+  // five) and a restart wipes them. Nothing fails — the brake just loosens.
+  .refine((e) => !(e.NODE_ENV === 'production' && e.RATE_LIMIT_STORE === 'memory'), {
+    message:
+      'RATE_LIMIT_STORE=memory is not allowed when NODE_ENV=production — the server runs on more than one machine; use postgres',
+    path: ['RATE_LIMIT_STORE'],
+  })
   .refine(
     (e) =>
       e.STORAGE_DRIVER !== 's3' ||

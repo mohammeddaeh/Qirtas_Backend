@@ -842,6 +842,11 @@ export const MESSAGES = {
     en: 'This promotion is archived — restore it before editing',
     ar: 'هذا العرض مؤرشف — أعِده قبل تعديله',
   },
+  /** حكم `is_deletable` نفسه (`removalVerdictOf`) — والنصّ يتبعه إن اتّسع. */
+  promotion_not_deletable: {
+    en: 'This promotion cannot be deleted — an archived promotion stays in the archive',
+    ar: 'لا يُحذف هذا العرض — العرض المؤرشف يبقى في الأرشيف',
+  },
   // ── نقطة البيع (orders_delivery.md §الفوترة · store_system.md §٦) ──
   /** الفاتورة المسدَّدة لا تُعدَّل ولا تُحذف: الإلغاء بمستندٍ معاكس. */
   sale_already_paid: {
@@ -1220,6 +1225,31 @@ export const MESSAGES = {
   print_scope_denied: {
     en: 'You cannot change printing settings at this branch',
     ar: 'لا تملك تعديل إعداد الطباعة بهذا الفرع',
+  },
+  // ── الفواتير والملصقات ──
+  /** الجاهز يُنسخ ثم تُعدَّل النسخة — الأصل هو طريق العودة. */
+  document_template_is_system: {
+    en: 'Ready-made templates are copied, not changed — make a copy to edit it',
+    ar: 'القوالب الجاهزة لا تُعدَّل — انسخ القالب ثم عدّل النسخة',
+  },
+  document_template_is_default: {
+    en: 'Choose another default before deleting this template',
+    ar: 'اختر قالباً افتراضياً آخر قبل حذف هذا القالب',
+  },
+  // ── الإجراءات الجماعية (core/bulk) — رفضٌ لكل سطر لا للطلب ──
+  /** NotFoundError لا يحمل مفتاحاً (الشاشة تعرض 404 بنصّها)، والسطر بالإجراء الجماعي لا شاشة له. */
+  record_not_found: {
+    en: 'This record no longer exists',
+    ar: 'هذا السجل لم يعد موجوداً',
+  },
+  record_action_refused: {
+    en: 'This action cannot be applied to this record',
+    ar: 'لا يمكن تطبيق هذا الإجراء على هذا السجل',
+  },
+  /** خطأ غير متوقَّع بسطر واحد — يُسجَّل باللوغ، والسطور الأخرى تمضي. */
+  record_action_failed: {
+    en: 'Could not apply the action to this record',
+    ar: 'تعذّر تطبيق الإجراء على هذا السجل',
   },
 } as const satisfies Record<string, Record<Lang, string>>;
 

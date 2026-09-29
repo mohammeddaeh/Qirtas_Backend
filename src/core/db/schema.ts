@@ -88,3 +88,6 @@ export * from '../../features/sales/schemas/orders.schema.js';
 export * from '../../features/printing/schemas/printing.schema.js';
 export * from '../../features/printing/schemas/print-jobs.schema.js';
 export * from '../../features/printing/schemas/print-consumption.schema.js';
+
+// الفواتير والملصقات — القوالب وملف المحل (features/documents/) — docs/reference/receipts_labels.md.
+export * from '../../features/documents/schemas/documents.schema.js';

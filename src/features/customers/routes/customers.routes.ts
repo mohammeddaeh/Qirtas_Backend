@@ -1,13 +1,21 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../../core/http/async-handler.js';
 import { validate } from '../../../core/validation/validate.js';
-import { requirePermission } from '../../../core/http/require-permission.js';
+import {
+  requireAnyPermission,
+  requirePermission,
+  requirePermissionWhen,
+} from '../../../core/http/require-permission.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 import { requireCustomer, requireVerifiedCustomer } from '../../../core/http/require-customer.js';
 import { publicRoute } from '../../../core/http/route-marker.js';
 import { customerRegisterRateLimit } from '../../../core/middleware/register-rate-limit.js';
 import {
   changeEmailBodySchema,
+  customerBulkBodySchema,
+  CUSTOMER_BULK_ARCHIVE_ACTIONS,
+  CUSTOMER_BULK_MANAGE_ACTIONS,
+  type CustomerBulkBody,
   customerIdParamsSchema,
   revokeWholesaleBodySchema,
   customersFilterQuerySchema,
@@ -130,6 +138,27 @@ customersRouter.get(
   requirePermission('customers.view'),
   validate(listCustomersQuerySchema, 'query'),
   asyncHandler(customersController.listCustomers),
+);
+
+// Multi-select on the admin list. Each action runs the same service function
+// as its single-record route (core/bulk/bulk.ts), so the guards mirror them
+// too: `customers.manage` for the status changes and delete, `records.archive`
+// ALONE for archive/unarchive (the single archive route does not ask for
+// `customers.manage` either). The entry guard admits a holder of either key;
+// the per-action guard then refuses the whole request before any row is
+// touched. Above `/:id` — a literal segment belongs before a param one.
+const customerBulkActionOf = (req: { body: unknown }) => (req.body as CustomerBulkBody).action;
+customersRouter.post(
+  '/bulk',
+  requireAnyPermission(['customers.manage', 'records.archive']),
+  validate(customerBulkBodySchema, 'body'),
+  requirePermissionWhen('customers.manage', (req) =>
+    CUSTOMER_BULK_MANAGE_ACTIONS.includes(customerBulkActionOf(req)),
+  ),
+  requirePermissionWhen('records.archive', (req) =>
+    CUSTOMER_BULK_ARCHIVE_ACTIONS.includes(customerBulkActionOf(req)),
+  ),
+  asyncHandler(customersController.bulkCustomers),
 );
 
 customersRouter.get(

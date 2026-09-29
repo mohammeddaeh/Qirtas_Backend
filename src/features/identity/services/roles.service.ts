@@ -11,6 +11,8 @@ import * as auditService from './audit.service.js';
 import type { RequestActorContext } from './audit.service.js';
 import { canGrantRoleLevel } from '../authority-level.js';
 import { AUDIT, target } from './audit-actions.js';
+import { runBulk, type BulkResult } from '../../../core/bulk/bulk.js';
+import type { Lang } from '../../../core/i18n/messages.js';
 import {
   toWireRole,
   type WireRole,
@@ -18,6 +20,7 @@ import {
   type UpdateRoleBody,
   type UpdateRolePermissionsBody,
   type RolesFilterQuery,
+  type RoleBulkBody,
   type WireRoleHolder,
   toWireRoleHolder,
 } from '../dtos/roles.dto.js';
@@ -658,4 +661,34 @@ export async function reactivateRole(
     { is_active: row.is_active },
   );
   return toWireRole(row);
+}
+
+/**
+ * `POST /roles/bulk` — each id through the very function its single-record
+ * endpoint calls, one at a time (see `core/bulk/bulk.ts` for why that is the
+ * whole design). So the Super Admin role is still refused
+ * `super_admin_role_undeactivatable`, a seeded default still
+ * `role_system_default_undeletable`/`…_unarchivable`, a held role still
+ * `role_has_active_assignments`/`role_has_active_holders`, an archived one
+ * still `role_archived` — nothing here re-decides any of them.
+ */
+export function bulkRoles(
+  actor: RequestActorContext,
+  body: RoleBulkBody,
+  lang: Lang,
+): Promise<BulkResult> {
+  return runBulk(body.ids, lang, (id) => {
+    switch (body.action) {
+      case 'delete':
+        return deleteRole(actor, id);
+      case 'archive':
+        return archiveRole(actor, id);
+      case 'unarchive':
+        return unarchiveRole(actor, id);
+      case 'deactivate':
+        return deactivateRole(actor, id);
+      case 'reactivate':
+        return reactivateRole(actor, id);
+    }
+  });
 }

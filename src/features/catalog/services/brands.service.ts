@@ -1,6 +1,8 @@
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
 import type { RequestActorContext } from '../../../core/http/require-actor.js';
 import { recordAudit } from '../../../core/audit/audit-recorder.js';
+import { runBulk, type BulkResult } from '../../../core/bulk/bulk.js';
+import type { Lang } from '../../../core/i18n/messages.js';
 import { normalizeArabic } from '../../../core/i18n/arabic-normalize.js';
 import * as mediaService from '../../../core/media/media.service.js';
 import {
@@ -14,6 +16,7 @@ import { CATALOG_AUDIT, catalogTarget } from '../audit-actions.js';
 import type { CatalogBrandRow } from '../schemas/brands.schema.js';
 import {
   toWireBrand,
+  type BrandBulkBody,
   type BrandsFilterQuery,
   type CreateBrandBody,
   type UpdateBrandBody,
@@ -142,6 +145,29 @@ export async function archiveBrand(actor: RequestActorContext, id: number): Prom
     },
   );
   return wireOne(row);
+}
+
+/**
+ * `POST /catalog/brands/bulk` — each id through the very function its
+ * single-record endpoint calls, one at a time (see `core/bulk/bulk.ts`), so a
+ * brand some product carries is still refused `brand_in_use` and every row
+ * gets the same audit entry as one-by-one.
+ */
+export function bulkBrands(
+  actor: RequestActorContext,
+  body: BrandBulkBody,
+  lang: Lang,
+): Promise<BulkResult> {
+  return runBulk(body.ids, lang, (id) => {
+    switch (body.action) {
+      case 'delete':
+        return deleteBrand(actor, id);
+      case 'archive':
+        return archiveBrand(actor, id);
+      case 'unarchive':
+        return unarchiveBrand(actor, id);
+    }
+  });
 }
 
 export async function unarchiveBrand(actor: RequestActorContext, id: number): Promise<WireBrand> {

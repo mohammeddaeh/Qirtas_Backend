@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { branchesTable } from '../../identity/schemas/branches.schema.js';
+import { usersTable } from '../../identity/schemas/users.schema.js';
 import { userRoleAssignmentsTable } from '../../identity/schemas/user-role-assignments.schema.js';
 import {
   catalogProductsTable,
@@ -28,6 +29,16 @@ export type Exec = typeof db | Tx;
 export async function insertSale(values: NewSaleRow, exec: Exec = db): Promise<SaleRow> {
   const [row] = await exec.insert(salesTable).values(values).returning();
   return row!;
+}
+
+/** «أحمد علي» — printed on the receipt; a reprint must name who sold, not who reprints. */
+export async function findUserName(userId: number): Promise<string | null> {
+  const rows = await db
+    .select({ first: usersTable.first_name, last: usersTable.last_name })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+  const row = rows[0];
+  return row ? `${row.first} ${row.last}`.trim() : null;
 }
 
 export async function findSaleById(id: number, exec: Exec = db): Promise<SaleRow | undefined> {

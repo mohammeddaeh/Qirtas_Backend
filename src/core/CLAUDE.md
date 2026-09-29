@@ -197,3 +197,10 @@ ordersRouter.post(
 - **بلا تسجيل يرمي** (`serviceLineHandler`) — خدمةٌ تُقبض ولا يسمع بها موديولها درجٌ وطابورٌ يختلفان بلا أي فشل.
 - **سطر الخدمة لا يُخرج بضاعة ولا يُرجَع** — استهلاك الورق والحبر وصفةٌ (9-هـ) لا سطرٌ بالفاتورة. نوع خدمة جديد = قيمة بـ`SERVICE_KINDS` + معالج بموديوله.
 - **واستهلاك الإنتاج منفذٌ شقيق** (`core/stock/consumption-port.ts`، 9-هـ): الطباعة تقول ما استُهلك **بإشارة المستهلك** (موجب = استُهلك، سالب = أُعيد بتسوية) والمخزون يقلبها لإشارة الدفتر هنا وحده — مستهلكٌ يعرف اصطلاح الدفتر يُخطئه مرةً فيزيد المخزون بكل طلب. حركات `production_consume` تشير لـ`print_job`، وبلا تسجيل يرمي.
+
+## §Bulk — الإجراءات الجماعية (`core/bulk/`، 2026-09-29)
+
+- `bulkBodySchema(actions)` (`{action, ids}` — ١..١٠٠، المكرَّر يُحذف) + `requireFieldForActions` لحقل إلزامي مع إجراء وممنوع مع غيره · `runBulk(ids, lang, fn)` ← `{done, refused}`.
+- **كل معرّف يمرّ بدالة الخدمة المفردة نفسها، بالتتابع** — لا استعلام جماعي ولا نسخة ثانية من أي قاعدة. `ApiError` ← رفض بمفتاحه مترجماً؛ خطأ غير متوقَّع ← `record_action_failed` + `logger.error` (السطور السابقة التزمت، و`500` كان سيخفيها).
+- الصلاحية الإضافية لإجراء بعينه: `requirePermissionWhen(key, req => …)` بـ`http/require-permission.ts` **بعد** `validate` — نفس `403 permission_missing` للطلب كله.
+- العقد: `docs/rest_api.md` §33. الموصول: الفروع · منتجات الكتالوج (مفاتيح مختلفة بالإجراء ← حارس دخول requireAnyPermission ثم requirePermissionWhen لكل مجموعة — requirePermissionWhen وحده لا يُصنِّف المسار لـcheck:permissions) · المستخدمون (نفس النمط: `users.status` · `users.delete`) · الأدوار · الزبائن (نفس النمط: `customers.manage` · `records.archive` **وحده** للأرشفة) · الماركات · العروض.

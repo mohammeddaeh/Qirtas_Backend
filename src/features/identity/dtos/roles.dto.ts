@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { bulkBodySchema } from '../../../core/bulk/bulk.js';
 import type { RoleRow } from '../schemas/roles.schema.js';
 import type { RoleHolderRow } from '../repositories/roles.repository.js';
 import { queryBooleanSchema } from '../../../core/validation/common-schemas.js';
@@ -274,3 +275,26 @@ export const rolesFilterQuerySchema = z
   })
   .strict();
 export type RolesFilterQuery = z.infer<typeof rolesFilterQuerySchema>;
+
+/**
+ * `POST /roles/bulk` — multi-select actions on the roles list.
+ *
+ * Every action is an existing single-record endpoint run per id (see
+ * `core/bulk/bulk.ts`): `deactivate`/`reactivate` are `POST /:id/deactivate`
+ * and `/:id/reactivate`, `archive`/`unarchive` their `/:id/…` twins, `delete`
+ * is `DELETE /:id`. Renaming, level and permission edits are absent on purpose
+ * — each needs its own input per role, which one tick-and-press cannot carry.
+ */
+export const ROLE_BULK_ACTIONS = [
+  'delete',
+  'archive',
+  'unarchive',
+  'deactivate',
+  'reactivate',
+] as const;
+
+/** Actions that retire or restore a record — they need `records.archive` on top of `roles.edit`, exactly like `POST /:id/archive`. */
+export const ROLE_BULK_ARCHIVE_ACTIONS: readonly string[] = ['archive', 'unarchive'];
+
+export const roleBulkBodySchema = bulkBodySchema(ROLE_BULK_ACTIONS).strict();
+export type RoleBulkBody = z.infer<typeof roleBulkBodySchema>;

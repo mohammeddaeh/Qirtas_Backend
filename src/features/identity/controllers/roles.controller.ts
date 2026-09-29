@@ -9,6 +9,7 @@ import type {
   UpdateRolePermissionsBody,
   UpdateRoleLevelBody,
   RolesFilterQuery,
+  RoleBulkBody,
 } from '../dtos/roles.dto.js';
 
 export async function listRoles(req: Request, res: Response): Promise<void> {
@@ -111,4 +112,9 @@ export async function reactivateRole(req: Request, res: Response): Promise<void>
   const { id } = req.params as unknown as { id: number };
   const role = await rolesService.reactivateRole(actor, id);
   ok(res, role);
+}
+
+export async function bulkRoles(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  ok(res, await rolesService.bulkRoles(actor, req.body as RoleBulkBody, req.lang));
 }

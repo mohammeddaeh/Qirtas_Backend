@@ -4,6 +4,7 @@ import {
   currentUserResponseSchema,
   userResponseSchema,
 } from '../dtos/users.dto.js';
+import { bulkResultResponseSchema } from '../../../core/bulk/bulk.js';
 
 /**
  * **The server half of the contract `qirtas_app` parses.**
@@ -158,5 +159,33 @@ describe('WireUser — the keys AuthUserModel reads', () => {
       userResponseSchema.safeParse({ ...wireUser, archived_at: '2026-08-10T09:00:00.000Z' })
         .success,
     ).toBe(true);
+  });
+});
+
+describe('POST /branches/bulk → data', () => {
+  // Same document as qirtas_app/test/fixtures/wire/branches_bulk.json — change
+  // both together. `.strict()` so an extra or renamed key fails here instead of
+  // reaching a client that reads the missing one as «nothing happened».
+  const payload = {
+    done: [12, 15],
+    refused: [
+      { id: 7, message_key: 'branch_has_history', message: 'لهذا الفرع سجل — أرشفه بدل حذفه.' },
+      { id: 99, message_key: 'record_not_found', message: 'السجل غير موجود.' },
+    ],
+  };
+  const strict = bulkResultResponseSchema
+    .extend({
+      refused: bulkResultResponseSchema.shape.refused.element.strict().array(),
+    })
+    .strict();
+
+  it('matches the shape BulkResult.fromJson reads', () => {
+    expect(strict.safeParse(payload).success).toBe(true);
+  });
+
+  it('a refusal without its message_key is not the contract', () => {
+    const noKey: Record<string, unknown> = { ...payload.refused[0]! };
+    delete noKey.message_key;
+    expect(strict.safeParse({ ...payload, refused: [noKey] }).success).toBe(false);
   });
 });

@@ -17,6 +17,7 @@ import type {
   CreateUserByAdminBody,
   UsersFilterQuery,
   ResubmitRegistrationBody,
+  UserBulkBody,
 } from '../dtos/users.dto.js';
 
 export async function listUsers(req: Request, res: Response): Promise<void> {
@@ -184,6 +185,11 @@ export async function unarchiveUser(req: Request, res: Response): Promise<void> 
   const actor = buildActorContext(req, requireActorId(req));
   const { id } = req.params as unknown as { id: number };
   ok(res, await usersService.unarchiveUser(actor, id));
+}
+
+export async function bulkUsers(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  ok(res, await usersService.bulkUsers(actor, req.body as UserBulkBody, req.lang));
 }
 
 // ── Password reset & change ──────────────────────────────────────────────────

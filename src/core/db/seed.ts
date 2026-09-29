@@ -33,6 +33,7 @@ import { bootstrapSuperAdminIfMissing } from './bootstrap-super-admin.js';
 import { seedDemoArabicData } from './seed-demo-arabic-data.js';
 import { seedCatalogReference } from './seed-catalog.js';
 import { seedPrintingReference } from './seed-printing.js';
+import { seedDocumentTemplates } from './seed-documents.js';
 import { seedFrenchUiTranslations } from './seed-french-ui-translations.js';
 import { seedUiTextOverridesDemo } from './seed-ui-text-overrides-demo.js';
 import { logger } from '../logger/logger.js';
@@ -175,6 +176,8 @@ async function main(): Promise<void> {
   await seedCatalogReference();
   // Print spec options (structure only — prices are never seeded).
   await seedPrintingReference();
+  // Ready-made receipt and label templates — kept current on every run.
+  await seedDocumentTemplates();
 
   if (parsed.admin) {
     await bootstrapSuperAdminIfMissing();

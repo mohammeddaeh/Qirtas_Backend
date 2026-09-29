@@ -6,6 +6,7 @@ import {
   queryBooleanSchema,
 } from '../../../core/validation/common-schemas.js';
 import { passwordSchema } from '../../../core/auth/services/password.service.js';
+import { bulkBodySchema } from '../../../core/bulk/bulk.js';
 
 /**
  * Mirrors WireUser below for OpenAPI doc generation only (zod-to-openapi
@@ -498,3 +499,33 @@ export type UsersFilterQuery = z.infer<typeof usersFilterQuerySchema>;
 export const currentUserQuerySchema = z.object({
   include_declared: queryBooleanSchema.optional(),
 });
+
+/**
+ * `POST /users/bulk` — multi-select actions on the user list.
+ *
+ * Every action is an existing single-record endpoint run per id (see
+ * `core/bulk/bulk.ts`): the three status actions are `POST /:id/{action}`, the
+ * removals `DELETE /:id` and `POST /:id/{archive,unarchive}`. No action carries
+ * a field — none of their single routes takes a body — so the schema is the
+ * shared `{ action, ids }` and nothing else.
+ */
+export const USER_BULK_ACTIONS = [
+  'suspend',
+  'disable',
+  'reactivate',
+  'delete',
+  'archive',
+  'unarchive',
+] as const;
+
+/** Status changes — `users.status`, exactly like `POST /users/:id/{suspend,disable,reactivate}`. */
+export const USER_BULK_STATUS_ACTIONS: readonly string[] = ['suspend', 'disable', 'reactivate'];
+
+/** Removals — `users.delete`, like `DELETE /users/:id` and the archive routes. */
+export const USER_BULK_REMOVAL_ACTIONS: readonly string[] = ['delete', 'archive', 'unarchive'];
+
+/** Retire/restore — `records.archive` on top of `users.delete`, like `POST /users/:id/archive`. */
+export const USER_BULK_ARCHIVE_ACTIONS: readonly string[] = ['archive', 'unarchive'];
+
+export const userBulkBodySchema = bulkBodySchema(USER_BULK_ACTIONS).strict();
+export type UserBulkBody = z.infer<typeof userBulkBodySchema>;

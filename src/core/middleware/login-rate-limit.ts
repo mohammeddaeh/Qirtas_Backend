@@ -33,13 +33,9 @@ const SWEEP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
  * - per-IP: stops one source hammering many different accounts.
  * Mount after validate(loginBodySchema) — needs req.body.email normalized.
  *
- * ⚠️ req.ip depends on Express's `trust proxy` setting (unset/false today —
- * correct for a direct-connection deployment with no reverse proxy in front,
- * see app.ts). If this backend is ever placed behind a reverse proxy/load
- * balancer, `trust proxy` MUST be configured then, or every request will
- * resolve to the proxy's own IP and the per-IP limiter will collapse into a
- * single shared bucket for all clients. The per-email limiter is unaffected
- * either way — this only weakens the secondary layer, not the primary one.
+ * Counters live in `RATE_LIMIT_STORE` (memory in development, postgres —
+ * shared by every server — required in production), and `req.ip` is only the
+ * client behind a proxy when `TRUST_PROXY_HOPS` says how many proxies there are.
  */
 const LOGIN_MESSAGE = 'Too many login attempts — please try again later';
 const emailLimiter = new RateLimiter(

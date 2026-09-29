@@ -413,6 +413,7 @@ Accept-language: ar | en
 | DELETE | `/:id`                     | 🔑 `users.delete` | **حذف صلب (2026-08-13)** — لحساب لم يُسجَّل عليه شيء **قط**: صفر تعيين، صفر ملكية، **وصفر سطر Audit نفّذه بنفسه**. الأخير هو الشرط الحاكم عملياً: `audit_log_entries.user_id` بـ`RESTRICT`، فمن سجّل دخوله مرة واحدة صار غير قابل للحذف أبداً — والباقي فعلياً هو الحساب المكرَّر/المكتوب بخطأ. `409 user_has_audit_history` · `409 user_has_history` · `403 user_root_protected` · `403 user_cannot_remove_self` |
 | POST   | `/:id/archive`             | 🔑 `users.delete` **+** `records.archive` | **أرشفة (2026-08-13)** — مخرج كل من لا ينطبق عليه الحذف، أي الجميع تقريباً: يختفي من القوائم ويُقفل، وكل ما فعله يبقى منسوباً لشخص حقيقي. الشرط: صفر تعيين مفتوح وصفر ملكية مفتوحة. **يكتب `status: "disabled"` بنفس العبارة** فتبقى بوابة الدخول واحدة. `409 user_has_active_assignments` · `409 user_has_active_ownerships` · `403 user_root_protected` · `403 user_cannot_remove_self`. متكرِّرة بلا أثر |
 | POST   | `/:id/unarchive`           | 🔑 `users.delete` **+** `records.archive` | استرجاع — يمسح `archived_at` **وحده**، فيعود الحساب `disabled`. إعادة منح الوصول تبقى قراراً منفصلاً بمساره المسجَّل (`/:id/reactivate`) |
+| POST   | `/bulk`                    | 🔑 `users.status` لـ`suspend`/`disable`/`reactivate` · `users.delete` لـ`delete`/`archive`/`unarchive` (**+** `records.archive` للأخيرين) | **إجراء جماعي (2026-09-29)** — `action`: `suspend` · `disable` · `reactivate` · `delete` · `archive` · `unarchive`، **بلا أي حقل آخر** (`422`). حارس دخول `requireAnyPermission([users.status, users.delete])` ← `403` قبل قراءة الجسم، ثم مفتاح كل مجموعة إجراءات للطلب كله. كل معرّف يمرّ بدالة المسار المفرد نفسها (`/:id/suspend` · `/:id/disable` · `/:id/reactivate` · `DELETE /:id` · `/:id/archive` · `/:id/unarchive`) فالرفض بمفاتيحها هي: `user_root_protected` · `user_cannot_remove_self` · `user_archived` · `user_status_not_reactivatable` · `user_has_audit_history` · `user_has_history` · `user_has_active_assignments` · `user_has_active_ownerships` · مفاتيح «آخر حامل» · `record_not_found`. العقد العام §33. مسجَّل قبل `/:id` |
 
 > **لماذا لا يحذف/يؤرشف أحدٌ نفسه** (`user_cannot_remove_self`): الأرشفة تكتب `disabled`، فتنهي وصول المنفِّذ أثناء تنفيذه — الرد يصل إلى شاشة لم يعد لها حق أن تكون مفتوحة، ولو كان آخر إداريّ فلا أحد يستطيع التراجع. `assertNotLastAdministrator` يحرس مسار التعيينات؛ وهذا يحرس الطريق الأقصر إلى المكان نفسه.
 >
@@ -650,6 +651,7 @@ Accept-language: ar | en
 | POST   | `/:id/archive`     | 🔑 `roles.edit` **+** `records.archive` | **أرشفة (2026-08-13)** — المخرج الذي لا يستطيع الحذف تقديمه: يُخفي دوراً **حُمِل فعلاً** ولا يُتلف شيئاً. الشرط: صفر تعيين **مفتوح** أياً كانت حالة الحامل. لا يلمس `is_active`. `409 role_has_active_holders` · `403 role_system_default_unarchivable`. **متكرِّرة بلا أثر** (idempotent) |
 | POST   | `/:id/unarchive`   | 🔑 `roles.edit` **+** `records.archive` | استرجاع — يمسح `archived_at` ولا شيء غيره |
 | POST   | `/:id/reactivate`  | 🔑 `roles.edit` | **إعادة تفعيل** — نظير التعطيل. يخضع لنفس فحص المستوى النسبي كإنشاء دور (إحياء دور عالي السلطة = نفس المنح). `409 role_already_active` لو فعّال أصلاً |
+| POST   | `/bulk`            | 🔑 `roles.edit` (**+** `records.archive` لـ`archive`/`unarchive`) | **إجراء جماعي (2026-09-29)** — `action`: `delete` · `archive` · `unarchive` · `deactivate` · `reactivate`. كل معرّف يمرّ بدالة المسار المفرد نفسها (`DELETE /:id` · `/:id/archive` · `/:id/unarchive` · `/:id/deactivate` · `/:id/reactivate`) فالرفض بمفاتيحها هي. **دور Super Admin والأدوار المزروعة رفضُ سطر لا خطأ طلب**: `super_admin_role_undeactivatable` · `role_system_default_undeletable` / `role_system_default_unarchivable` — ومعها `role_has_history` · `role_has_active_assignments` · `role_has_active_holders` · `role_archived` · `role_already_active` · `record_not_found`. العقد العام §33. مسجَّل قبل `/:id` |
 
 > **الأرشفة ليست التعطيل، والفرق ليس تفضيلاً**: الدور المعطَّل يبقى **بالقائمة** تحت فلتر «معطَّل» لأن إحياءه اعتيادي؛ والمؤرشف يغيب عن القائمة كلها. وأي كتابة على دور مؤرشف تُرفض `409 role_archived` (تسمية · فئة · صلاحيات · مستوى · تعطيل · إعادة تفعيل): تعديل دور لا تعرضه أي شاشة نتيجةٌ لا يستطيع أحد مراجعتها، وأخطر صوره — إعادة تفعيل دور مؤرشف — كانت ستُعيد دوراً غير مرئي إلى الخدمة. و`GET /roles?archived=true` يعرض **المؤرشف وحده** لا المؤرشف مضافاً للحيّ.
 
@@ -697,6 +699,7 @@ Accept-language: ar | en
 | DELETE | `/:id` | 🔑 `branches.manage` | **حذف صلب (2026-08-13)** — مسموح فقط إن لم يُشِر إليه أي تعيين ولا أي ملكية **قط**، وليس الفرع الافتراضي. `409 branch_has_history` · `403 branch_is_default`. هذا هو جواب «أضفت فرعاً وخربطت وبدي أحذفه» |
 | POST   | `/:id/archive`   | 🔑 `branches.manage` **+** `records.archive` | **أرشفة (2026-08-13)** — للفرع الذي **له ماضٍ**: يختفي من كل قائمة ومنتقٍ وفلتر، وصفوف التاريخ تبقى تشير لفرع حقيقي باسم حقيقي. الشرط: صفر تعيين مفتوح وصفر ملكية مفتوحة. يكتب `status: "closed"` معه. `409 branch_has_active_assignments` · `409 branch_has_active_ownerships` · `403 branch_is_default`. متكرِّرة بلا أثر |
 | POST   | `/:id/unarchive` | 🔑 `branches.manage` **+** `records.archive` | استرجاع — يعود `closed` لا `active`: إعادة الفتح قرار مستقل بعواقبه (يصير قابلاً للإسناد)، وضمّه لـ«أظهِره» كان سيجعل ضغطة واحدة تفعل شيئين أحدهما غير معلَن |
+| POST   | `/bulk` | 🔑 `branches.manage` (**+** `records.archive` لـ`archive`/`unarchive`) | **إجراء جماعي (2026-09-29)** — `action`: `delete` · `archive` · `unarchive` · `set_status` (بـ`status`: `active` · `temporarily_closed` · `closed`). كل معرّف يمرّ بدالة المسار المفرد نفسها (`DELETE /:id` · `/:id/archive` · `/:id/unarchive` · `PATCH /:id {status}`) فالرفض بمفاتيحها هي. العقد العام §33. مسجَّل قبل `/:id` |
 
 > **لماذا الفرع الافتراضي مستثنى من المخرجين معاً**: `is_default` هو ما يقع عليه النظام حين يلزم فرعٌ ولم يُسمَّ أحد، فإزالته — إتلافاً أو إخفاءً — تكسر ذلك الاحتياط بلا أي خطأ لحظة القرار، بل لاحقاً وفي مكان آخر.
 
@@ -1015,8 +1018,9 @@ Accept-language: ar | en
 | POST | `/customers/me/wholesale-request` | **`requireVerifiedCustomer`** | أول مسار بالنظام يحمل الحارس الموثَّق. غير الموثَّق ← `403 email_verification_required`. يحوّل `wholesale_status` إلى `pending` **ويبقى `customer_type = retail`** حتى القرار. مفتوح/معتمد ← `409 wholesale_request_not_allowed`. المرفوض يستطيع إعادة الطلب (يُمسح سبب الرفض) |
 | POST | `/customers/:id/wholesale/decide` | `customers.wholesale` (حسّاس) | `{decision: approve|reject, reason}` — **الرفض بلا سبب `422`**. غير المعلَّق `409 wholesale_not_pending`. الموافقة تجعل النوع `wholesale` |
 | GET | `/customers?wholesale_status=pending` | `customers.view` | طابور الجملة. و`?archived=true` يُرجع المؤرشفين **وحدهم** |
-| POST | `/customers/:id/archive` · `/unarchive` | `records.archive` | الأرشفة **تفرض `disabled`**، والإخراج لا يعيد التفعيل (خطوة منفصلة). أي كتابة على مؤرشف `409 customer_archived` |
+| POST | `/customers/:id/archive` · `/unarchive` | `records.archive` | الأرشفة **تفرض `disabled`**، والإخراج لا يعيد التفعيل (خطوة منفصلة). أرشفة المؤرشف أصلاً نجاحٌ بلا أثر (بلا كتابة ولا تدقيق)، وإخراج غير المؤرشف `409 customer_not_archived`. **تغييرات الحالة** (تعليق · تعطيل · إعادة تفعيل) **وقرار الجملة وسحبها** على مؤرشف تُرفض `409 customer_archived` — **لا الحذف**: `DELETE` لا يفحص الأرشفة، والمؤرشف `disabled` بحكم الأرشفة فيُحذف |
 | DELETE | `/customers/:id` | `customers.manage` | **للمعطَّل فقط** (`409 customer_delete_requires_disabled`). يحرّر البريد بنفس المعاملة، ويبقى لقطة `{email, full_name}` بالتدقيق |
+| POST | `/customers/bulk` | `customers.manage` لـ`suspend`/`disable`/`reactivate`/`delete` · **`records.archive` وحده** لـ`archive`/`unarchive` (كالمسار المفرد) | **إجراء جماعي (2026-09-29)** — `action`: `suspend` · `disable` · `reactivate` · `archive` · `unarchive` · `delete`، **بلا أي حقل آخر** (`422`). من لا يملك أيّ المفتاحين ← `403` قبل قراءة الجسم. كل معرّف يمرّ بدالة المسار المفرد نفسها، فمفاتيح الرفض بالسطر: `customer_archived` · `customer_not_archived` · `customer_delete_requires_disabled` · `record_not_found`. **لا قرار جملة** (السبب لكل زبون على حدة) **ولا إرسال دعمي**. العقد العام §33. مسجَّل قبل `/:id` |
 | POST | `/customers/:id/resend-verification` · `/password-reset` | `customers.manage` | **الرمز يصل بريد الزبون وحده** — الأدمن لا يراه ولا يضبط كلمة مرور. ردودها صادقة (تهدئة `429`، موثَّق `409`) لأن السائل موظف مسجَّل |
 | GET | `/customers/:id/activity` | `customers.view` | من `customer_activity_log` (دخول · فشل · توثيق · طلب جملة) |
 
@@ -1107,6 +1111,7 @@ Accept-language: ar | en
 - `DELETE /catalog/categories/:id` — لمن لا ابن تحته قط (المؤرشف يُحسب). `409 category_has_children`.
 - `POST /catalog/categories/:id/archive` (`409 category_has_active_children`) · `/unarchive` (`409 category_parent_archived` · `category_name_taken`). كلاهما idempotent.
 - `GET /catalog/brands?page&limit&search` — مُصفّحة، بحث مطويّ. `{id, name, logo: Image|null, archived_at, created_at}`. `POST` `{name, logo_image_id?}` · `PATCH` · `DELETE` (بلا فحص منتجات بعد). `409 brand_name_taken`.
+- `POST /catalog/brands/bulk` — **إجراء جماعي (2026-09-29)**، العقد العام §33. `action`: `delete` · `archive` · `unarchive` (**لا إعادة تسمية**). الصلاحية كالمسار المفرد: `catalog.delete` (**+** `records.archive` لـ`archive`/`unarchive`). كل معرّف يمرّ بدالة المسار المفرد نفسها (`DELETE /brands/:id` · `POST /brands/:id/archive` · `/unarchive`)، فالرفض بالسطر `brand_in_use` والمجهول `record_not_found`. مسجَّل قبل `/brands/:id`.
 
 **بيانات البداية** (`src/core/db/seed-catalog.ts`، مع كل `npm run db:seed`): ١٠ وحدات · ١٥ خاصية بـ٩٠ قيمة · ١٤٦ تصنيفاً (١٢/٤٧/٨٧) · ١٢ ماركة — من `docs/reference/catalog_seed.md`. **إدخال عند الغياب فقط**: صفّ مبذور موجود لا يُلمس أبداً، فتعديل الأدمن ينجو من كل إعادة بذر.
 
@@ -1123,6 +1128,7 @@ Accept-language: ar | en
 - `POST /catalog/products` — `catalog.create`. `{category_id, brand_id?, kind?, is_sellable?, name_ar, name_en?, description_ar?, description_en?, search_keywords?, price_policy?, pricing_currency?, status?: draft|active, image_ids?, variants: [{sku?, attribute_value_ids, base_unit_id, units?[{unit_id, factor, sellable_online?, sellable_at_pos?}], barcodes?[{code, unit_id}], image_ids?, sort_order?}]}` — `kind` الافتراضي من التصنيف. كتابة واحدة بمعاملة واحدة.
 - `PATCH /catalog/products/:id` — `catalog.edit`. نقل التصنيف يُرفض إن كانت المتغيّرات تستخدم خصائص لا يسمح بها الجديد (`409 product_attributes_not_allowed_in_category`). `active` يحتاج متغيّراً نشطاً (`422 product_needs_active_variant`). `409 product_archived`.
 - `DELETE /catalog/products/:id` — `catalog.delete`. **حذف فعلي اليوم** (لا مخزون ولا أسعار ولا طلبات تشير لمنتج بعد)؛ المرحلتان ٢–٣ تضيفان عدّاداتها ويصير المنتج ذو الماضي للأرشفة. `POST /:id/archive` · `/unarchive` — `+ records.archive`، والاسترجاع لتصنيف مؤرشف `409 product_category_archived`.
+- `POST /catalog/products/bulk` — **إجراء جماعي (2026-09-29)**، العقد العام §33. `action`: `delete` · `archive` · `unarchive` · `set_status` (بـ`status`: `active` | `discontinued` — **لا `draft`**: المسودة بداية المنتج، ومسودات الفروع لها طابورها) · `set_sellable` (بـ`is_sellable`) · `set_category` (بـ`category_id`) · `set_brand` (بـ`brand_id`، **المفتاح إلزامي و`null` يُزيل الماركة**). حقل الإجراء إلزامي معه وممنوع مع غيره (`422` تحت اسمه). الصلاحية **كالمسار المفرد لكل إجراء**: `set_*` ← `catalog.edit` · `delete` ← `catalog.delete` · `archive`/`unarchive` ← `catalog.delete` **+** `records.archive` (ومن لا يملك أيّ مفتاحَي الكتالوج يُرفض `403` قبل قراءة الجسم). كل معرّف يمرّ بدالة المسار المفرد نفسها (`set_*` = `PATCH /:id` بذلك الحقل وحده)، فمفاتيح الرفض بالسطر: `product_archived` · `product_attributes_not_allowed_in_category` · `category_not_leaf` · `product_category_archived` · `product_needs_active_variant` · `product_has_movements` · `record_not_found`. ⚠️ تصنيف أو ماركة **غير موجودة** يردّها `PATCH` `422` حقلياً بلا مفتاح، فتصل كل سطر `record_action_refused` — العميل يختار من المنتقي فلا يحدث عادةً. الأرشفة/الاسترجاع لما هو كذلك أصلاً نجاحٌ بلا أثر كالمفرد. مسجَّل قبل `/products/:id`.
 - `POST /catalog/products/:id/variants` · `PATCH /catalog/variants/:id` (`sku · attribute_value_ids · status · sort_order · image_ids`؛ **`base_unit_id` لا يُعدَّل**) · `DELETE /catalog/variants/:id` (`409 product_needs_variant` للأخير) — `catalog.edit`.
 - `PUT /catalog/variants/:id/units` `{units:[…]}` — الأساس يبقى بمعامل 1. `422 variant_unit_factor_invalid` (معامل ≤ 1) · `409 variant_unit_has_barcodes` (+ `data.codes`).
 - `POST /catalog/variants/:id/barcodes` `{code, unit_id}` — `catalog.edit`. `409 barcode_already_on_unit` · `409 barcode_on_other_product`. · `POST /catalog/variants/:id/barcodes/internal` `{unit_id}` — **`barcodes.print`** (موظف المخزون يلصق ملصقات ولا يعدّل الكتالوج). · `DELETE /catalog/barcodes/:id`.
@@ -1324,8 +1330,9 @@ requested → approved → in_transit → received                   → closed
 
 - `GET /promotions?search&branch_id&kind&status&archived&page&limit` — الأحدث أولاً. الصف يحمل `status` (`live`·`scheduled`·`ended`·`inactive`·`archived`) و`target_label` (**اسم** الهدف لا رقمه) و`max_discount_percent` (أقصى ما يصل إليه العرض — به يُقارن عرضان بلا حساب يدوي) و`is_deletable`/`is_archivable` من الخادم.
 - `POST /promotions` · `PUT /promotions/:id` — **كل الحقول بكل كتابة** (لا `PATCH` جزئي): العرض مجموعة قواعد تُقرأ معاً، وتعديل نوعه بلا قيمه يترك نسبة عرضٍ قديم على عرض مبلغ. والردّ `{promotion, loss_warnings[]}`.
-- `POST /promotions/:id/archive {archived}` — قابل للعكس. والمؤرشف **لا يُعدَّل** (`409 promotion_archived`).
-- `DELETE /promotions/:id`
+- `POST /promotions/:id/archive {archived}` — قابل للعكس. والمؤرشف **لا يُعدَّل** (`409 promotion_archived`). **وبلا تغيير لا كتابة** (2026-09-29): أرشفة المؤرشف وإعادة الحيّ نجاحٌ يُرجع العرض كما هو — بلا إعادة ضبط `archived_at` ولا سطر تدقيق ثانٍ (نمط الماركات والتصنيفات).
+- `DELETE /promotions/:id` — **يفرض `is_deletable` نفسه** (2026-09-29، دالة واحدة `removalVerdictOf` يقرؤها الردّ والحذف معاً): ما يقول الردّ إنه لا يُحذف يُرفض `409 promotion_not_deletable` — اليوم المؤرشف وحده (يبقى بالأرشيف). وكانت تحذف بلا فحص، فيمرّ من هنا ومن التحديد المتعدّد ما تُخفي الشاشة زرّه.
+- `POST /promotions/bulk` — **إجراء جماعي (2026-09-29)**، العقد العام §33. `action`: `archive` · `unarchive` · `delete`. الصلاحية `promotions.edit` كالمسارات المفردة. كل معرّف يمرّ بدالة المسار المفرد نفسها (`/:id/archive {archived: true|false}` · `DELETE /:id`). **لا تفعيل ولا إيقاف**: `is_active` لا يتغيّر إلا بـ`PUT /:id` بالجسم كاملاً (فحوص الشكل والسقف وتحذيرات الخسارة) — تعديلٌ لا فعلُ صفّ. مسجَّل قبل `/:id`.
 - `GET /promotions/caps` · `PUT /promotions/caps {branch_id, max_discount_percent}` — **نسبة واحدة لكل فرع** (قرار 2026-09-23؛ سقفٌ لكل «فرع × تصنيف» كان أدقّ وجدولاً ثانياً بوراثةٍ وشاشةً لإدارته). الافتراضي ٢٠٪، والصف يقول `is_default` — «١٥٪» المكتوبة تختلف عن الموروثة.
 - `GET /promotions/targets?kind&search&limit` — **ما يصلح هدفاً**: متغيّر (باسم منتجه وSKU) · منتج · تصنيف · ماركة، بحثاً بالخادم. يعيش بموديول العروض لا بالكتالوج لأن المنتقي يحتاج صفّاً بعنوانه فقط، **وقراءة جدول موديول آخر مسموحة بينما قراءة خدمته ليست** (نفس حلّ `GET /inventory/document-items`). وبلا هذا المسار كانت شاشة العرض تستورد كتالوجاً كاملاً لتعرض قائمة أسماء.
 - `GET /promotions/signals` — `{live, ending_soon, never_ending, scheduled}`. **و«بلا نهاية» إشارةٌ لا خطأ**: العرض المنسيّ هو الذي يبيع بخسارة شهوراً.
@@ -1632,3 +1639,79 @@ draft ─submit→ awaiting_quote ─quote→ awaiting_payment ─(الدفع 9-
 **وبطلب الموظف** (`/printing/jobs`، §30) مفتاحٌ جديد `materials`: `{consumed_at, cost_syp, profit_syp, lines[{variant_id, name_ar, sku, qty, cost_syp}]}` — **لمن يقرّر الأسعار وحده** (`printing.settings`، أو `printing.branch_settings` بفرع الطلب)، وإلا `null`. **والزبون لا يرى المفتاح أصلاً**.
 
 **التحقق**: `consumption-rules.test.ts` (١٩) · `tests/print-consumption.e2e.ts` حيّ ٢٠/٢٠ على دفتر حقيقي (الورق بالأوراق لا الصفحات · الحبر بالمردود · صفحة واحدة تنتظر بالعدّاد · خطّ البداية · تسوية حقيقية تلحق الرفّ بالواقع · الزبون لا يرى التكلفة).
+
+## 32. الفواتير والملصقات — القوالب وملف المحل (R1، 2026-09-29) · المرجع: `docs/reference/receipts_labels.md`
+
+**الخادم يحفظ القالب ولا يُصيِّره.** التصيير بالجهاز الذي يطبع (PDF واحد تُشتقّ منه المعاينة والصورة والطباعة)، والمعاينة الحيّة لا تحتمل رحلة شبكة مع كل سحبة. ما يملكه الخادم أن القالب المخزَّن **صالح**: كل خيار موجود (الافتراضي يُملأ عند الحفظ)، كل رقم ضمن نطاقه، وشبكة الملصقات **تتّسع لورقتها** — ورقةٌ تفيض تطبع صفّها الأخير على صفحة ثانية بلا ما يقوله على الشاشة.
+
+**شكل `layout`** (`features/documents/dtos/layout.schema.ts` — المرجع الوحيد): `{version: 1, page, blocks[]}`.
+
+- **فاتورة** — `page`: `paper` (`roll_58` · `roll_80` · `a4` · `a5`) · `margin_mm` · `font_scale` (٠٫٨–١٫٥) · `language` (`ar` · `en` · `both`) · `copies` (١–٥). الأقسام: `logo` · `shop_name` · `branch_info` · `tax_info` · `sale_meta` · `lines` · `totals` · `payment` · `sale_barcode` · `qr` · `text` · `divider` · `spacer`.
+- **ملصق** — `page`: `width_mm` · `height_mm` · `margin_mm` · `font_scale` · `language` · `medium`: `{mode: 'label_roll'}` · `{mode: 'receipt_roll', roll, gap_mm}` (العرض ≤ ما يطبعه الرأس: ٤٨ مم لـ٥٨، ٧٢ لـ٨٠) · `{mode: 'sheet', sheet: a4|a5|letter|custom, sheet_width_mm?, sheet_height_mm?, columns, rows, margin_top_mm, margin_side_mm, gap_x_mm, gap_y_mm}`. الأقسام: `shop_name` · `product_name` · `variant` · `price` · `unit` · `barcode` (`symbology`: `auto` · `ean13` · `code128`) · `sku` · `qr` (`content`: `barcode` · `sku`) · `print_date` · `logo` · `text` · `divider` · `spacer`.
+- لكل قسم `visible` وخياراته. **`text` و`divider` و`spacer` تتكرّر، وكل قسم آخر مرة واحدة**. خيارٌ مجهول يُرفض (`.strict()`) فلا يُخزَّن خطأ إملائي بصمت. الرفض `422` تحت `layout.<المسار>` (مثلاً `layout.blocks.3.type` · `layout.page.medium`).
+- **لا مبلغ في القالب**: القسم يختار ما يُعرض، والأرقام من الفاتورة كما حسبها الخادم.
+
+| المسار | الحارس | ما يفعله |
+|---|---|---|
+| `GET /documents/context?branch_id=` | أحد: `documents.templates` · `sales.sell` · `sales.refund` · `barcodes.print` | كل ما يُصيَّر منه بطلب واحد: `{profile, branch: {id, name, address, contact_info} \| null, receipt_template, label_template}` (الافتراضي لكل نوع). فرعٌ مجهول `404` |
+| `GET /documents/templates?kind=` | كالسابق | القوالب: الافتراضي أولاً ثم الجاهز ثم بالاسم. الصفّ: `{id, code, kind, name, is_default, is_system, layout, updated_at}` |
+| `GET /documents/templates/:id` | كالسابق | قالب واحد |
+| `POST /documents/templates` | `documents.templates` | `{name, kind, layout}` **أو** `{name, clone_from_id}` (أحدهما بالضبط، وإلا `422`) — النسخ هو طريق تعديل الجاهز. `201` |
+| `PATCH /documents/templates/:id` | `documents.templates` | `{name?, layout?}`. الجاهز `409 document_template_is_system` |
+| `POST /documents/templates/:id/default` | `documents.templates` | يجعله افتراضي نوعه (والجاهز يصلح افتراضياً — الاختيار ليس تعديلاً) ← **قوالب النوع كلها** (العلم انتقل عن صفّ آخر) |
+| `DELETE /documents/templates/:id` | `documents.templates` | حذف فعلي (لا شيء يشير لقالب، والتدقيق يحفظ القصة). الجاهز `409 document_template_is_system` · الافتراضي `409 document_template_is_default` |
+| `GET /documents/profile` | أحد مفاتيح القراءة | `{name_ar, name_en, logo: WireImage \| null, tax_number, commercial_register, updated_at}` |
+| `PUT /documents/profile` | `documents.templates` | **كل الحقول تُرسَل** — المُفرَّغ `null` يمسح. `logo_media_id` غير صورة عامة ← `422` |
+| `POST /documents/logo` | `documents.templates` | رفع صورة الشعار (multipart `file`، نفس قيود صور الكتالوج) ← `WireImage`، ويُحفظ حين يسمّيه `PUT /profile` |
+| `POST /documents/labels` | `barcodes.print` | `{branch_id, items: [{variant_id, unit_id?}]}` (≤ ٥٠٠) ← بالترتيب نفسه: `{variant_id, product_id, unit_id, unit_name_ar, unit_factor, name_ar, name_en, variant_label_ar, sku, barcode, price: {status, amount_syp, was_syp, promotion_names}}`. **السعر سعر الصندوق بالفرع** (بعد العروض، عبر `core/pricing`) × معامل الوحدة؛ `status` غير `priced` بلا مبلغ. **الباركود رمز المصنّع قبل الداخلي** (المطبوع على البضاعة أصلاً)، و`null` حين لا رمز — لا يُخترع. وحدة ليست للمتغيّر أو متغيّر مجهول ← `422` تحت `items.<i>` |
+
+**وبالفاتورة** (§27): `cashier_name` جديد على `WireSale` — يُقرأ لحظة الطلب، فإعادة الطباعة تسمّي من باع لا من يعيد الطباعة.
+
+**التحقق**: `layout.test.ts` (١٥ — كل حالة مع نقيضها: الشبكة الممتلئة تتّسع وصفٌّ زائد لا · الفجوات والهوامش تُحسب · عرض الرأس لا عرض الورق) · `label-rules.test.ts` (٧) · `wire-contract.test.ts` (٣) · `tests/documents.e2e.ts` حيّ ٣١/٣١ (الجاهز لا يُعدَّل ولا يُحذف · النسخ · التطبيع · الافتراضي واحد · الشعار · سعر الكرتونة = القطعة × المعامل).
+
+## 33. الإجراءات الجماعية — `POST /<module>/bulk` (2026-09-29) · `core/bulk/`
+
+**الإجراء الجماعي هو الإجراء المفرد مُكرَّراً، لا نسخةٌ ثانية منه.** كل معرّف يمرّ بدالة الخدمة نفسها التي يستدعيها المسار المفرد، **بالتتابع** (بترتيب الطلب، وبلا كاتبين متزامنين على الأقفال نفسها)، وكلٌّ بمعاملته هو كما يفعل المسار المفرد — فرفضُ سطرٍ لا يُرجع نجاح غيره. فالقواعد وأسطر التدقيق متطابقة حرفياً مع تنفيذها واحداً واحداً. مسارٌ جماعي بـ`WHERE id IN (…)` كان سيصير مكاناً ثانياً للقواعد، وأول ما ينحرف ينحرف صامتاً: المساران يردّان `200`.
+
+**الموديولات الموصولة اليوم**: الفروع (`POST /branches/bulk`، الجدول بـ«Branches») · منتجات الكتالوج (`POST /catalog/products/bulk`، بقسم الكتالوج — سبعة إجراءات وثلاث مجموعات صلاحية) · المستخدمون (`POST /users/bulk`، الجدول بـ«Users» — ستة إجراءات ومجموعتا صلاحية) · الأدوار (`POST /roles/bulk`، الجدول بـ«Roles» — خمسة إجراءات) · الزبائن (`POST /customers/bulk`، بـ§17 — ستة إجراءات، والأرشفة بـ`records.archive` وحده) · الماركات (`POST /catalog/brands/bulk`، بـ§19 — ثلاثة إجراءات إزالة) · العروض (`POST /promotions/bulk`، بـ§26 — ثلاثة إجراءات بلا تفعيل/إيقاف).
+
+**الطلب:**
+
+```json
+{ "action": "delete", "ids": [12, 15, 15, 40] }
+{ "action": "set_status", "ids": [12, 15], "status": "temporarily_closed" }
+```
+
+- `action` — أحد إجراءات الموديول.
+- `ids` — ١..١٠٠ عدد صحيح موجب. **المكرَّر يُحذف بالخادم** (أول ظهور يبقى والترتيب محفوظ)، فلا يُطبَّق الإجراء على صفّ مرتين.
+- حقلٌ خاص بإجراء (كـ`status` لـ`set_status`) **إلزامي معه وممنوع مع غيره** — `status` مع `delete` يعني أن العميل يظنّ أنه يفعل شيئاً آخر.
+
+**الرد `200`** — **النجاح الجزئي ليس خطأ:**
+
+```json
+{
+  "status": true,
+  "message": "OK",
+  "data": {
+    "done": [12, 40],
+    "refused": [
+      { "id": 15, "message_key": "branch_has_history", "message": "…مترجمة حسب Accept-Language…" }
+    ]
+  }
+}
+```
+
+- `done` — ما طُبِّق عليه، بترتيب الطلب.
+- `refused` — لكل صفّ مرفوض **مفتاح المسار المفرد نفسه** (`branch_has_history` · `branch_is_default` · `branch_archived` · `branch_has_active_assignments` · …) ورسالته مترجمة بلغة الطلب بآلية رسائل الخطأ نفسها (`resolveMessage`).
+- **ثلاثة مفاتيح عامة** لما لا مفتاح له بالمسار المفرد:
+  - `record_not_found` — معرّف غير موجود. المسار المفرد يردّ `404` **بلا مفتاح** (الشاشة تعرض نصّها)، والسطر بالإجراء الجماعي لا شاشة له.
+  - `record_action_refused` — `ApiError` بلا مفتاح (لا ينبغي أن يحدث: `check:messages` يفرض المفاتيح على كل رفض عمل).
+  - `record_action_failed` — **خطأ غير متوقَّع** بسطر واحد (عطل، قيدٌ بلا حارس). **يُسجَّل باللوغ بمستوى error مع المعرّف ولا يُبتلَع**، ويُكمَل الباقي. لماذا لا `500`: السطور السابقة التزمت فعلاً، و`500` كان سيقول للعميل «لم يحدث شيء» وقد حدث سبعة.
+
+**أخطاء الطلب كله** (لا سطر): `422` تحقّق (إجراء مجهول · قائمة فارغة/أكثر من ١٠٠ · معرّف غير صالح · حقل الإجراء ناقص أو زائد، تحت اسمه) · `403 permission_missing` · `401`.
+
+**الصلاحية تُفحص للطلب كله قبل لمس أي صفّ**، بمفاتيح المسارات المفردة نفسها: مفتاح الموديول دائماً (أو، حين تختلف مفاتيح المسارات المفردة بالإجراء كالمنتجات، مفتاح كل مجموعة إجراءات بـ`requirePermissionWhen` بعد حارس دخول `requireAnyPermission`)، **والمفتاح الإضافي للإجراءات التي يطلبه مسارها المفرد** (`records.archive` لـ`archive`/`unarchive`) عبر `requirePermissionWhen` — نفس `403 permission_missing` الذي يردّه `requirePermission`. فمن لا يملك الأرشفة لا يحصل على `200` مليء برفضات سطر لشيء لا يستطيعه أصلاً.
+
+**إضافة موديول**: `bulkBodySchema([...actions])` (+ `.extend(...)` و`requireFieldForActions` لحقل خاص) بالـdto · دالة خدمة تُحوّل الإجراء إلى الاستدعاءات المفردة الموجودة عبر `runBulk(ids, lang, fn)` · مسار واحد `POST /bulk` **قبل** مسارات `/:id`.
+
+**التحقق**: `core/bulk/__tests__/bulk.test.ts` (٨) · `features/identity/__tests__/branches-bulk.test.ts` (٧ — المكدّس الحقيقي للمسار بمستودعات مزيّفة: خليط منجَز/مرفوض بمفاتيحه · إزالة المكرَّر · الأرشفة بلا `records.archive` ← `403` **والحذف بلا حاجة إليه** · `422` لـ`set_status` بلا `status` ولـ١٠١ معرّف). · `features/catalog/__tests__/products-bulk.test.ts` (١٠ — `set_category` بخليط منجَز/مرفوض بمفاتيح `PATCH` · الحذف بمنتج له حركات · `set_brand` بـ`null` · `422` للحقل الناقص والزائد و`draft` و١٠١ معرّف · الأرشفة بلا `records.archive` ← `403` · `set_sellable` بلا `catalog.edit` ← `403` · الحذف يحتاج `catalog.delete` لا `catalog.edit`). · `features/identity/__tests__/users-bulk.test.ts` (٩) · `features/identity/__tests__/roles-bulk.test.ts` (٨) · `features/customers/__tests__/customers-bulk.test.ts` (١١) · `features/catalog/__tests__/brands-bulk.test.ts` (٨) · `features/promotions/__tests__/promotions-bulk.test.ts` (٥).

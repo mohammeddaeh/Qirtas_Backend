@@ -28,11 +28,9 @@ const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
  * sends a fresh one each time and never fills an email bucket). IP catches both
  * shapes at the cost of sharing a bucket between users behind one NAT.
  *
- * ⚠️ Same two caveats as the other limiters: in-memory (resets on restart, and
- * degrades to per-instance counting behind more than one process), and `req.ip`
- * needs Express's `trust proxy` configured if a reverse proxy is ever put in
- * front — otherwise every request resolves to the proxy and this collapses into
- * a single shared bucket.
+ * Counters live in `RATE_LIMIT_STORE` (memory in development, postgres —
+ * shared by every server — required in production), and `req.ip` is only the
+ * client behind a proxy when `TRUST_PROXY_HOPS` says how many proxies there are.
  */
 const ipLimiter = new RateLimiter(
   MAX_ATTEMPTS,

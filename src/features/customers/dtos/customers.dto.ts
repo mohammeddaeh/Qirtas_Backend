@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { passwordSchema } from '../../../core/auth/services/password.service.js';
 import { queryBooleanSchema } from '../../../core/validation/common-schemas.js';
+import { bulkBodySchema } from '../../../core/bulk/bulk.js';
 import type { CustomerRow } from '../schemas/customers.schema.js';
 
 export const phoneSchema = z.string().trim().min(6).max(32);
@@ -126,6 +127,43 @@ export const decideWholesaleBodySchema = z
     path: ['reason'],
   });
 export type DecideWholesaleBody = z.infer<typeof decideWholesaleBodySchema>;
+
+/**
+ * `POST /customers/bulk` — multi-select actions on the admin customer list.
+ *
+ * Every action is an existing single-record endpoint run per id (see
+ * `core/bulk/bulk.ts`), so each carries that endpoint's rules unchanged: an
+ * archived customer is refused `customer_archived` on a status change, delete
+ * still needs `disabled` first.
+ *
+ * The wholesale decisions are deliberately absent: approving grants a lasting
+ * price to one applicant, and a rejection or withdrawal carries a reason the
+ * customer reads about their own case — one shared reason for many is not
+ * the same decision. The support sends (verification code, password reset)
+ * are absent too: they mail the customer, not change the record.
+ */
+export const CUSTOMER_BULK_ACTIONS = [
+  'suspend',
+  'disable',
+  'reactivate',
+  'archive',
+  'unarchive',
+  'delete',
+] as const;
+
+/** Need `customers.manage`, exactly like `POST /:id/{suspend,disable,reactivate}` and `DELETE /:id`. */
+export const CUSTOMER_BULK_MANAGE_ACTIONS: readonly string[] = [
+  'suspend',
+  'disable',
+  'reactivate',
+  'delete',
+];
+
+/** Need `records.archive` — and only it, exactly like `POST /:id/archive`. */
+export const CUSTOMER_BULK_ARCHIVE_ACTIONS: readonly string[] = ['archive', 'unarchive'];
+
+export const customerBulkBodySchema = bulkBodySchema(CUSTOMER_BULK_ACTIONS).strict();
+export type CustomerBulkBody = z.infer<typeof customerBulkBodySchema>;
 
 /** One row of `GET /customers/:id/activity`. */
 export interface WireCustomerActivity {

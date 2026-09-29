@@ -94,6 +94,38 @@ export function requirePermission(permissionKey: string, meta: PermissionMeta = 
 }
 
 /**
+ * [requirePermission], applied only when [appliesTo] says this request needs it.
+ *
+ * For one route whose body decides which permission it needs — the case it was
+ * added for is `POST /<module>/bulk`, where `archive`/`unarchive` need
+ * `records.archive` on top of the module key (as their single-record routes
+ * do) and `delete` does not. Checked for the whole request **before any row is
+ * touched**, and refused with the identical `403 permission_missing`: a caller
+ * without the key must not get a 200 full of per-row refusals for something
+ * they could never do.
+ *
+ * Mount it **after** `validate(...)` so [appliesTo] reads a checked body. The
+ * route still needs its unconditional guard first — this one is not a route
+ * classifier (it carries no access mark), only a declared key.
+ */
+export function requirePermissionWhen(
+  permissionKey: string,
+  appliesTo: (req: Request) => boolean,
+  meta: PermissionMeta = {},
+) {
+  // Declares the key too (requirePermission registers it).
+  const guard = requirePermission(permissionKey, meta);
+
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!appliesTo(req)) {
+      next();
+      return;
+    }
+    void guard(req, res, next);
+  };
+}
+
+/**
  * Does the caller hold [permissionKey] **at [branchId]** — through an
  * assignment at that branch or an unrestricted one? `branchId = null` asks
  * for unrestricted only: "may this person act for every branch?".

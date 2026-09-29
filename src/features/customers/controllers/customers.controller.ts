@@ -16,6 +16,7 @@ import type {
   DeleteMeBody,
   RegisterCustomerBody,
   UpdateCustomerProfileBody,
+  CustomerBulkBody,
 } from '../dtos/customers.dto.js';
 
 function originOf(req: Request): RequestOrigin {
@@ -152,6 +153,13 @@ export async function deleteCustomer(req: Request, res: Response): Promise<void>
   const { id } = req.params as unknown as { id: number };
   await customersService.deleteCustomer(staffActor(req), id);
   ok(res, null, 'Customer deleted');
+}
+
+export async function bulkCustomers(req: Request, res: Response): Promise<void> {
+  ok(
+    res,
+    await customersService.bulkCustomers(staffActor(req), req.body as CustomerBulkBody, req.lang),
+  );
 }
 
 export async function resendVerification(req: Request, res: Response): Promise<void> {

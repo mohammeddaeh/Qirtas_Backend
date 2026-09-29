@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { bulkBodySchema, requireFieldForActions } from '../../../core/bulk/bulk.js';
 import type { BranchRow } from '../schemas/branches.schema.js';
 import type { BranchStaffRow } from '../repositories/branches.repository.js';
 import {
@@ -223,3 +224,21 @@ export const nearestBranchBodySchema = z
   .refine((v) => (v.latitude === undefined) === (v.longitude === undefined), COORDINATES_MESSAGE);
 export type NearestBranchBody = z.infer<typeof nearestBranchBodySchema>;
 export type UpdateBranchBody = z.infer<typeof updateBranchBodySchema>;
+
+/**
+ * `POST /branches/bulk` — multi-select actions on the branch list.
+ *
+ * Every action is an existing single-record endpoint run per id (see
+ * `core/bulk/bulk.ts`); `set_status` is `PATCH /:id` with `{ status }` alone,
+ * so it carries the same enum and the same "closed needs an empty branch" rule.
+ */
+export const BRANCH_BULK_ACTIONS = ['delete', 'archive', 'unarchive', 'set_status'] as const;
+
+/** Actions that retire or restore a record — they need `records.archive` on top of `branches.manage`, exactly like `POST /:id/archive`. */
+export const BRANCH_BULK_ARCHIVE_ACTIONS: readonly string[] = ['archive', 'unarchive'];
+
+export const branchBulkBodySchema = bulkBodySchema(BRANCH_BULK_ACTIONS)
+  .extend({ status: z.enum(['active', 'temporarily_closed', 'closed']).optional() })
+  .strict()
+  .superRefine((value, ctx) => requireFieldForActions(value, ctx, 'status', ['set_status']));
+export type BranchBulkBody = z.infer<typeof branchBulkBodySchema>;

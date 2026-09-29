@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../../core/http/async-handler.js';
-import { requirePermission } from '../../../core/http/require-permission.js';
+import {
+  requireAnyPermission,
+  requirePermission,
+  requirePermissionWhen,
+} from '../../../core/http/require-permission.js';
 import { validate } from '../../../core/validation/validate.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 import { uploadImageFile } from '../../../core/media/middleware/upload-image.js';
@@ -31,7 +35,10 @@ import {
   updateCategoryBodySchema,
 } from '../dtos/categories.dto.js';
 import {
+  BRAND_BULK_ARCHIVE_ACTIONS,
+  brandBulkBodySchema,
   brandsFilterQuerySchema,
+  type BrandBulkBody,
   createBrandBodySchema,
   updateBrandBodySchema,
 } from '../dtos/brands.dto.js';
@@ -49,7 +56,12 @@ import {
   barcodeLookupQuerySchema,
   createProductBodySchema,
   generateBarcodeBodySchema,
+  PRODUCT_BULK_ARCHIVE_ACTIONS,
+  PRODUCT_BULK_EDIT_ACTIONS,
+  PRODUCT_BULK_REMOVAL_ACTIONS,
+  productBulkBodySchema,
   productsFilterQuerySchema,
+  type ProductBulkBody,
   replaceVariantUnitsBodySchema,
   updateProductBodySchema,
   updateVariantBodySchema,
@@ -239,6 +251,19 @@ catalogRouter.patch(
   validate(updateBrandBodySchema, 'body'),
   asyncHandler(brandsController.updateBrand),
 );
+// Multi-select on the brand list. Every action is a removal route run per id
+// (core/bulk/bulk.ts), so the guards mirror them: catalog.delete for all three,
+// and records.archive on top for archive/unarchive — checked after the body is
+// validated, since the action decides, and before any row is touched.
+catalogRouter.post(
+  '/brands/bulk',
+  canDelete,
+  validate(brandBulkBodySchema, 'body'),
+  requirePermissionWhen('records.archive', (req) =>
+    BRAND_BULK_ARCHIVE_ACTIONS.includes((req.body as BrandBulkBody).action),
+  ),
+  asyncHandler(brandsController.bulkBrands),
+);
 catalogRouter.delete('/brands/:id', canDelete, withId, asyncHandler(brandsController.deleteBrand));
 catalogRouter.post(
   '/brands/:id/archive',
@@ -261,6 +286,31 @@ catalogRouter.get(
   canView,
   validate(paginationQuerySchema.merge(productsFilterQuerySchema), 'query'),
   asyncHandler(productsController.listProducts),
+);
+// Multi-select on the product list. Every id runs through the same service
+// call as its single-record route (core/bulk/bulk.ts), so the guards mirror
+// them per action: edits need catalog.edit (PATCH /products/:id), removals
+// catalog.delete, and archive/unarchive records.archive on top. The
+// entry guard refuses a caller holding neither catalog key before the body is
+// even read (and is what classifies the route for check:permissions); then the
+// body is validated — the action decides which keys apply — and each guard
+// answers for the whole request before any row is touched. Registered above
+// the /products/:id routes.
+const bulkActionOf = (req: { body: unknown }) => (req.body as ProductBulkBody).action;
+catalogRouter.post(
+  '/products/bulk',
+  requireAnyPermission(['catalog.edit', 'catalog.delete']),
+  validate(productBulkBodySchema, 'body'),
+  requirePermissionWhen('catalog.edit', (req) =>
+    PRODUCT_BULK_EDIT_ACTIONS.includes(bulkActionOf(req)),
+  ),
+  requirePermissionWhen('catalog.delete', (req) =>
+    PRODUCT_BULK_REMOVAL_ACTIONS.includes(bulkActionOf(req)),
+  ),
+  requirePermissionWhen('records.archive', (req) =>
+    PRODUCT_BULK_ARCHIVE_ACTIONS.includes(bulkActionOf(req)),
+  ),
+  asyncHandler(productsController.bulkProducts),
 );
 catalogRouter.get('/products/:id', canView, withId, asyncHandler(productsController.getProduct));
 catalogRouter.post(

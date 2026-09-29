@@ -11,6 +11,8 @@ import * as ownershipsRepository from '../repositories/ownerships.repository.js'
 import * as auditService from './audit.service.js';
 import { AUDIT, target } from './audit-actions.js';
 import type { RequestActorContext } from '../../../core/http/require-actor.js';
+import { runBulk, type BulkResult } from '../../../core/bulk/bulk.js';
+import type { Lang } from '../../../core/i18n/messages.js';
 import type { BranchRow } from '../schemas/branches.schema.js';
 import {
   toWireBranch,
@@ -21,6 +23,7 @@ import {
   type CreateBranchBody,
   type UpdateBranchBody,
   type BranchesFilterQuery,
+  type BranchBulkBody,
 } from '../dtos/branches.dto.js';
 
 export async function listBranches(
@@ -441,4 +444,31 @@ export async function updateBranch(
     { name: row.name, address: row.address, contact_info: row.contact_info, status: row.status },
   );
   return toWireBranch(row);
+}
+
+/**
+ * `POST /branches/bulk` — each id through the very function its single-record
+ * endpoint calls, one at a time (see `core/bulk/bulk.ts` for why that is the
+ * whole design). `set_status` is `updateBranch` with `{ status }` alone — the
+ * same path `PATCH /:id` takes, so closing still requires an empty branch and
+ * an archived one is still refused `branch_archived`.
+ */
+export function bulkBranches(
+  actor: RequestActorContext,
+  body: BranchBulkBody,
+  lang: Lang,
+): Promise<BulkResult> {
+  return runBulk(body.ids, lang, (id) => {
+    switch (body.action) {
+      case 'delete':
+        return deleteBranch(actor, id);
+      case 'archive':
+        return archiveBranch(actor, id);
+      case 'unarchive':
+        return unarchiveBranch(actor, id);
+      case 'set_status':
+        // The schema requires `status` for this action.
+        return updateBranch(actor, id, { status: body.status });
+    }
+  });
 }

@@ -4,7 +4,12 @@ import { ok, created } from '../../../core/http/response.js';
 import { toPaginationParams } from '../../../core/pagination/pagination.js';
 import { requireActorId, buildActorContext } from '../../../core/http/require-actor.js';
 import * as branchesService from '../services/branches.service.js';
-import type { CreateBranchBody, UpdateBranchBody, BranchesFilterQuery } from '../dtos/branches.dto.js';
+import type {
+  CreateBranchBody,
+  UpdateBranchBody,
+  BranchesFilterQuery,
+  BranchBulkBody,
+} from '../dtos/branches.dto.js';
 
 export async function listBranches(req: Request, res: Response): Promise<void> {
   const query = req.query as unknown as { page: number; limit: number } & BranchesFilterQuery;
@@ -67,4 +72,9 @@ export async function unarchiveBranch(req: Request, res: Response): Promise<void
   const actor = buildActorContext(req, requireActorId(req));
   const { id } = req.params as unknown as { id: number };
   ok(res, await branchesService.unarchiveBranch(actor, id));
+}
+
+export async function bulkBranches(req: Request, res: Response): Promise<void> {
+  const actor = buildActorContext(req, requireActorId(req));
+  ok(res, await branchesService.bulkBranches(actor, req.body as BranchBulkBody, req.lang));
 }

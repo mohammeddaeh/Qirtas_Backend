@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { bulkBodySchema } from '../../../core/bulk/bulk.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 
 /** العروض — `store_system.md` §٥، `rest_api.md` §26. */
@@ -96,6 +97,19 @@ export const previewBodySchema = z
   })
   .strict();
 
+/**
+ * `POST /promotions/bulk` — التحديد المتعدّد بقائمة العروض.
+ *
+ * كل فعلٍ هو مسارُ العرض الواحد نفسه يُشغَّل لكل معرّف (`core/bulk/bulk.ts`):
+ * `archive`/`unarchive` = `POST /:id/archive`، و`delete` = `DELETE /:id`.
+ * **ولا «تفعيل/تعطيل»**: `is_active` لا يتغيّر إلا بـ`PUT /:id` بكل الحقول
+ * (فحص الشكل · السقف · تحذير الخسارة)، وذاك تعديلٌ لا فعلٌ على الصفّ.
+ */
+export const PROMOTION_BULK_ACTIONS = ['archive', 'unarchive', 'delete'] as const;
+
+export const promotionBulkBodySchema = bulkBodySchema(PROMOTION_BULK_ACTIONS).strict();
+
 export type PromotionsQuery = z.infer<typeof promotionsQuerySchema>;
+export type PromotionBulkBody = z.infer<typeof promotionBulkBodySchema>;
 export type PromotionBody = z.infer<typeof promotionBodySchema>;
 export type PreviewBody = z.infer<typeof previewBodySchema>;

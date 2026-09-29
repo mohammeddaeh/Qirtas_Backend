@@ -8,6 +8,7 @@ import {
   capBodySchema,
   previewBodySchema,
   promotionBodySchema,
+  promotionBulkBodySchema,
   promotionsQuerySchema,
   targetsQuerySchema,
 } from '../dtos/promotions.dto.js';
@@ -72,6 +73,18 @@ promotionsRouter.post(
   canEdit(),
   validate(previewBodySchema, 'body'),
   asyncHandler(controller.preview),
+);
+
+/**
+ * التحديد المتعدّد — كل معرّف عبر مساره الفردي نفسه (`core/bulk/bulk.ts`)،
+ * فالحارس يطابقه: `promotions.edit` للأفعال الثلاثة كما على `/:id/archive`
+ * و`DELETE /:id`. وفوق `/:id` لأن المقطع الحرفي يسبق المعامل.
+ */
+promotionsRouter.post(
+  '/bulk',
+  canEdit(),
+  validate(promotionBulkBodySchema, 'body'),
+  asyncHandler(controller.bulk),
 );
 
 promotionsRouter.post('/', canEdit(), validate(promotionBodySchema, 'body'), asyncHandler(controller.create));

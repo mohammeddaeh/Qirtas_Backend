@@ -5,6 +5,8 @@ import { countExternalReferences } from '../../../core/records/deletion-guards.j
 import { normalizeArabic } from '../../../core/i18n/arabic-normalize.js';
 import { db } from '../../../core/db/client.js';
 import * as mediaService from '../../../core/media/media.service.js';
+import { runBulk, type BulkResult } from '../../../core/bulk/bulk.js';
+import type { Lang } from '../../../core/i18n/messages.js';
 import type { WireImage } from '../../../core/media/media.service.js';
 import {
   paginated,
@@ -43,6 +45,7 @@ import type {
   AddBarcodeBody,
   CreateProductBody,
   GenerateBarcodeBody,
+  ProductBulkBody,
   ProductsFilterQuery,
   ReplaceVariantUnitsBody,
   UpdateProductBody,
@@ -747,6 +750,40 @@ export async function unarchiveProduct(
     { archived_at: null },
   );
   return getProduct(id);
+}
+
+/**
+ * `POST /catalog/products/bulk` — each id through the very function its
+ * single-record endpoint calls, one at a time (see `core/bulk/bulk.ts`).
+ * Every `set_*` is [updateProduct] with that one field — the path
+ * `PATCH /products/:id` takes — so a category change still refuses variants
+ * the new category does not allow, an archived product is still refused
+ * `product_archived`, and the audit entry is the same `catalog.product.update`.
+ */
+export function bulkProducts(
+  actor: RequestActorContext,
+  body: ProductBulkBody,
+  lang: Lang,
+): Promise<BulkResult> {
+  return runBulk(body.ids, lang, (id) => {
+    // The schema requires the action's own field, so the non-null assertions hold.
+    switch (body.action) {
+      case 'delete':
+        return deleteProduct(actor, id);
+      case 'archive':
+        return archiveProduct(actor, id);
+      case 'unarchive':
+        return unarchiveProduct(actor, id);
+      case 'set_status':
+        return updateProduct(actor, id, { status: body.status! });
+      case 'set_sellable':
+        return updateProduct(actor, id, { is_sellable: body.is_sellable! });
+      case 'set_category':
+        return updateProduct(actor, id, { category_id: body.category_id! });
+      case 'set_brand':
+        return updateProduct(actor, id, { brand_id: body.brand_id ?? null });
+    }
+  });
 }
 
 // ── Variant writes ──────────────────────────────────────────────────────────

@@ -1,4 +1,7 @@
 import { recordAudit } from '../../../core/audit/audit-recorder.js';
+import { runBulk, type BulkResult } from '../../../core/bulk/bulk.js';
+import type { Lang } from '../../../core/i18n/messages.js';
+import type { PromotionBulkBody } from '../dtos/promotions.dto.js';
 import { resolveAvgCostAt } from '../../../core/costing/cost-port.js';
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
 import type { RequestActorContext } from '../../../core/http/require-actor.js';
@@ -191,6 +194,23 @@ export interface WirePromotion {
   created_at: string;
 }
 
+/**
+ * **حكم الإزالة — مكتوب مرة واحدة**: يقرؤه الردّ (`is_deletable`/`is_archivable`)
+ * ويفرضه `removePromotion`. نسختان من القاعدة تعني زرّاً يعرضه الردّ ويرفضه
+ * الخادم، أو حذفاً يمرّ من `DELETE /:id` والتحديد المتعدّد على صفٍّ قالت الشاشة
+ * إنه لا يُحذف.
+ *
+ * لا بيع بعد، فلا شيء يشير إلى عرض — والحاجز الوحيد اليوم الأرشفة: المؤرشف
+ * يبقى بالأرشيف. يوم تُبنى الفواتير يتغيّر الحكم هنا وحده (ومعه نصّ
+ * `promotion_not_deletable`).
+ */
+function removalVerdictOf(row: PromotionRow): { is_deletable: boolean; is_archivable: boolean } {
+  return {
+    is_deletable: row.archived_at === null,
+    is_archivable: row.archived_at === null,
+  };
+}
+
 function wire(row: PromotionRow, promo: Promotion, label: string | null, now: Date): WirePromotion {
   const status = statusOf(promo, now);
   return {
@@ -222,13 +242,8 @@ function wire(row: PromotionRow, promo: Promotion, label: string | null, now: Da
     is_active: row.is_active,
     // بسعرٍ افتراضي ١٠٠: النسبة تُقرأ نسبةً، والمبلغ الثابت يُقرأ بما يعادله.
     max_discount_percent: Math.round(maxPercentOf(promo, 100) * 100) / 100,
-    /**
-     * لا بيع بعد، فلا شيء يشير إلى عرض — والحذف مسموح اليوم لكل عرض.
-     * **ويُقرأ من هنا لا يُشتقّ بالعميل**: يوم تُبنى الفواتير يتغيّر الحكم
-     * بمكان واحد، ولا تبقى شاشةٌ تعرض زرّاً يرفضه الخادم.
-     */
-    is_deletable: row.archived_at === null,
-    is_archivable: row.archived_at === null,
+    // **يُقرأ من هنا لا يُشتقّ بالعميل** — والحكم نفسه يفرضه `removePromotion`.
+    ...removalVerdictOf(row),
     created_at: row.created_at.toISOString(),
   };
 }
@@ -507,6 +522,10 @@ export async function archivePromotion(
 ): Promise<WirePromotion> {
   const before = await repo.findPromotionById(id);
   if (!before) throw new NotFoundError('Promotion not found');
+  // لا تغيير ⇒ لا كتابة ولا تدقيق (نمط الماركات والتصنيفات): إعادة أرشفة
+  // المؤرشف كانت تُعيد ضبط `archived_at` فيُقرأ العرض «أُرشف اليوم» وتُكتب
+  // بالسجلّ أرشفةٌ ثانية لم تحدث — والتحديد المتعدّد يضمّ المؤرشف بسهولة.
+  if ((before.archived_at !== null) === archived) return getPromotion(id);
   const row = await repo.updatePromotion(id, { archived_at: archived ? new Date() : null });
   await recordAudit(
     actor,
@@ -521,8 +540,33 @@ export async function archivePromotion(
 export async function removePromotion(actor: RequestActorContext, id: number): Promise<void> {
   const before = await repo.findPromotionById(id);
   if (!before) throw new NotFoundError('Promotion not found');
+  if (!removalVerdictOf(before).is_deletable) {
+    throw new BusinessError(409, 'This promotion cannot be deleted', 'promotion_not_deletable');
+  }
   await repo.deletePromotion(id);
   await recordAudit(actor, PROMOTION_AUDIT.delete, promotionTarget.one(id), before, null);
+}
+
+/**
+ * `POST /promotions/bulk` — كل معرّف عبر الدالة نفسها التي يستدعيها مساره
+ * الفردي، واحداً بعد واحد (`core/bulk/bulk.ts`). فلا قاعدة ثانية ولا تدقيقٌ
+ * مختلف بين عشرة صفوف محدَّدة وعشر ضغطات.
+ */
+export function bulkPromotions(
+  actor: RequestActorContext,
+  body: PromotionBulkBody,
+  lang: Lang,
+): Promise<BulkResult> {
+  return runBulk(body.ids, lang, (id) => {
+    switch (body.action) {
+      case 'archive':
+        return archivePromotion(actor, id, true);
+      case 'unarchive':
+        return archivePromotion(actor, id, false);
+      case 'delete':
+        return removePromotion(actor, id);
+    }
+  });
 }
 
 export async function listTargets(

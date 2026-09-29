@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { queryBooleanSchema } from '../../../core/validation/common-schemas.js';
+import { bulkBodySchema, requireFieldForActions } from '../../../core/bulk/bulk.js';
 import type { WireImage } from '../../../core/media/media.service.js';
 import {
   PRICE_POLICIES,
@@ -102,6 +103,60 @@ export const updateProductBodySchema = z
   .strict()
   .refine((body) => Object.keys(body).length > 0, { message: 'Nothing to update' });
 export type UpdateProductBody = z.infer<typeof updateProductBodySchema>;
+
+/**
+ * `POST /catalog/products/bulk` — multi-select actions on the product list.
+ *
+ * Every action is an existing single-record endpoint run per id (see
+ * `core/bulk/bulk.ts`): `delete` · `archive` · `unarchive` are their own
+ * routes, and each `set_*` is `PATCH /products/:id` with that one field — so
+ * the category-fit rule, the archived-product refusal and the "on sale needs
+ * an active variant" rule all apply unchanged.
+ *
+ * `status` offers `active` | `discontinued` only: `draft` is where a new or
+ * branch-created product starts, and branch drafts are decided through their
+ * own review queue — mass-moving rows back into it is not a list action.
+ */
+export const PRODUCT_BULK_ACTIONS = [
+  'delete',
+  'archive',
+  'unarchive',
+  'set_status',
+  'set_sellable',
+  'set_category',
+  'set_brand',
+] as const;
+
+/** Edits — `catalog.edit`, exactly like `PATCH /products/:id`. */
+export const PRODUCT_BULK_EDIT_ACTIONS: readonly string[] = [
+  'set_status',
+  'set_sellable',
+  'set_category',
+  'set_brand',
+];
+
+/** Removals — `catalog.delete`, like `DELETE /products/:id` and the archive routes. */
+export const PRODUCT_BULK_REMOVAL_ACTIONS: readonly string[] = ['delete', 'archive', 'unarchive'];
+
+/** Retire/restore — `records.archive` on top of `catalog.delete`, like `POST /products/:id/archive`. */
+export const PRODUCT_BULK_ARCHIVE_ACTIONS: readonly string[] = ['archive', 'unarchive'];
+
+export const productBulkBodySchema = bulkBodySchema(PRODUCT_BULK_ACTIONS)
+  .extend({
+    status: z.enum(['active', 'discontinued']).optional(),
+    is_sellable: z.boolean().optional(),
+    category_id: z.number().int().positive().optional(),
+    /** `null` removes the brand — the key must still be present. */
+    brand_id: z.number().int().positive().nullable().optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    requireFieldForActions(value, ctx, 'status', ['set_status']);
+    requireFieldForActions(value, ctx, 'is_sellable', ['set_sellable']);
+    requireFieldForActions(value, ctx, 'category_id', ['set_category']);
+    requireFieldForActions(value, ctx, 'brand_id', ['set_brand']);
+  });
+export type ProductBulkBody = z.infer<typeof productBulkBodySchema>;
 
 /** `base_unit_id` is not editable: stock is counted in it, so changing it is a new variant. */
 export const updateVariantBodySchema = z

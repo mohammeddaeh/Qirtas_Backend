@@ -4,6 +4,7 @@ import { validate } from '../../../core/validation/validate.js';
 import {
   requirePermission,
   requireAnyPermission,
+  requirePermissionWhen,
 } from '../../../core/http/require-permission.js';
 import { publicRoute } from '../../../core/http/route-marker.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
@@ -14,6 +15,9 @@ import {
   updateRolePermissionsBodySchema,
   updateRoleLevelBodySchema,
   rolesFilterQuerySchema,
+  roleBulkBodySchema,
+  ROLE_BULK_ARCHIVE_ACTIONS,
+  type RoleBulkBody,
 } from '../dtos/roles.dto.js';
 import * as rolesController from '../controllers/roles.controller.js';
 
@@ -61,6 +65,23 @@ rolesRouter.get(
   requireAnyPermission(['roles.view', 'users.access', 'users.approve']),
   validate(listRolesQuerySchema, 'query'),
   asyncHandler(rolesController.listRoles),
+);
+
+// Multi-select on the roles list. Every action is the same service call as its
+// single-record route (core/bulk/bulk.ts), so the guards mirror them too:
+// `roles.edit` always, and `records.archive` on top for archive/unarchive —
+// checked for the whole request before any row is touched.
+//
+// ⚠️ Must stay ABOVE the `/:id` routes — a literal segment belongs before a
+// param one.
+rolesRouter.post(
+  '/bulk',
+  requirePermission('roles.edit'),
+  validate(roleBulkBodySchema, 'body'),
+  requirePermissionWhen('records.archive', (req) =>
+    ROLE_BULK_ARCHIVE_ACTIONS.includes((req.body as RoleBulkBody).action),
+  ),
+  asyncHandler(rolesController.bulkRoles),
 );
 
 rolesRouter.get(

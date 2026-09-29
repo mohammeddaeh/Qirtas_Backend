@@ -31,7 +31,10 @@ import {
   type ChangeEmailBody,
   maskEmail,
   type WireCustomerActivity,
+  type CustomerBulkBody,
 } from '../dtos/customers.dto.js';
+import { runBulk, type BulkResult } from '../../../core/bulk/bulk.js';
+import type { Lang } from '../../../core/i18n/messages.js';
 
 /**
  * What both `register` and `login` return. `account_type` is the discriminator
@@ -601,6 +604,36 @@ export async function deleteCustomer(actor: RequestActorContext, id: number): Pr
     { email: before.email, full_name: `${before.first_name} ${before.last_name}`.trim() },
     null,
   );
+}
+
+/**
+ * `POST /customers/bulk` — each id through the very function its single-record
+ * endpoint calls, one at a time (see `core/bulk/bulk.ts` for why that is the
+ * whole design). So an archived customer is still refused `customer_archived`
+ * on a status change, delete still needs `disabled` first, and a suspension
+ * still tells the customer — once per row, as ten single presses would.
+ */
+export function bulkCustomers(
+  actor: RequestActorContext,
+  body: CustomerBulkBody,
+  lang: Lang,
+): Promise<BulkResult> {
+  return runBulk(body.ids, lang, (id) => {
+    switch (body.action) {
+      case 'suspend':
+        return suspendCustomer(actor, id);
+      case 'disable':
+        return disableCustomer(actor, id);
+      case 'reactivate':
+        return reactivateCustomer(actor, id);
+      case 'archive':
+        return archiveCustomer(actor, id);
+      case 'unarchive':
+        return unarchiveCustomer(actor, id);
+      case 'delete':
+        return deleteCustomer(actor, id);
+    }
+  });
 }
 
 /**

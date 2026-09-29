@@ -31,6 +31,7 @@ qirtas_backend/
     │   └── logger/logger.ts
     └── features/
         ├── catalog/          ← الكتالوج المركزي: وحدات · خصائص · تصنيفات · ماركات · منتجات/متغيّرات/باركود · مجموعات · صور
+        ├── documents/        ← الفواتير والملصقات: القوالب (أقسام مرتّبة، يتحقّق منها الخادم ولا يُصيِّرها) · ملف المحل · بيانات الملصق بسعر الفرع
         ├── printing/         ← الطباعة: خيارات المواصفة · أسعار الصفحة المركزية واستثناء الفرع ضمن نطاق · قدرة الفرع · حساب السعر العام
         └── identity/         ← الموديول التأسيسي الكامل: users/roles/permissions/branches/ownerships/audit/sessions
             ├── routes/ controllers/ services/ repositories/ schemas/ dtos/

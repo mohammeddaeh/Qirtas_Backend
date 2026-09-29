@@ -42,7 +42,10 @@ import {
   type CreateUserByAdminBody,
   type UsersFilterQuery,
   type ResubmitRegistrationBody,
+  type UserBulkBody,
 } from '../dtos/users.dto.js';
+import { runBulk, type BulkResult } from '../../../core/bulk/bulk.js';
+import type { Lang } from '../../../core/i18n/messages.js';
 
 const MAX_OWNERSHIP_PERCENTAGE = 100;
 
@@ -1217,6 +1220,38 @@ export async function reactivateUser(
   );
   notifyStaff(row, NOTIFICATION.accountReactivated);
   return toWireUser(row);
+}
+
+/**
+ * `POST /users/bulk` — each id through the very function its single-record
+ * endpoint calls, one at a time (see `core/bulk/bulk.ts` for why that is the
+ * whole design). So a row keeps every refusal it has alone: the root account,
+ * the caller's own account, the last qualified holder of a post, an archived
+ * account, and the history that turns delete into archive — each answered with
+ * the key the single endpoint would have used. A suspension still notifies
+ * that person, once per row, exactly as pressing the button would.
+ */
+export function bulkUsers(
+  actor: RequestActorContext,
+  body: UserBulkBody,
+  lang: Lang,
+): Promise<BulkResult> {
+  return runBulk(body.ids, lang, (id) => {
+    switch (body.action) {
+      case 'suspend':
+        return suspendUser(actor, id);
+      case 'disable':
+        return disableUser(actor, id);
+      case 'reactivate':
+        return reactivateUser(actor, id);
+      case 'delete':
+        return deleteUser(actor, id);
+      case 'archive':
+        return archiveUser(actor, id);
+      case 'unarchive':
+        return unarchiveUser(actor, id);
+    }
+  });
 }
 
 /**

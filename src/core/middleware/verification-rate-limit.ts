@@ -26,11 +26,9 @@ const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
  * they ask for a resend when mail is slow. Being locked out of confirming your
  * own address is a worse outcome than the marginal attempt this allows.
  *
- * ⚠️ Same two caveats as the other limiters: in-memory (resets on restart, and
- * counts per-instance behind more than one process), and `req.ip` needs
- * Express's `trust proxy` configured if a reverse proxy is ever put in front —
- * otherwise every request resolves to the proxy and this collapses into one
- * shared bucket.
+ * Counters live in `RATE_LIMIT_STORE` (memory in development, postgres —
+ * shared by every server — required in production), and `req.ip` is only the
+ * client behind a proxy when `TRUST_PROXY_HOPS` says how many proxies there are.
  */
 const ipLimiter = new RateLimiter(
   MAX_ATTEMPTS,
