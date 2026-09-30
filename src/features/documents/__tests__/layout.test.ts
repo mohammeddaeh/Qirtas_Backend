@@ -24,7 +24,26 @@ describe('receipt layout', () => {
   it('fills every default, so a device never reads a missing option', () => {
     const parsed = receiptLayoutSchema.parse({ page: { paper: 'roll_80' }, blocks: [{ type: 'totals' }] });
     expect(parsed.version).toBe(1);
-    expect(parsed.page).toEqual({ paper: 'roll_80', margin_mm: 2, font_scale: 1, language: 'ar', copies: 1 });
+    // The style knobs default to the look a receipt had before styles existed —
+    // a template saved then prints exactly as it did.
+    expect(parsed.page).toEqual({
+      paper: 'roll_80',
+      margin_mm: 2,
+      font_scale: 1,
+      language: 'ar',
+      copies: 1,
+      style: 'classic',
+      density: 'normal',
+      total_style: 'auto',
+      separator: 'auto',
+      heading_font: 'auto',
+      item_layout: 'auto',
+      body_font: 'noto',
+      digits: 'latin',
+      currency: 'symbol',
+      time_format: 'h24',
+      accent: null,
+    });
     expect(parsed.blocks[0]).toEqual({
       type: 'totals',
       visible: true,
@@ -33,6 +52,45 @@ describe('receipt layout', () => {
       show_tax: true,
       total_size: 'large',
     });
+  });
+
+  it('accepts every style and refuses an unknown one', () => {
+    for (const style of ['classic', 'modern', 'minimal', 'tabular', 'elegant', 'ticket']) {
+      const parsed = receiptLayoutSchema.parse({ page: { paper: 'roll_80', style }, blocks: [{ type: 'totals' }] });
+      expect(parsed.page.style).toBe(style);
+    }
+    expect(
+      receiptLayoutSchema.safeParse({ page: { paper: 'roll_80', style: 'neon' }, blocks: [{ type: 'totals' }] })
+        .success,
+    ).toBe(false);
+  });
+
+  it('an accent is a lowercase #rrggbb or nothing — never a name the app cannot draw', () => {
+    const page = (accent: unknown) => ({ page: { paper: 'a4', accent }, blocks: [{ type: 'totals' }] });
+    expect(receiptLayoutSchema.parse(page('#1e56c8')).page.accent).toBe('#1e56c8');
+    expect(receiptLayoutSchema.parse(page(null)).page.accent).toBeNull();
+    for (const bad of ['red', '#1E56C8', '#1e56c', '1e56c8']) {
+      expect(receiptLayoutSchema.safeParse(page(bad)).success, bad).toBe(false);
+    }
+  });
+
+  it('a QR prints the sale by default, and a link only when asked', () => {
+    const parsed = receiptLayoutSchema.parse({ page: { paper: 'roll_80' }, blocks: [{ type: 'qr' }] });
+    expect(parsed.blocks[0]).toMatchObject({ content: 'sale', link: '' });
+    const link = receiptLayoutSchema.parse({
+      page: { paper: 'roll_80' },
+      blocks: [{ type: 'qr', content: 'link', link: 'https://g.page/r/x' }],
+    });
+    expect(link.blocks[0]).toMatchObject({ content: 'link', link: 'https://g.page/r/x' });
+  });
+
+  it('a signature block is a receipt block, once', () => {
+    const once = { page: { paper: 'a4' }, blocks: [{ type: 'signature' }] };
+    expect(receiptLayoutSchema.parse(once).blocks[0]).toMatchObject({ show_signature: true, show_stamp: true });
+    expect(
+      receiptLayoutSchema.safeParse({ page: { paper: 'a4' }, blocks: [{ type: 'signature' }, { type: 'signature' }] })
+        .success,
+    ).toBe(false);
   });
 
   it('keeps what was sent over the default', () => {

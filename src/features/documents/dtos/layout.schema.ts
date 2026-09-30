@@ -129,6 +129,25 @@ const saleQr = z
     visible,
     align: align.default('center'),
     size_mm: z.number().min(10).max(50).default(22),
+    /**
+     * `sale` encodes the invoice number (scanned at the till for a return);
+     * `link` encodes a URL the shop chose — a review page, a map pin, a menu.
+     * A link QR with no link prints nothing rather than an empty square.
+     */
+    content: z.enum(['sale', 'link']).default('sale'),
+    link: z.string().trim().max(300).default(''),
+    /** A short line under the code saying what it opens («قيّمنا»). */
+    caption_ar: z.string().trim().max(80).default(''),
+    caption_en: z.string().trim().max(80).default(''),
+  })
+  .strict();
+/** Signature and stamp boxes — for A4 invoices a business files. */
+const signature = z
+  .object({
+    type: z.literal('signature'),
+    visible,
+    show_signature: z.boolean().default(true),
+    show_stamp: z.boolean().default(true),
   })
   .strict();
 
@@ -143,6 +162,7 @@ export const receiptBlockSchema = z.discriminatedUnion('type', [
   payment,
   saleBarcode,
   saleQr,
+  signature,
   text,
   divider,
   spacer,
@@ -236,6 +256,7 @@ const language = z.enum(['ar', 'en', 'both']).default('ar');
 // ── Receipt layout ─────────────────────────────────────────────────────────
 
 export const RECEIPT_PAPERS = ['roll_58', 'roll_80', 'a4', 'a5'] as const;
+export const RECEIPT_STYLES = ['classic', 'modern', 'minimal', 'tabular', 'elegant', 'ticket'] as const;
 
 export const receiptLayoutSchema = z
   .object({
@@ -247,6 +268,32 @@ export const receiptLayoutSchema = z
         font_scale: fontScale,
         language,
         copies: z.number().int().min(1).max(5).default(1),
+        // **نمط الرسم** — كيف تُرسم الأقسام نفسها (لا أيّها يظهر)، وفوقه ما
+        // يعدّله كل محل بذوقه. `auto` يتبع النمط. الافتراضيات هي شكل الفاتورة
+        // قبل وجود الأنماط، فقالبٌ محفوظ قبلها يُطبع كما كان.
+        style: z.enum(RECEIPT_STYLES).default('classic'),
+        density: z.enum(['comfortable', 'normal', 'compact']).default('normal'),
+        total_style: z.enum(['auto', 'box', 'band', 'plain']).default('auto'),
+        separator: z.enum(['auto', 'space', 'line', 'dots', 'double']).default('auto'),
+        heading_font: z.enum(['auto', 'kufi', 'naskh', 'modern']).default('auto'),
+        /** How items are laid out; `auto` follows the style. Replaces the lines block's own `style`. */
+        item_layout: z.enum(['auto', 'two_lines', 'one_line', 'table']).default('auto'),
+        /** The face for the whole receipt; headings keep `heading_font`. */
+        body_font: z.enum(['noto', 'almarai', 'tajawal', 'naskh']).default('noto'),
+        digits: z.enum(['latin', 'arabic']).default('latin'),
+        /** `symbol` = «ل.س» / «SYP» by language · `code` = «SYP» always · `none`. */
+        currency: z.enum(['symbol', 'code', 'none']).default('symbol'),
+        time_format: z.enum(['h24', 'h12']).default('h24'),
+        /**
+         * A brand colour for A4/A5 and shared copies. A thermal head prints one
+         * colour, so the app ignores it on rolls — stored anyway so switching
+         * the paper does not lose it.
+         */
+        accent: z
+          .string()
+          .regex(/^#[0-9a-f]{6}$/)
+          .nullable()
+          .default(null),
       })
       .strict(),
     blocks: z.array(receiptBlockSchema).min(1).max(40),

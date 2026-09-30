@@ -37,8 +37,21 @@ export async function listOpen(req: Request, res: Response): Promise<void> {
 export async function list(req: Request, res: Response): Promise<void> {
   const query = req.query as unknown as SalesQuery;
   const params = toPaginationParams(query);
+  // `to` يومٌ كامل: «حتى ٣٠» يشمل ٣٠ — الحدّ منتصف ليل اليوم التالي.
+  const dayAfter = (day: string) => {
+    const d = new Date(`${day}T00:00:00`);
+    d.setDate(d.getDate() + 1);
+    return d;
+  };
   const { rows, total } = await repo.findSales(
-    { branchId: query.branch_id, cashierId: query.cashier_id, status: query.status },
+    {
+      branchId: query.branch_id,
+      cashierId: query.cashier_id,
+      status: query.status,
+      search: query.search,
+      from: query.from === undefined ? undefined : new Date(`${query.from}T00:00:00`),
+      to: query.to === undefined ? undefined : dayAfter(query.to),
+    },
     params.limit,
     (params.page - 1) * params.limit,
   );

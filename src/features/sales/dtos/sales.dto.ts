@@ -88,6 +88,10 @@ export const salesQuerySchema = paginationQuerySchema
     branch_id: id.optional(),
     cashier_id: id.optional(),
     status: z.enum(['open', 'held', 'paid', 'void']).optional(),
+    // سجلّ المبيعات: رقم الفاتورة أو اسم الزبون جزئياً، ونطاق أيامٍ كاملة.
+    search: z.string().trim().min(1).max(64).optional(),
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   })
   .strict();
 

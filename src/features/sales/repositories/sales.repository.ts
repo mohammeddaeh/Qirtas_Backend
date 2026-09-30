@@ -1,9 +1,10 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { branchesTable } from '../../identity/schemas/branches.schema.js';
 import { usersTable } from '../../identity/schemas/users.schema.js';
 import { userRoleAssignmentsTable } from '../../identity/schemas/user-role-assignments.schema.js';
 import {
+  catalogProductMediaTable,
   catalogProductsTable,
   catalogVariantsTable,
 } from '../../catalog/schemas/products.schema.js';
@@ -90,7 +91,16 @@ export async function findOpenSales(branchId: number, cashierId: number): Promis
 }
 
 export async function findSales(
-  filters: { branchId?: number; cashierId?: number; status?: SaleRow['status'] },
+  filters: {
+    branchId?: number;
+    cashierId?: number;
+    status?: SaleRow['status'];
+    /** رقم الفاتورة أو اسم الزبون — جزئياً: الكاشير يتذكّر آخر أرقامها. */
+    search?: string;
+    /** يومٌ كامل بتوقيت الخادم، على وقت الإنشاء. */
+    from?: Date;
+    to?: Date;
+  },
   limit: number,
   offset: number,
 ): Promise<{ rows: SaleRow[]; total: number }> {
@@ -99,6 +109,14 @@ export async function findSales(
   if (filters.cashierId !== undefined)
     clauses.push(eq(salesTable.cashier_user_id, filters.cashierId));
   if (filters.status !== undefined) clauses.push(eq(salesTable.status, filters.status));
+  if (filters.search !== undefined) {
+    const term = `%${filters.search}%`;
+    clauses.push(
+      sql`(${salesTable.number} ILIKE ${term} OR ${salesTable.customer_name} ILIKE ${term})`,
+    );
+  }
+  if (filters.from !== undefined) clauses.push(gte(salesTable.created_at, filters.from));
+  if (filters.to !== undefined) clauses.push(lt(salesTable.created_at, filters.to));
   const where = clauses.length > 0 ? and(...clauses) : undefined;
 
   const [rows, counted] = await Promise.all([
@@ -435,6 +453,25 @@ export async function searchSellableItems(
     )
     .orderBy(asc(catalogProductsTable.name_ar), asc(catalogVariantsTable.id))
     .limit(limit);
+}
+
+/**
+ * صور المنتجات بترتيبها — لصورة الصنف بالبحث وبسطر السلّة.
+ *
+ * الكاشير يميّز «دفتر ٦٠ ورقة» عن «دفتر ١٠٠ ورقة» بالغلاف قبل الاسم؛ قائمةٌ
+ * بأسماء متشابهة بلا صور تجعله يقرأ كل صفّ.
+ */
+export function findProductMedia(productIds: number[]) {
+  if (productIds.length === 0) return Promise.resolve([]);
+  return db
+    .select({
+      product_id: catalogProductMediaTable.product_id,
+      variant_id: catalogProductMediaTable.variant_id,
+      media_id: catalogProductMediaTable.media_id,
+    })
+    .from(catalogProductMediaTable)
+    .where(inArray(catalogProductMediaTable.product_id, [...new Set(productIds)]))
+    .orderBy(asc(catalogProductMediaTable.sort_order), asc(catalogProductMediaTable.id));
 }
 
 export async function findVariantForSale(variantId: number) {

@@ -2,6 +2,7 @@ import { recordAudit } from '../../../core/audit/audit-recorder.js';
 import { db } from '../../../core/db/client.js';
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
 import type { RequestActorContext } from '../../../core/http/require-actor.js';
+import { publicImagesByIds } from '../../../core/media/media.service.js';
 import { resolvePricesAt } from '../../../core/pricing/price-port.js';
 import { issueStock } from '../../../core/stock/stock-port.js';
 import { serviceLineHandler, type ServiceKind } from '../../../core/till/service-line-port.js';
@@ -55,6 +56,14 @@ export interface WireSaleLine {
   tax_percent: number;
   tax_syp: number;
   line_total_syp: number;
+  /**
+   * السطر **قبل أي خصم** (السعر المعلن × الكمية). يُعرض مشطوباً فوق
+   * `line_total_syp` حين يختلفان: «قبل وبعد» يُقرأ بلا شرح، و«خصم ٥٠٠» لا يقول
+   * إن كان عن القطعة أم عن السطر كله.
+   */
+  gross_syp: number;
+  /** صورة الصنف المصغّرة (رابط نسبي) — `null` لسطر خدمة أو صنفٍ بلا صورة. */
+  thumbnail: string | null;
 }
 
 export interface WireSale {
@@ -72,15 +81,51 @@ export interface WireSale {
   discount_approved_by: number | null;
   subtotal_syp: number;
   discount_syp: number;
+  /**
+   * `discount_syp` مقسوماً: ما خصمته العروض وما خصمه الكاشير. مجموعُ حصص
+   * السطور **هنا** لا بالجهاز — الفاتورة تقول «عروض −٥٠٠ · خصم ١٠٪ −١٢٠٠»،
+   * والعميل لا يجمع مبلغاً.
+   */
+  promotion_discount_syp: number;
+  manual_discount_syp: number;
   tax_syp: number;
   total_syp: number;
+  /**
+   * الباقي للزبون — من النقد وحده (المسلَّم − المدفوع نقداً). لا يُخزَّن، لكنه
+   * يُشتقّ مما خُزِّن، فيُقرأ هنا مرة بدل أن يحسبه كل شاشة تعرض فاتورة.
+   */
+  change_syp: number;
+  /** ما استلمه الكاشير: المسلَّم نقداً، والمبلغ نفسه لغير النقد. */
+  received_syp: number;
   lines: WireSaleLine[];
   payments: { method: string; amount_syp: number; tendered_syp: number | null }[];
   created_at: string;
   paid_at: string | null;
 }
 
-function wireLine(row: SaleLineRow): WireSaleLine {
+/**
+ * صورة كل صنف: صورة المتغيّر نفسه إن وُجدت، وإلا أول صور المنتج — الترتيب
+ * ترتيب المعرض (`sort_order`)، فالغلاف الذي اختارته الإدارة أولاً هو ما يُرى.
+ */
+async function thumbnailsFor(
+  items: { productId: number | null; variantId: number | null }[],
+): Promise<(string | null)[]> {
+  const productIds = items.flatMap((i) => (i.productId === null ? [] : [i.productId]));
+  if (productIds.length === 0) return items.map(() => null);
+  const links = await repo.findProductMedia(productIds);
+  const images = await publicImagesByIds(links.map((l) => l.media_id));
+  return items.map(({ productId, variantId }) => {
+    if (productId === null) return null;
+    const own = links.filter((l) => l.product_id === productId);
+    const pick =
+      own.find((l) => l.variant_id !== null && l.variant_id === variantId) ??
+      own.find((l) => l.variant_id === null) ??
+      own[0];
+    return pick === undefined ? null : (images.get(pick.media_id)?.urls.thumb ?? null);
+  });
+}
+
+function wireLine(row: SaleLineRow, thumbnail: string | null = null): WireSaleLine {
   return {
     id: row.id,
     variant_id: row.variant_id,
@@ -102,6 +147,8 @@ function wireLine(row: SaleLineRow): WireSaleLine {
     tax_percent: num(row.tax_percent),
     tax_syp: num(row.tax_syp),
     line_total_syp: num(row.line_total_syp),
+    gross_syp: roundSyp(num(row.unit_price_syp) * num(row.qty)),
+    thumbnail,
   };
 }
 
@@ -120,6 +167,9 @@ export async function getSale(id: number): Promise<WireSale> {
     repo.findPayments(id),
     repo.findUserName(sale.cashier_user_id),
   ]);
+  const thumbs = await thumbnailsFor(
+    lines.map((l) => ({ productId: l.product_id, variantId: l.variant_id })),
+  );
 
   const totals =
     sale.status === 'paid'
@@ -135,6 +185,41 @@ export async function getSale(id: number): Promise<WireSale> {
     sale.status === 'paid'
       ? null
       : computeTotals(lines.map(toRuleLine), num(sale.discount_percent));
+  const wireLines = lines.map((row, i) => {
+    const wire = wireLine(row, thumbs[i] ?? null);
+    // المفتوحة تعرض حصّة الخصم كما تُحسب الآن، لا كما كانت قبل السطر الأخير.
+    if (computed === null) return wire;
+    const share = computed.lines[i];
+    return share === undefined
+      ? wire
+      : {
+          ...wire,
+          manual_discount_syp: share.manualDiscountSyp,
+          tax_syp: share.taxSyp,
+          line_total_syp: share.lineTotalSyp,
+        };
+  });
+  const wirePayments = payments.map((p) => ({
+    method: p.method,
+    amount_syp: num(p.amount_syp),
+    tendered_syp: p.tendered_syp === null ? null : num(p.tendered_syp),
+  }));
+  // حصّة الكاشير مجموعُ حصص السطور (مبالغ سطرٍ كاملة)، والعروض هي الباقي من
+  // `discount_syp` — لا تُجمع من `promotion_discount_syp` لأنه **للوحدة**.
+  const discountSyp = roundSyp(totals.discountSyp);
+  const manualSyp = Math.min(
+    discountSyp,
+    roundSyp(wireLines.reduce((acc, l) => acc + l.manual_discount_syp, 0)),
+  );
+  const changeSyp = roundSyp(
+    wirePayments.reduce(
+      (acc, p) =>
+        p.method === 'cash' && p.tendered_syp !== null
+          ? acc + Math.max(0, p.tendered_syp - p.amount_syp)
+          : acc,
+      0,
+    ),
+  );
   return {
     id: sale.id,
     branch_id: sale.branch_id,
@@ -148,28 +233,17 @@ export async function getSale(id: number): Promise<WireSale> {
     discount_reason: sale.discount_reason,
     discount_approved_by: sale.discount_approved_by,
     subtotal_syp: roundSyp(totals.subtotalSyp),
-    discount_syp: roundSyp(totals.discountSyp),
+    discount_syp: discountSyp,
+    promotion_discount_syp: discountSyp - manualSyp,
+    manual_discount_syp: manualSyp,
     tax_syp: roundSyp(totals.taxSyp),
     total_syp: roundSyp(totals.totalSyp),
-    lines: lines.map((row, i) => {
-      const wire = wireLine(row);
-      // المفتوحة تعرض حصّة الخصم كما تُحسب الآن، لا كما كانت قبل السطر الأخير.
-      if (computed === null) return wire;
-      const share = computed.lines[i];
-      return share === undefined
-        ? wire
-        : {
-            ...wire,
-            manual_discount_syp: share.manualDiscountSyp,
-            tax_syp: share.taxSyp,
-            line_total_syp: share.lineTotalSyp,
-          };
-    }),
-    payments: payments.map((p) => ({
-      method: p.method,
-      amount_syp: num(p.amount_syp),
-      tendered_syp: p.tendered_syp === null ? null : num(p.tendered_syp),
-    })),
+    change_syp: changeSyp,
+    received_syp: roundSyp(
+      wirePayments.reduce((acc, p) => acc + (p.tendered_syp ?? p.amount_syp), 0),
+    ),
+    lines: wireLines,
+    payments: wirePayments,
     created_at: sale.created_at.toISOString(),
     paid_at: sale.paid_at?.toISOString() ?? null,
   };
@@ -201,6 +275,8 @@ export interface WireSellableItem {
   promotion_names: string[];
   /** مسحةٌ طابقت رمزاً تماماً — بها يُضاف الصنف بلا اختيار. */
   exact_barcode: boolean;
+  /** صورة الصنف المصغّرة (رابط نسبي) أو `null`. */
+  thumbnail: string | null;
 }
 
 /**
@@ -215,12 +291,15 @@ export interface WireSellableItem {
 export async function searchItems(branchId: number, search: string): Promise<WireSellableItem[]> {
   const rows = await repo.searchSellableItems(search.trim(), branchId, 25);
   if (rows.length === 0) return [];
-  const prices = await resolvePricesAt(
-    branchId,
-    rows.map((r) => r.variant_id),
-    POS_PRICES,
-  );
-  return rows.map((row) => {
+  const [prices, thumbs] = await Promise.all([
+    resolvePricesAt(
+      branchId,
+      rows.map((r) => r.variant_id),
+      POS_PRICES,
+    ),
+    thumbnailsFor(rows.map((r) => ({ productId: r.product_id, variantId: r.variant_id }))),
+  ]);
+  return rows.map((row, i) => {
     const price = prices.get(row.variant_id);
     const priced = price?.status === 'priced' ? price : null;
     return {
@@ -234,6 +313,7 @@ export async function searchItems(branchId: number, search: string): Promise<Wir
       was_syp: priced?.promotion?.beforeSyp ?? null,
       promotion_names: priced?.promotion?.names ?? [],
       exact_barcode: row.exact_barcode === true,
+      thumbnail: thumbs[i] ?? null,
     };
   });
 }
