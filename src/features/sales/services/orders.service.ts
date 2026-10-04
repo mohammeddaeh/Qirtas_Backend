@@ -10,6 +10,7 @@ import type { Exec } from '../repositories/orders.repository.js';
 import * as salesRepo from '../repositories/sales.repository.js';
 import * as returnsRepo from '../repositories/returns.repository.js';
 import type { OrderRow } from '../schemas/orders.schema.js';
+import { thumbnailsFor } from './line-thumbnails.js';
 import { branchPrefix, roundSyp } from './sale-rules.js';
 import {
   formatOrderNumber,
@@ -44,6 +45,10 @@ export interface WireCartLine {
   product_id: number;
   name_ar: string;
   sku: string;
+  /** ما يميّز المتغيّر («أحمر · A4») — فارغ لمنتجٍ بلا محاور. هو ما يُعرض، لا الـSKU. */
+  label_ar: string;
+  /** صورة الصنف كما بالصندوق (`thumbnailsFor`) — `null` حين لا صورة. */
+  thumbnail: string | null;
   qty: number;
   unit_price_syp: number | null;
   was_syp: number | null;
@@ -86,12 +91,14 @@ async function priceCart(
 ): Promise<PricedLine[]> {
   if (lines.length === 0) return [];
   const variantIds = lines.map((l) => l.variant_id);
-  const [prices, available] = await Promise.all([
+  const [prices, available, labels, thumbs] = await Promise.all([
     resolvePricesAt(branchId, variantIds, onlinePrices(isWholesale)),
     repo.findAvailable(branchId, variantIds),
+    repo.findVariantLabels(variantIds),
+    thumbnailsFor(lines.map((l) => ({ productId: l.product_id, variantId: l.variant_id }))),
   ]);
 
-  return lines.map((line) => {
+  return lines.map((line, i) => {
     const qty = num(line.qty);
     const price = prices.get(line.variant_id);
     const priced = price?.status === 'priced' && price.amountSyp !== null ? price : null;
@@ -110,6 +117,8 @@ async function priceCart(
         product_id: line.product_id,
         name_ar: line.name_ar,
         sku: line.sku,
+        label_ar: labels.get(line.variant_id) ?? '',
+        thumbnail: thumbs[i] ?? null,
         qty,
         unit_price_syp: unit,
         was_syp: before,

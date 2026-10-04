@@ -586,11 +586,21 @@ const ROLES: SeedRole[] = [
     category: 'system',
     level: null,
     is_system_default: true,
+    // يقرأ كل ما يُراجَع ولا يكتب شيئاً: التدقيق بلا قراءة المبيعات والمخزون
+    // والطلبات شاشةٌ فارغة لمن وظيفته أن يرى.
     permissionKeys: [
       'reports.financial.view',
       'reports.operational.view',
       'audit_log.view',
       'catalog.view',
+      'dashboard.view',
+      'sales.view',
+      'inventory.view',
+      'suppliers.view',
+      'orders.view',
+      'customers.view',
+      'promotions.view',
+      'printing.queue.view',
     ],
   },
   {
@@ -632,6 +642,12 @@ const ROLES: SeedRole[] = [
       'promotions.view',
       'promotions.edit',
       'barcodes.print',
+      // الصندوق بفرعه: يبيع حين يلزم، ويقرأ فواتير فرعه، ويُخرج المال بالمرتجع
+      // (المفتاح المنفصل عن البيع — §27) لأنه من يوافق على المرتجع أصلاً.
+      'sales.sell',
+      'sales.view',
+      'sales.refund',
+      'dashboard.view',
     ],
   },
   {
@@ -639,7 +655,16 @@ const ROLES: SeedRole[] = [
     category: 'financial',
     level: 10,
     is_system_default: true,
-    permissionKeys: ['reports.financial.view'],
+    // حصّة بلا أي قراءة كانت تعني حساباً يدخل على رئيسية فارغة: الشريك يرى
+    // حركة المال والبضاعة، ولا يغيّر شيئاً.
+    permissionKeys: [
+      'reports.financial.view',
+      'dashboard.view',
+      'sales.view',
+      'inventory.view',
+      'promotions.view',
+      'catalog.view',
+    ],
   },
   {
     name: 'موظف مخزون',
@@ -682,7 +707,8 @@ const ROLES: SeedRole[] = [
     category: 'operational',
     level: 20,
     is_system_default: true,
-    permissionKeys: ['orders.delivery.view', 'orders.delivery.update', 'catalog.view'],
+    // orders.view حتى يُبنى موديول التوصيل: المندوب يرى ما ينتظر الاستلام.
+    permissionKeys: ['orders.delivery.view', 'orders.delivery.update', 'orders.view', 'catalog.view'],
   },
   {
     name: 'أمين صندوق / مبيعات',
@@ -695,6 +721,11 @@ const ROLES: SeedRole[] = [
       'printing.create',
       'customization.create',
       'catalog.view',
+      // الصندوق نفسه — كان الدور بلا sales.sell فلا يرى الكاشير شاشة البيع.
+      // والمرتجع مفتاحٌ آخر (sales.refund) يبقى بيد مدير الفرع.
+      'sales.sell',
+      'sales.view',
+      'promotions.view',
     ],
   },
   {
@@ -709,6 +740,9 @@ const ROLES: SeedRole[] = [
       'customers.view',
       'customers.contact',
       'catalog.view',
+      // «أين طلبي؟» سؤالها اليومي — عن فاتورة أو عن طباعة.
+      'sales.view',
+      'printing.queue.view',
     ],
   },
 ];

@@ -4,8 +4,10 @@ import { branchesTable } from '../../identity/schemas/branches.schema.js';
 import { customersTable } from '../../customers/schemas/customers.schema.js';
 import {
   catalogProductsTable,
+  catalogVariantAttributeValuesTable,
   catalogVariantsTable,
 } from '../../catalog/schemas/products.schema.js';
+import { catalogAttributeValuesTable } from '../../catalog/schemas/attributes.schema.js';
 import { stockBalancesTable } from '../../inventory/schemas/stock.schema.js';
 import {
   cartLinesTable,
@@ -110,6 +112,28 @@ export async function findCartLines(cartId: number, exec: Exec = db) {
     .innerJoin(catalogProductsTable, eq(catalogProductsTable.id, catalogVariantsTable.product_id))
     .where(eq(cartLinesTable.cart_id, cartId))
     .orderBy(cartLinesTable.id);
+}
+
+/**
+ * ما يميّز كل متغيّر عن إخوته بكلمات الزبون («أحمر · A4») — فارغٌ لمنتجٍ بلا
+ * محاور. سطر السلّة كان يعرض الـSKU مكانه، رمزاً داخلياً لا يعني للزبون شيئاً.
+ */
+export async function findVariantLabels(variantIds: number[]): Promise<Map<number, string>> {
+  if (variantIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      variant_id: catalogVariantAttributeValuesTable.variant_id,
+      value_ar: catalogAttributeValuesTable.value_ar,
+    })
+    .from(catalogVariantAttributeValuesTable)
+    .innerJoin(
+      catalogAttributeValuesTable,
+      eq(catalogAttributeValuesTable.id, catalogVariantAttributeValuesTable.attribute_value_id),
+    )
+    .where(inArray(catalogVariantAttributeValuesTable.variant_id, variantIds));
+  const parts = new Map<number, string[]>();
+  for (const row of rows) parts.set(row.variant_id, [...(parts.get(row.variant_id) ?? []), row.value_ar]);
+  return new Map([...parts].map(([id, words]) => [id, words.join(' · ')]));
 }
 
 /** المتاح لكل صنف بهذا الفرع — `on_hand − reserved` كما يراه الكاشير. */

@@ -31,6 +31,8 @@ const line: WireCartLine = {
   product_id: 5,
   name_ar: 'منتج تجربة مخزون',
   sku: 'QRT-000016',
+  label_ar: '',
+  thumbnail: null,
   qty: 2,
   unit_price_syp: 2500,
   was_syp: null,
@@ -106,6 +108,9 @@ describe('cart wire shape', () => {
       'line_total_syp',
       'available_qty',
       'problem',
+      // what the row shows instead of the SKU, and its picture
+      'label_ar',
+      'thumbnail',
     ]) {
       expect(line).toHaveProperty(key);
     }

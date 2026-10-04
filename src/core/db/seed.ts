@@ -4,10 +4,10 @@
  * The core step (permissions + roles + their ar/en display names) always runs
  * and is idempotent. Everything else is opt-in behind a flag, because those
  * steps differ in kind, not just in scope: `--demo` writes a large dataset and
- * can hard-delete, `--fr` and `--ui-overrides-demo` write translation content
- * that a developer edits by hand in its own file, `--admin` creates a real
- * account. Running them unconditionally on every `db:seed` would be wrong for
- * all four.
+ * can hard-delete, `--showcase` empties every business table, `--fr` writes
+ * translation content that a developer edits by hand in its own file,
+ * `--admin` creates a real account. Running them unconditionally on every
+ * `db:seed` would be wrong for all four.
  *
  * Each step lives in its own module and exports a plain async function; this
  * file owns argument parsing, ordering, and the single `pool.end()` — the step
@@ -17,8 +17,10 @@
  *   npm run db:seed -- --admin               # + first Super Admin account
  *   npm run db:seed -- --demo --reset        # + Arabic demo dataset, wiped first
  *   npm run db:seed -- --fr                  # + French dynamic language
+ *   npm run db:seed -- --showcase            # + products, stock, sales… in every state
  *   npm run db:seed -- --all                 # core + admin + demo + fr
- *   npm run db:setup                         # migrate, then --admin --demo --reset
+ *   npm run db:setup                         # migrate, then --admin --demo --reset --showcase
+ *   npm run db:showcase                      # = db:seed -- --showcase
  */
 import { pool } from './client.js';
 import { configureAuth } from '../auth/composition.js';
@@ -26,7 +28,7 @@ import type { EmailDeliveryResult, EmailSender } from '../auth/ports/email-sende
 import { staffAuthRealm } from '../../features/identity/auth-realm.js';
 import { customerAuthRealm } from '../../features/customers/auth-realm.js';
 import { customerActivitySink } from '../../features/customers/repositories/customer-activity-sink.impl.js';
-import { sinkByRealm } from '..//auth/ports/security-event-sink.js';
+import { sinkByRealm } from '../auth/ports/security-event-sink.js';
 import { auditLogSecurityEventSink } from '../../features/identity/repositories/security-event-sink.impl.js';
 import { seedCore } from './seed-core.js';
 import { bootstrapSuperAdminIfMissing } from './bootstrap-super-admin.js';
@@ -35,7 +37,8 @@ import { seedCatalogReference } from './seed-catalog.js';
 import { seedPrintingReference } from './seed-printing.js';
 import { seedDocumentTemplates } from './seed-documents.js';
 import { seedFrenchUiTranslations } from './seed-french-ui-translations.js';
-import { seedUiTextOverridesDemo } from './seed-ui-text-overrides-demo.js';
+import { wipeBusinessData } from './seed-wipe.js';
+import { seedShowcase } from './seed-showcase.js';
 import { logger } from '../logger/logger.js';
 
 const KNOWN_FLAGS = [
@@ -43,7 +46,8 @@ const KNOWN_FLAGS = [
   '--demo',
   '--reset',
   '--fr',
-  '--ui-overrides-demo',
+  '--showcase',
+  '--no-wipe',
   '--all',
   '--help',
 ] as const;
@@ -65,13 +69,17 @@ Optional flags:
                         across every role and status) via the real service layer.
   --reset               Only valid with --demo. Hard-deletes the previous demo
                         rows (@qirtas.test users + demo branches by name) first.
+                        Empties the business tables too (seed-wipe.ts): sales,
+                        stock and print jobs point at those users and branches.
   --fr                  Seed the French dynamic language from
                         seed-french-ui-translations.ts.
-  --ui-overrides-demo   Seed the ar/en UI-text override demo. DEMO ONLY — it
-                        deliberately changes 'welcomeBack' to a visibly
-                        different string. Excluded from --all on purpose.
-  --all                 Shorthand for --admin --demo --fr (never
-                        --ui-overrides-demo, never --reset).
+  --showcase            DEV ONLY. Empty every business table, then build ~64
+                        products with photos and every workflow in every state
+                        (seed-showcase.ts). Identity is kept. Needs the Super
+                        Admin and 3 active branches (--admin --demo).
+  --no-wipe             Only valid with --showcase. Build on top, no wipe.
+  --all                 Shorthand for --admin --demo --fr (never --showcase,
+                        never --reset).
   --help                Print this and exit.
 `.trim();
 
@@ -87,7 +95,8 @@ interface SeedOptions {
   demo: boolean;
   reset: boolean;
   fr: boolean;
-  uiOverridesDemo: boolean;
+  showcase: boolean;
+  wipe: boolean;
 }
 
 /** Throws on anything unrecognised or contradictory — never silently ignores a flag. */
@@ -104,13 +113,17 @@ function parseArgs(argv: string[]): SeedOptions | 'help' {
     demo: all || argv.includes('--demo'),
     reset: argv.includes('--reset'),
     fr: all || argv.includes('--fr'),
-    uiOverridesDemo: argv.includes('--ui-overrides-demo'),
+    showcase: argv.includes('--showcase'),
+    wipe: !argv.includes('--no-wipe'),
   };
 
   // --reset only ever means "wipe the demo rows"; on its own it would read as
   // a full database reset, which this script never does.
   if (options.reset && !options.demo) {
     throw new UsageError(`--reset is only valid together with --demo\n\n${USAGE}`);
+  }
+  if (!options.wipe && !options.showcase) {
+    throw new UsageError(`--no-wipe is only valid together with --showcase\n\n${USAGE}`);
   }
 
   return options;
@@ -170,6 +183,12 @@ async function main(): Promise<void> {
     emailSender: seedEmailSender,
   });
 
+  // Before anything else: the wipe also empties the reference tables below,
+  // which the next steps re-create.
+  if ((parsed.showcase && parsed.wipe) || parsed.reset) {
+    await wipeBusinessData();
+  }
+
   await seedCore();
   // Catalog starting data (units, attributes, category tree, brands) —
   // insert-if-missing, so admin edits survive every re-run.
@@ -188,8 +207,9 @@ async function main(): Promise<void> {
   if (parsed.fr) {
     await seedFrenchUiTranslations();
   }
-  if (parsed.uiOverridesDemo) {
-    await seedUiTextOverridesDemo();
+  if (parsed.showcase) {
+    // Last: it signs in as the Super Admin and trades in the demo branches.
+    await seedShowcase({ emailSender: seedEmailSender });
   }
 
   logger.info('Seed complete');

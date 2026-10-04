@@ -1479,7 +1479,7 @@ requested → approved → in_transit → received                   → closed
 - `DELETE /cart/items/:variantId?branch_id`
 - `POST /cart/checkout {branch_id, note?}` → `201` بالطلب.
 
-**وكل سطر يحمل `problem`** (`unpriced` · `not_enough` · `not_sellable` · `null`) و`available_qty`، والسلّة تحمل `can_checkout`. الزر يتبع العلم ولا يُشتقّ بالعميل: قاعدتان تختلفان أول تعديل، والاختلاف يُري زرّاً يرفضه الخادم.
+**وكل سطر يحمل `problem`** (`unpriced` · `not_enough` · `not_sellable` · `null`) و`available_qty`، والسلّة تحمل `can_checkout`. الزر يتبع العلم ولا يُشتقّ بالعميل: قاعدتان تختلفان أول تعديل، والاختلاف يُري زرّاً يرفضه الخادم. **ومعه `label_ar` و`thumbnail`** (2026-09-30): ما يميّز المتغيّر بكلمات الزبون («أحمر · A4»، فارغ لمنتجٍ بلا محاور) وصورته كما بالصندوق — كان السطر يعرض الـ`sku`، رمزاً داخلياً لا يعني للزبون شيئاً، وبلا صورة.
 
 **ورفض التأكيد يحمل عدده**: `409 order_not_enough_stock` + `{variant_id, requested, available}` — «غير متاح» بلا رقمٍ يجعل الزبون يخفّض الكمية تخميناً ويحاول ثلاثاً. و`409 order_item_unavailable` لغير المسعَّر: **«غير مسعَّر» لا تُقال للزبون** — عطلٌ عندنا لا حقيقة عن البضاعة.
 

@@ -304,5 +304,7 @@ export async function findLiveBranches(): Promise<{ id: number; name: string }[]
     .select({ id: branchesTable.id, name: branchesTable.name })
     .from(branchesTable)
     .where(isNull(branchesTable.archived_at))
-    .orderBy(branchesTable.name);
+    // الافتراضي أولاً (2026-09-30): الشاشات تختار أول فرع تلقائياً، والترتيب
+    // بالاسم وحده كان يفتح الصندوق والطوابير على فرع اختبارٍ لاتيني الاسم.
+    .orderBy(desc(branchesTable.is_default), branchesTable.name);
 }

@@ -31,13 +31,16 @@
  * `--reset` only to top up on top of an existing, non-demo run). Invoked by
  * the orchestrator in `seed.ts`; this module never opens or closes the pool.
  */
-import { inArray, or, eq, like } from 'drizzle-orm';
+import { and, inArray, or, eq, like, notExists } from 'drizzle-orm';
+import { accountEmailsTable } from '../auth/schemas/account-emails.schema.js';
 import { db } from './client.js';
 import { DEMO_EMAIL_SUFFIX } from './seed-shared.js';
 import { logger } from '../logger/logger.js';
 import { usersTable } from '../../features/identity/schemas/users.schema.js';
 import { branchesTable } from '../../features/identity/schemas/branches.schema.js';
 import { auditLogEntriesTable } from '../../features/identity/schemas/audit-log-entries.schema.js';
+import { ownershipsTable } from '../../features/identity/schemas/ownerships.schema.js';
+import { userRoleAssignmentsTable } from '../../features/identity/schemas/user-role-assignments.schema.js';
 import * as branchesService from '../../features/identity/services/branches.service.js';
 import * as branchesRepository from '../../features/identity/repositories/branches.repository.js';
 import * as usersService from '../../features/identity/services/users.service.js';
@@ -308,6 +311,18 @@ async function resetDemoData(): Promise<void> {
     // (see schema files) — deleting the user rows removes them automatically.
     await db.delete(usersTable).where(inArray(usersTable.id, demoUserIds));
   }
+  // The address registry has no foreign key to `users` (it spans every realm),
+  // so deleting a user leaves its address reserved and the re-seed's first
+  // registration fails `account_emails_email_uidx`. Staff rows without a user —
+  // left by this delete or by an earlier interrupted reset — are released here.
+  await db
+    .delete(accountEmailsTable)
+    .where(
+      and(
+        eq(accountEmailsTable.realm, 'staff'),
+        notExists(db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.id, accountEmailsTable.account_id))),
+      ),
+    );
   logger.info(`Reset: hard-deleted ${demoUserIds.length} previous demo user(s) (@qirtas.test)`);
 
   const demoBranchNames = BRANCH_DEFS.map((b) => b.name);
@@ -318,6 +333,22 @@ async function resetDemoData(): Promise<void> {
   const demoBranchIds = demoBranchRows.map((b) => b.id);
 
   if (demoBranchIds.length > 0) {
+    // Both are RESTRICT on the branch. Rows left here belong to accounts outside
+    // the demo (e2e runs, a manual test) that were placed on a demo branch — they
+    // cannot outlive the branch, and leaving them made every reset fail on the FK.
+    const ownerships = await db
+      .delete(ownershipsTable)
+      .where(inArray(ownershipsTable.branch_scope, demoBranchIds))
+      .returning({ id: ownershipsTable.id });
+    const assignments = await db
+      .delete(userRoleAssignmentsTable)
+      .where(inArray(userRoleAssignmentsTable.branch_id, demoBranchIds))
+      .returning({ id: userRoleAssignmentsTable.id });
+    if (ownerships.length + assignments.length > 0) {
+      logger.info(
+        `Reset: removed ${ownerships.length} ownership(s) and ${assignments.length} assignment(s) of non-demo accounts on demo branches`,
+      );
+    }
     await db.delete(branchesTable).where(inArray(branchesTable.id, demoBranchIds));
   }
   logger.info(`Reset: hard-deleted ${demoBranchIds.length} previous demo branch(es)`);
