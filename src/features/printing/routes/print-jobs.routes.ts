@@ -1,7 +1,8 @@
+import { z } from 'zod';
 import { Router } from 'express';
 import { asyncHandler } from '../../../core/http/async-handler.js';
 import { requireCustomer, requireVerifiedCustomer } from '../../../core/http/require-customer.js';
-import { requirePermission } from '../../../core/http/require-permission.js';
+import { requireAnyPermission, requirePermission } from '../../../core/http/require-permission.js';
 import { validate } from '../../../core/validation/validate.js';
 import {
   addLinkBodySchema,
@@ -12,6 +13,8 @@ import {
   jobLinkParamsSchema,
   jobParamsSchema,
   myJobsQuerySchema,
+  pickupLookupQuerySchema,
+  queueCountsQuerySchema,
   queueQuerySchema,
   quoteJobBodySchema,
   reserveFileBodySchema,
@@ -157,6 +160,25 @@ printJobsQueueRouter.get(
  */
 printJobsQueueRouter.get('/branches', canViewQueue(), asyncHandler(controller.queueBranches));
 
+/**
+ * Ready jobs by what the customer brings (9-ز-2) — the queue's reader or the
+ * cashier who hands the copies over. Branch scope checked in the service.
+ */
+printJobsQueueRouter.get(
+  '/lookup',
+  requireAnyPermission([QUEUE_VIEW_KEY, 'sales.sell']),
+  validate(pickupLookupQuerySchema, 'query'),
+  asyncHandler(controller.lookupForPickup),
+);
+
+/** Open jobs per stage — the board's stage row and the home tile. Before `/:id`. */
+printJobsQueueRouter.get(
+  '/counts',
+  canViewQueue(),
+  validate(queueCountsQuerySchema, 'query'),
+  asyncHandler(controller.queueCounts),
+);
+
 printJobsQueueRouter.get(
   '/:id',
   canViewQueue(),
@@ -179,12 +201,32 @@ printJobsQueueRouter.post(
   asyncHandler(controller.quote),
 );
 
+/** A paid ready order leaves the counter (9-ز-4) — the board or the till. */
+printJobsQueueRouter.post(
+  '/:id/hand-over',
+  requireAnyPermission([STATUS_UPDATE_KEY, 'sales.sell']),
+  validate(jobParamsSchema, 'params'),
+  asyncHandler(controller.handOver),
+);
+
 printJobsQueueRouter.post(
   '/:id/status',
   canUpdate(),
   validate(jobParamsSchema, 'params'),
   validate(stageBodySchema, 'body'),
   asyncHandler(controller.advance),
+);
+
+/** Hand over from the ready shelf — the stage key, like starting the print. */
+printJobsQueueRouter.post(
+  '/:id/fulfill-from-ready',
+  canUpdate(),
+  validate(jobParamsSchema, 'params'),
+  validate(
+    z.object({ ready_copy_id: z.number().int().positive(), copies: z.number().int().positive().optional() }).strict(),
+    'body',
+  ),
+  asyncHandler(controller.fulfillFromReady),
 );
 
 /**

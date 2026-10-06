@@ -51,6 +51,15 @@ export type PrintJobStatus = (typeof PRINT_JOB_STATUSES)[number];
 export const printJobStatusEnum = pgEnum('print_job_status', PRINT_JOB_STATUSES);
 
 /**
+ * Where an order came from (9-ح-1) — one table for every print, so one record,
+ * one search and one report: `app` (sent from the customer app) · `counter`
+ * (the customer standing at the till) · `reprint` («print it again»).
+ */
+export const PRINT_JOB_SOURCES = ['app', 'counter', 'reprint'] as const;
+export type PrintJobSource = (typeof PRINT_JOB_SOURCES)[number];
+export const printJobSourceEnum = pgEnum('print_job_source', PRINT_JOB_SOURCES);
+
+/**
  * **الدفع عمودٌ مستقل عن المرحلة**: مؤجَّلٌ بموافقة يدخل الإنتاج وهو غير
  * مدفوع، ومدفوعٌ قد ينتظر الطابعة. حالةٌ واحدة تجمعهما تحتاج ضرب الحالات.
  */
@@ -70,9 +79,15 @@ export const printJobsTable = pgTable(
     branch_id: integer('branch_id')
       .notNull()
       .references(() => branchesTable.id, { onDelete: 'restrict' }),
-    customer_id: integer('customer_id')
-      .notNull()
-      .references(() => customersTable.id, { onDelete: 'restrict' }),
+    /**
+     * The registered customer — `null` for a regular known only by name, or a
+     * walk-in (9-ح-1). Then [contact_name]/[contact_phone] say who it was.
+     */
+    customer_id: integer('customer_id').references(() => customersTable.id, { onDelete: 'restrict' }),
+    source: printJobSourceEnum('source').notNull().default('app'),
+    /** A name typed at the counter (a regular without an account); `null` for a walk-in. */
+    contact_name: varchar('contact_name', { length: 120 }),
+    contact_phone: varchar('contact_phone', { length: 32 }),
 
     status: printJobStatusEnum('status').notNull().default('draft'),
     payment_status: printPaymentStatusEnum('payment_status').notNull().default('unpaid'),
@@ -128,6 +143,21 @@ export const printJobsTable = pgTable(
      * بمتوسطٍ تغيّر بعدها.
      */
     materials_cost_syp: numeric('materials_cost_syp', { precision: 14, scale: 2 }),
+    /**
+     * Fulfilled from the ready shelf instead of printed (`finance_ledger.md` §٤):
+     * the copy it took. `materials_cost_syp` then holds the copies' value.
+     */
+    fulfilled_from_ready_id: integer('fulfilled_from_ready_id'),
+    /**
+     * Copies handed over from the ready shelf (9-ز-5). Equal to `copies` when
+     * the shelf covered the order; fewer when it did not — the rest is printed,
+     * and only the rest consumes paper. 0 when nothing came off the shelf.
+     */
+    from_ready_copies: integer('from_ready_copies').notNull().default(0),
+    /** The shelf copies' value — added to the printed rest's materials at start. */
+    ready_value_syp: numeric('ready_value_syp', { precision: 14, scale: 2 }),
+    /** «كتب الصف الرابع» — يكتبه الموظف عند التسعير، وبه يُطابَق رفّ الجاهز (م-٢). */
+    label: varchar('label', { length: 120 }),
     consumed_at: timestamp('consumed_at', { withTimezone: true }),
 
     cancel_reason: text('cancel_reason'),
@@ -137,6 +167,11 @@ export const printJobsTable = pgTable(
     submitted_at: timestamp('submitted_at', { withTimezone: true }),
     production_started_at: timestamp('production_started_at', { withTimezone: true }),
     ready_at: timestamp('ready_at', { withTimezone: true }),
+    /**
+     * Pickup code (9-ز-2) — issued the moment the copies are ready, written or
+     * stuck on them, read back at the till. Central numbering (type `pickup`).
+     */
+    pickup_code: varchar('pickup_code', { length: 24 }),
     picked_up_at: timestamp('picked_up_at', { withTimezone: true }),
     closed_at: timestamp('closed_at', { withTimezone: true }),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -146,6 +181,8 @@ export const printJobsTable = pgTable(
       .on(table.branch_id, table.number)
       .where(sql`${table.number} IS NOT NULL`),
     queueIdx: index('print_jobs_queue_idx').on(table.branch_id, table.status, table.submitted_at),
+    contactIdx: index('print_jobs_contact_idx').on(table.contact_phone),
+    pickupIdx: index('print_jobs_pickup_idx').on(table.branch_id, table.pickup_code),
     customerIdx: index('print_jobs_customer_idx').on(table.customer_id, table.created_at),
     /** الكنس الكسول يقرأ بالحالة والمهلة معاً. */
     dueIdx: index('print_jobs_due_idx').on(table.status, table.payment_due_at),

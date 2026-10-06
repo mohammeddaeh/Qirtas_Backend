@@ -9,9 +9,14 @@ import {
   branchParamsSchema,
   branchQuerySchema,
   configQuerySchema,
+  contactsQuerySchema,
+  counterSaleBodySchema,
   createOptionBodySchema,
   quoteBodySchema,
   ratesBodySchema,
+  readyCopiesQuerySchema,
+  readySaleBodySchema,
+  readyWriteOffBodySchema,
   settingsBodySchema,
   tiersBodySchema,
   updateOptionBodySchema,
@@ -63,6 +68,55 @@ printingRouter.post(
   publicRoute,
   validate(quoteBodySchema, 'body'),
   asyncHandler(controller.quote),
+);
+
+/**
+ * بيع طباعة مباشر بالصندوق (9-و) — **جاهزٌ لا طلب**: بلا زبون ولا طابور. يُسعَّر
+ * هنا ثم يُضاف للسلّة بـ`POST /sales/:id/services {kind: 'print_counter'}`.
+ * حارسه `sales.sell` لأن البائع هو الكاشير.
+ */
+/** Who a counter print is for — accounts and earlier typed names (9-ح-1). */
+printingRouter.get(
+  '/contacts',
+  requireAnyPermission(['sales.sell', 'printing.queue.view']),
+  validate(contactsQuerySchema, 'query'),
+  asyncHandler(controller.contacts),
+);
+
+printingRouter.post(
+  '/counter-sales',
+  requirePermission('sales.sell'),
+  validate(counterSaleBodySchema, 'body'),
+  asyncHandler(controller.createCounterSale),
+);
+
+/**
+ * The ready shelf (`finance_ledger.md` §٤): returned prints kept by name.
+ * Reading and selling are the cashier's (`sales.sell`) — the name match is
+ * asked while pricing a new print. Writing off is a loss, so it sits with
+ * returns (`sales.refund`).
+ */
+printingRouter.get(
+  '/ready-copies',
+  requirePermission('sales.sell'),
+  validate(readyCopiesQuerySchema, 'query'),
+  asyncHandler(controller.listReadyCopies),
+);
+
+printingRouter.post(
+  '/ready-copies/:id/sell',
+  requirePermission('sales.sell'),
+  validate(idParamsSchema, 'params'),
+  validate(readySaleBodySchema, 'body'),
+  asyncHandler(controller.createReadySale),
+);
+
+printingRouter.post(
+  '/ready-copies/:id/write-off',
+  requirePermission('sales.refund'),
+  validate(idParamsSchema, 'params'),
+  validate(readyWriteOffBodySchema, 'body'),
+  asyncHandler(controller.writeOffReadyCopies),
 );
 
 printingRouter.get(

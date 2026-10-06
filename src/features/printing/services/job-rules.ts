@@ -73,7 +73,19 @@ export function isPayable(status: PrintJobStatus, payment: PrintPaymentStatus): 
 
 /** بعد السداد: المنتظِر يدخل الطابور، والمؤجَّل يبقى بمرحلته — الدفع وحده يتغيّر. */
 export function statusAfterPayment(status: PrintJobStatus): PrintJobStatus {
-  return status === 'awaiting_payment' ? 'queued' : status;
+  if (status === 'awaiting_payment') return 'queued';
+  // Paid at the till while ready (printed before payment, 9-ز-4): the customer
+  // is standing at the counter with the copies — paying is the pickup.
+  if (status === 'ready') return 'picked_up';
+  return status;
+}
+
+/**
+ * The copies leave the counter only paid (9-ز-4). «Deferred» printed before
+ * payment — the money is still owed, so the till collects it first.
+ */
+export function canHandOver(status: PrintJobStatus, payment: PrintPaymentStatus): boolean {
+  return status === 'ready' && payment === 'paid';
 }
 
 /** ما يستطيع الزبون تعديله: المواصفة والملفات والروابط — في المسودة وحدها. */
@@ -181,4 +193,38 @@ export function isPrintableLink(raw: string): boolean {
     url.username === '' &&
     url.password === ''
   );
+}
+
+/**
+ * What the cashier can do with an order found at the till (9-ح-2 audit) —
+ * **decided here, sent with the row**, so the till never re-derives payment
+ * rules. Every order the search finds is shown with its answer, the ones that
+ * cannot be acted on included: an order the till cannot see is an order the
+ * customer is told does not exist.
+ */
+export const TILL_ACTIONS = [
+  'hand_over', // ready and paid — hand it over, no line
+  'add', // owed (to pay before printing, a ready unpaid order, a debt) — a line on this invoice
+  'in_this_sale', // already on this invoice
+  'in_other_sale', // on another open invoice — move it here
+  'not_priced', // not priced yet — nothing to collect
+  'paid_in_work', // paid, still printing — nothing to do at the till
+  'closed', // picked up, cancelled or expired
+] as const;
+export type TillAction = (typeof TILL_ACTIONS)[number];
+
+export function tillActionFor(
+  job: { status: PrintJobStatus; payment_status: PrintPaymentStatus; sale_id: number | null; quoted_total_syp: string | null },
+  saleId: number | null,
+): TillAction {
+  // A paid order keeps the invoice that paid it — history, not a basket holding it.
+  if (job.sale_id !== null && job.payment_status !== 'paid') {
+    return job.sale_id === saleId ? 'in_this_sale' : 'in_other_sale';
+  }
+  if (canHandOver(job.status, job.payment_status)) return 'hand_over';
+  // Before «closed»: a deferred order picked up still owes its money.
+  if (isPayable(job.status, job.payment_status) && job.quoted_total_syp !== null) return 'add';
+  if (isClosed(job.status)) return 'closed';
+  if (job.status === 'awaiting_quote') return 'not_priced';
+  return 'paid_in_work';
 }

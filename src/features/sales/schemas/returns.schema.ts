@@ -2,6 +2,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   numeric,
   pgEnum,
   pgTable,
@@ -84,6 +85,10 @@ export const saleReturnsTable = pgTable(
     approved_by: integer('approved_by').references(() => usersTable.id, { onDelete: 'set null' }),
 
     reason: text('reason'),
+    /** «لماذا» برمز تجمعه التقارير — مكرّر · خطأ المحل · غيّر رأيه · غير ذلك. */
+    reason_code: varchar('reason_code', { length: 20 }),
+    /** The return policy as it stood when this return was taken (`system_settings.md` principle 2). */
+    policy: jsonb('policy'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
@@ -106,9 +111,18 @@ export const saleReturnLinesTable = pgTable(
       .notNull()
       .references(() => saleLinesTable.id, { onDelete: 'restrict' }),
 
-    variant_id: integer('variant_id')
-      .notNull()
-      .references(() => catalogVariantsTable.id, { onDelete: 'restrict' }),
+    /** `null` لسطر خدمة (طباعة) — لا صنف يعود لرفّ المخزون (م-٢). */
+    variant_id: integer('variant_id').references(() => catalogVariantsTable.id, {
+      onDelete: 'restrict',
+    }),
+
+    /**
+     * سطر خدمة راجع (`finance_ledger.md` §٣): نوعه ومرجعه كسطر البيع، و**مصيره**
+     * — `ready` لرفّ الجاهز · `damaged` خسارة · `reprint` أُعيدت طباعته بلا ردّ.
+     */
+    service_kind: varchar('service_kind', { length: 20 }),
+    service_ref_id: integer('service_ref_id'),
+    disposition: varchar('disposition', { length: 12 }),
 
     /** منسوخان كسطر البيع: إيصالُ المرتجع يُقرأ بعد سنة بلا كتالوج. */
     name_ar: text('name_ar').notNull(),
@@ -160,6 +174,23 @@ export const salesSettingsTable = pgTable('sales_settings', {
    * فوراً»: الأولى قرارٌ إداري مفهوم، والثانية تُلغي كل طلب لحظة تأكيده.
    */
   reservation_hours: integer('reservation_hours').notNull().default(48),
+
+  // ── Return policy (`system_settings.md`) — every default is today's behaviour.
+  goods_returns_enabled: boolean('goods_returns_enabled').notNull().default(true),
+  print_returns_enabled: boolean('print_returns_enabled').notNull().default(true),
+  /** Past the window: `approve` (a manager on the same device) or `refuse`. */
+  beyond_window_action: varchar('beyond_window_action', { length: 10 }).notNull().default('approve'),
+  /** `null` = prints have no window (user decision 2026-10-04). */
+  print_return_window_days: integer('print_return_window_days'),
+  refund_cash_allowed: boolean('refund_cash_allowed').notNull().default(true),
+  refund_credit_allowed: boolean('refund_credit_allowed').notNull().default(true),
+  /** A return above this needs a manager. `null` = no cap. */
+  approval_above_syp: numeric('approval_above_syp', { precision: 14, scale: 2 }),
+  return_reason_required: boolean('return_reason_required').notNull().default(false),
+  /** Damaged goods taken back (prints say their own fate per line). */
+  damaged_returns_allowed: boolean('damaged_returns_allowed').notNull().default(true),
+  /** The refund suggested for a returned print, as a share of what was paid. */
+  print_refund_suggest_percent: integer('print_refund_suggest_percent').notNull().default(100),
   updated_by: integer('updated_by').references(() => usersTable.id, { onDelete: 'set null' }),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

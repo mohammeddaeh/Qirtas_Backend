@@ -54,11 +54,12 @@ export async function findCustomer(
 /** الفرع الذي يُنفّذ الطلب — مغلقاً أو مؤرشفاً لا يُستلم منه شيء. */
 export async function findShoppableBranch(
   branchId: number,
-): Promise<{ id: number; name: string } | undefined> {
+): Promise<{ id: number; name: string; code: string } | undefined> {
   const [row] = await db
     .select({
       id: branchesTable.id,
       name: branchesTable.name,
+      code: branchesTable.code,
       status: branchesTable.status,
       archived_at: branchesTable.archived_at,
     })
@@ -66,7 +67,7 @@ export async function findShoppableBranch(
     .where(eq(branchesTable.id, branchId))
     .limit(1);
   if (!row || row.archived_at !== null || row.status !== 'active') return undefined;
-  return { id: row.id, name: row.name };
+  return { id: row.id, name: row.name, code: row.code };
 }
 
 // ── السلّة ──────────────────────────────────────────────────────────────────

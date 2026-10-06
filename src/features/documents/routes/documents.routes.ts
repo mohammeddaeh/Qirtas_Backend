@@ -97,6 +97,8 @@ documentsRouter.put(
 // الشعار يُرفع هنا لا بمسار الكتالوج: مصمّم الفاتورة لا يملك `catalog.edit`.
 documentsRouter.post('/logo', canDesign(), uploadImageFile, asyncHandler(controller.uploadLogo));
 
+documentsRouter.get('/label-branches', requirePermission('barcodes.print'), asyncHandler(controller.labelBranches));
+
 documentsRouter.post(
   '/labels',
   requirePermission('barcodes.print'),

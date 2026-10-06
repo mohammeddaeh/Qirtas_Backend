@@ -25,6 +25,15 @@ export const branchesTable = pgTable(
   {
     id: serial('id').primaryKey(),
     name: varchar('name', { length: 150 }).notNull(),
+    /** English name — the English UI and English receipts (the code is suggested from it). */
+    name_en: varchar('name_en', { length: 150 }),
+    /**
+     * The branch's short code — `MZ` in `MZ-2026-000036` (`system_settings.md`).
+     * Given at creation and unique, so two branches never share a run of numbers
+     * (the old prefix came from the first two Latin letters of the name, and
+     * «Mazzeh» and «Malki» both made `MA`). Editing it changes new numbers only.
+     */
+    code: varchar('code', { length: 6 }).notNull(),
     address: text('address'),
     contact_info: text('contact_info'),
     /**
@@ -76,6 +85,7 @@ export const branchesTable = pgTable(
   // only surfaces after people have been assigned to the wrong one.
   (table) => [
     uniqueIndex('branches_name_unique_idx').on(table.name),
+    uniqueIndex('branches_code_unique_idx').on(table.code),
     check(
       'branches_coordinates_chk',
       sql`(${table.latitude} IS NULL) = (${table.longitude} IS NULL) AND (${table.latitude} IS NULL OR (${table.latitude} BETWEEN -90 AND 90 AND ${table.longitude} BETWEEN -180 AND 180))`,

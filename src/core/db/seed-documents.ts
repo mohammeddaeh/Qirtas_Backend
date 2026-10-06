@@ -6,8 +6,7 @@ import {
   documentTemplatesTable,
 } from '../../features/documents/schemas/documents.schema.js';
 import {
-  labelLayoutSchema,
-  receiptLayoutSchema,
+  layoutSchemaFor,
   type DocumentKind,
 } from '../../features/documents/dtos/layout.schema.js';
 
@@ -259,6 +258,45 @@ const TEMPLATES: { code: string; kind: DocumentKind; name: string; isDefault: bo
   },
 ];
 
+// The print-order sticker (9-ز-3): the pickup code big for the eye, the order
+// number as a barcode for the till, whose it is and what is still owed.
+TEMPLATES.push(
+  {
+    code: 'job_tag_roll',
+    kind: 'job_tag',
+    name: 'ملصق طلب (٥٠×٤٠)',
+    isDefault: true,
+    layout: {
+      page: { width_mm: 50, height_mm: 40, medium: { mode: 'label_roll' } },
+      blocks: [
+        { type: 'pickup_code' },
+        { type: 'customer_name', align: 'center' },
+        { type: 'copies_pages', align: 'center' },
+        { type: 'amount_due', align: 'center' },
+        { type: 'job_barcode', height_mm: 7 },
+      ],
+    },
+  },
+  {
+    code: 'job_tag_receipt',
+    kind: 'job_tag',
+    name: 'على رول الفواتير (٥٨ مم)',
+    isDefault: false,
+    layout: {
+      page: { width_mm: 48, height_mm: 50, medium: { mode: 'receipt_roll', roll: 'roll_58', gap_mm: 4 } },
+      blocks: [
+        { type: 'shop_name', align: 'center', size: 'small' },
+        { type: 'pickup_code' },
+        { type: 'customer_name', align: 'center' },
+        { type: 'phone_tail', align: 'center' },
+        { type: 'job_spec', align: 'center' },
+        { type: 'amount_due', align: 'center' },
+        { type: 'job_barcode', height_mm: 8 },
+      ],
+    },
+  },
+);
+
 export async function seedDocumentTemplates(): Promise<void> {
   await db
     .insert(businessProfileTable)
@@ -273,7 +311,7 @@ export async function seedDocumentTemplates(): Promise<void> {
   const claimed = new Set(defaults.map((r) => r.kind));
 
   for (const t of TEMPLATES) {
-    const layout = (t.kind === 'receipt' ? receiptLayoutSchema : labelLayoutSchema).parse(t.layout);
+    const layout = layoutSchemaFor(t.kind).parse(t.layout);
     await db
       .insert(documentTemplatesTable)
       .values({

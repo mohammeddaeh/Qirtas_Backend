@@ -1140,3 +1140,74 @@ export async function listItemsByIds(ids: number[]): Promise<WireProductListItem
     return item ? [item] : [];
   });
 }
+
+// ── Import (data transfer) ──────────────────────────────────────────────────
+
+/** One imported row — a simple product with one variant (`products.transfer.ts`). */
+export interface SimpleProductImport {
+  name_ar: string;
+  name_en?: string | null;
+  category_id: number;
+  brand_id?: number | null;
+  base_unit_id: number;
+  sku?: string | null;
+  barcode?: string | null;
+  status: 'draft' | 'active';
+}
+
+/**
+ * Writes an imported batch of simple products — **all or none**, the import
+ * contract. The same checks as `createProduct` (a leaf category, barcodes free
+ * of other products, unique SKUs), with variants added later on the screen.
+ */
+export async function importSimpleProducts(
+  actor: RequestActorContext,
+  rows: SimpleProductImport[],
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const ctx = await loadContext();
+  const writes = rows.map((row) => {
+    assertUsableCategory(ctx, row.category_id);
+    const input: VariantInput = {
+      ...(row.sku ? { sku: row.sku } : {}),
+      attribute_value_ids: [],
+      base_unit_id: row.base_unit_id,
+      units: [],
+      barcodes: row.barcode ? [{ code: row.barcode, unit_id: row.base_unit_id }] : [],
+      image_ids: [],
+    };
+    return variantWrite(ctx, input, 0);
+  });
+  const skus = writes.map((w) => w.sku).filter((s): s is string => s !== null);
+  if (new Set(skus).size !== skus.length) {
+    throw new BusinessError(422, 'A SKU repeats in the file', 'import_sku_repeated');
+  }
+  await assertCodesFreeOfOtherProducts(writes.flatMap((w) => w.barcodes.map((b) => b.code)), null);
+
+  await withUniqueMapping(() =>
+    db.transaction(async (tx) => {
+      for (let i = 0; i < rows.length; i += 1) {
+        const row = rows[i]!;
+        const product = await productsRepository.insertProduct(tx, {
+          category_id: row.category_id,
+          brand_id: row.brand_id ?? null,
+          kind: ctx.tree.effective(row.category_id, 'product_kind') ?? 'retail',
+          is_sellable: true,
+          name_ar: row.name_ar,
+          name_en: row.name_en ?? null,
+          description_ar: null,
+          description_en: null,
+          search_keywords: [],
+          search_text: searchText({ name_ar: row.name_ar, name_en: row.name_en ?? null, search_keywords: [] }),
+          price_policy: null,
+          pricing_currency: null,
+          status: row.status,
+          created_by_user_id: actor.userId,
+        });
+        await productsRepository.insertVariant(tx, product.id, writes[i]!);
+      }
+    }),
+  );
+  await recordAudit(actor, CATALOG_AUDIT.productImport, 'catalog_products', null, { count: rows.length });
+  return rows.length;
+}

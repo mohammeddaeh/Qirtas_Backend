@@ -1,9 +1,11 @@
-import { eq, count, ne, and, asc, desc, sql, type SQL } from 'drizzle-orm';
+import { eq, count, ne, and, asc, desc, sql, inArray, type SQL } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findManyPaginated, findOneById } from '../../../core/db/crud-helpers.js';
 import { likeTerm } from '../../../core/db/like-term.js';
 import { usersTable, type UserRow, type NewUserRow } from '../schemas/users.schema.js';
 import { userRoleAssignmentsTable } from '../schemas/user-role-assignments.schema.js';
+import { rolesTable } from '../schemas/roles.schema.js';
+import { branchesTable } from '../schemas/branches.schema.js';
 import type { PaginationParams } from '../../../core/pagination/pagination.js';
 import type { UsersFilterQuery } from '../dtos/users.dto.js';
 import * as accountEmails from '../../../core/auth/repositories/account-emails.repository.js';
@@ -142,4 +144,33 @@ export async function update(id: number, data: Partial<NewUserRow>): Promise<Use
     if (row && data.email !== undefined) await accountEmails.move(tx, 'staff', id, row.email);
     return row;
   });
+}
+
+/**
+ * Names for the role and branch a page of applicants asked for — two queries
+ * per page, never per row. The review queue needs them on the row itself: the
+ * post requested is what the decision is about, and an id is not readable.
+ */
+export async function findRequestedPostNames(
+  rows: Pick<UserRow, 'requested_role_id' | 'requested_branch_id'>[],
+): Promise<{ roles: Map<number, string>; branches: Map<number, string> }> {
+  const roleIds = [...new Set(rows.map((r) => r.requested_role_id).filter((v): v is number => v !== null))];
+  const branchIds = [
+    ...new Set(rows.map((r) => r.requested_branch_id).filter((v): v is number => v !== null)),
+  ];
+  const [roleRows, branchRows] = await Promise.all([
+    roleIds.length === 0
+      ? Promise.resolve([])
+      : db.select({ id: rolesTable.id, name: rolesTable.name }).from(rolesTable).where(inArray(rolesTable.id, roleIds)),
+    branchIds.length === 0
+      ? Promise.resolve([])
+      : db
+          .select({ id: branchesTable.id, name: branchesTable.name })
+          .from(branchesTable)
+          .where(inArray(branchesTable.id, branchIds)),
+  ]);
+  return {
+    roles: new Map(roleRows.map((r) => [r.id, r.name])),
+    branches: new Map(branchRows.map((b) => [b.id, b.name])),
+  };
 }

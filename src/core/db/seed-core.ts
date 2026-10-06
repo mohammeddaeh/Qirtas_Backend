@@ -409,6 +409,14 @@ const PERMISSIONS: SeedPermission[] = [
     display: { ar: 'المرتجع من الزبون', en: 'Customer Returns' },
   },
   {
+    // قواعد التشغيل المركزية (system_settings.md): الترقيم اليوم — حسّاس لأنه
+    // يغيّر شكل كل رقمٍ يُطبع بكل الفروع.
+    key: 'settings.manage',
+    module: 'settings',
+    is_sensitive: true,
+    display: { ar: 'إعدادات النظام', en: 'System Settings' },
+  },
+  {
     key: 'sales.manage',
     module: 'sales',
     // حسّاس: يقرّر كم يخصم كل دور وكم يُقرَض كل زبون.
@@ -465,6 +473,7 @@ const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
   permissions: { ar: 'الصلاحيات', en: 'Permissions' },
   roles: { ar: 'الأدوار', en: 'Roles' },
   records: { ar: 'السجلات', en: 'Records' },
+  settings: { ar: 'إعدادات النظام', en: 'System Settings' },
   dashboard: { ar: 'لوحة التحكم', en: 'Dashboard' },
   audit_log: { ar: 'سجل التدقيق', en: 'Audit Log' },
   localization: { ar: 'الترجمة', en: 'Localization' },

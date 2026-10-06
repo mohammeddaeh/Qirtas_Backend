@@ -65,14 +65,27 @@ export async function listUsers(
   filter: UsersFilterQuery,
 ): Promise<Paginated<WireUser>> {
   const { rows, total } = await usersRepository.findMany(params, filter);
-  const postsByUser = await assignmentsRepository.findActivePostsForUsers(rows.map((r) => r.id));
+  const [postsByUser, requested] = await Promise.all([
+    assignmentsRepository.findActivePostsForUsers(rows.map((r) => r.id)),
+    usersRepository.findRequestedPostNames(rows),
+  ]);
 
   return paginated(
     // `?? []` and never `undefined`: an empty array says "belongs nowhere",
     // which the picker renders as «بلا منصب». Omitting the field would say
     // "this response does not carry posts" — a different claim the client
     // cannot draw anything from.
-    rows.map((row) => ({ ...toWireUser(row), current_posts: postsByUser.get(row.id) ?? [] })),
+    rows.map((row) => ({
+      ...toWireUser(row),
+      current_posts: postsByUser.get(row.id) ?? [],
+      // The post asked for, by name — what the review queue's row is about.
+      requested_role_name:
+        row.requested_role_id === null ? null : (requested.roles.get(row.requested_role_id) ?? null),
+      requested_branch_name:
+        row.requested_branch_id === null
+          ? null
+          : (requested.branches.get(row.requested_branch_id) ?? null),
+    })),
     total,
     params,
   );
@@ -884,6 +897,7 @@ async function bootstrapSuperAdminNow(body: BootstrapSuperAdminBody): Promise<Wi
   if (branchCount === 0) {
     await branchesRepository.insert({
       name: DEFAULT_BRANCH_NAME,
+      code: await branchesRepository.allocateCode(),
       is_default: true,
     });
   }

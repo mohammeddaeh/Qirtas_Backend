@@ -659,3 +659,13 @@ export async function findVariantUnitOptions(variantIds: number[]) {
     .where(inArray(catalogVariantUnitsTable.variant_id, variantIds))
     .orderBy(asc(catalogVariantUnitsTable.factor));
 }
+
+/** The branch's code for its document numbers — `null` if the branch is gone. */
+export async function findBranchCode(exec: Exec, branchId: number): Promise<string | null> {
+  const [row] = await exec
+    .select({ code: branchesTable.code })
+    .from(branchesTable)
+    .where(eq(branchesTable.id, branchId))
+    .limit(1);
+  return row?.code ?? null;
+}

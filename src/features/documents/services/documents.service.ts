@@ -99,11 +99,12 @@ function assertNotSystem(row: DocumentTemplateRow): void {
 // ── Reads ──────────────────────────────────────────────────────────────────
 
 export async function getContext(branchId: number | null): Promise<WireDocumentContext> {
-  const [profile, branch, receipt, label] = await Promise.all([
+  const [profile, branch, receipt, label, jobTag] = await Promise.all([
     repo.findProfile(),
     branchId === null ? Promise.resolve(undefined) : repo.findBranch(branchId),
     repo.findDefault('receipt'),
     repo.findDefault('label'),
+    repo.findDefault('job_tag'),
   ]);
   if (branchId !== null && !branch) throw new NotFoundError('Branch not found');
   return {
@@ -111,6 +112,7 @@ export async function getContext(branchId: number | null): Promise<WireDocumentC
     branch: branch ?? null,
     receipt_template: receipt ? toWireTemplate(receipt) : null,
     label_template: label ? toWireTemplate(label) : null,
+    job_tag_template: jobTag ? toWireTemplate(jobTag) : null,
   };
 }
 
@@ -253,6 +255,15 @@ export async function updateProfile(actor: RequestActorContext, body: ProfileBod
  * A label with its own arithmetic is a second price rule, and the day it
  * disagrees the shelf says one number and the till charges another.
  */
+/**
+ * Where a label can be priced — the print sheet picks among them. Read here,
+ * not from the branches or pricing module: whoever holds `barcodes.print`
+ * holds neither of their keys.
+ */
+export function labelBranches(): Promise<{ id: number; name: string }[]> {
+  return repo.findLabelBranches();
+}
+
 export async function labelData(body: LabelsBody): Promise<WireLabelItem[]> {
   const branch = await repo.findBranch(body.branch_id);
   if (!branch) throw new NotFoundError('Branch not found');

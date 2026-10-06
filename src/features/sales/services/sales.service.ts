@@ -1,3 +1,4 @@
+import { issueNumber } from '../../../core/numbering/numbering.js';
 import { recordAudit } from '../../../core/audit/audit-recorder.js';
 import { db } from '../../../core/db/client.js';
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
@@ -5,7 +6,9 @@ import type { RequestActorContext } from '../../../core/http/require-actor.js';
 import { publicImagesByIds } from '../../../core/media/media.service.js';
 import { resolvePricesAt } from '../../../core/pricing/price-port.js';
 import { issueStock } from '../../../core/stock/stock-port.js';
-import { serviceLineHandler, type ServiceKind } from '../../../core/till/service-line-port.js';
+import { resolveAvgCostAt } from '../../../core/costing/cost-port.js';
+import { allocateRevenue, recordFinance } from '../../../core/finance/finance-recorder.js';
+import { type TillSaleState, serviceLineHandler, type ServiceKind } from '../../../core/till/service-line-port.js';
 import { SALES_AUDIT, saleTarget } from '../audit-actions.js';
 import * as repo from '../repositories/sales.repository.js';
 import { thumbnailsFor } from './line-thumbnails.js';
@@ -15,7 +18,6 @@ import {
   branchPrefix,
   computeTotals,
   creditAvailable,
-  formatSaleNumber,
   judgeDiscount,
   roundSyp,
   settle,
@@ -141,6 +143,10 @@ function wireLine(row: SaleLineRow, thumbnail: string | null = null): WireSaleLi
 export async function getSale(id: number): Promise<WireSale> {
   const sale = await repo.findSaleById(id);
   if (!sale) throw new NotFoundError('Sale not found');
+  // The name the receipt prints (tidy-up 2026-10-06): typed at the till, or
+  // the registered customer's — an invoice in an account's name printed none.
+  const customerName =
+    sale.customer_name ?? (sale.customer_id === null ? null : await repo.findCustomerName(sale.customer_id));
   const [lines, payments, cashierName] = await Promise.all([
     repo.findLines(id),
     repo.findPayments(id),
@@ -205,7 +211,7 @@ export async function getSale(id: number): Promise<WireSale> {
     status: sale.status,
     number: sale.number,
     customer_id: sale.customer_id,
-    customer_name: sale.customer_name,
+    customer_name: customerName,
     cashier_user_id: sale.cashier_user_id,
     cashier_name: cashierName,
     discount_percent: num(sale.discount_percent),
@@ -390,15 +396,20 @@ export async function addLine(
  */
 export async function addService(
   saleId: number,
-  input: { kind: ServiceKind; reference: string },
+  input: { kind: ServiceKind; reference: string; take_over?: boolean },
 ): Promise<WireSale> {
   const sale = await requireOpen(saleId);
   const handler = serviceLineHandler(input.kind);
-  const quote = await handler.resolve({
-    reference: input.reference,
-    branchId: sale.branch_id,
-    saleId,
-  });
+  const resolveHere = () => handler.resolve({ reference: input.reference, branchId: sale.branch_id, saleId });
+  let quote: Awaited<ReturnType<typeof resolveHere>>;
+  try {
+    quote = await resolveHere();
+  } catch (err) {
+    const other = input.take_over ? takeOverTarget(err) : null;
+    if (other === null) throw err;
+    await releaseFromOtherSale(other.saleId, input.kind, other.refId, sale.branch_id);
+    quote = await resolveHere();
+  }
   if (
     quote.customerId !== null &&
     sale.customer_id !== null &&
@@ -436,10 +447,67 @@ export async function addService(
     );
     if (sale.customer_id === null && quote.customerId !== null) {
       await repo.updateSale(tx, saleId, { customer_id: quote.customerId });
+    } else if (sale.customer_id === null && sale.customer_name === null && quote.customerName) {
+      // A regular known by name (9-ح-1): the invoice carries the name typed on the order.
+      await repo.updateSale(tx, saleId, { customer_name: quote.customerName });
     }
     await handler.attach(tx, quote.refId, saleId);
   });
   return getSale(saleId);
+}
+
+/**
+ * The service sits on another invoice — which one, and as what (9-ح-2 audit).
+ * Read from the owner's own refusal (`*_in_other_sale` with `sale_id` and
+ * `ref_id`), so sales never learns how a print order is stored.
+ */
+function takeOverTarget(err: unknown): { saleId: number; refId: number } | null {
+  if (!(err instanceof BusinessError) || !err.messageKey?.endsWith('_in_other_sale')) return null;
+  const data = (err.data ?? {}) as { sale_id?: unknown; ref_id?: unknown };
+  return typeof data.sale_id === 'number' && typeof data.ref_id === 'number'
+    ? { saleId: data.sale_id, refId: data.ref_id }
+    : null;
+}
+
+/**
+ * Takes the line off the other invoice — **only an unpaid one at this
+ * branch**: a paid invoice's line is money already taken, and moving it would
+ * collect it twice.
+ */
+async function releaseFromOtherSale(otherSaleId: number, kind: ServiceKind, refId: number, branchId: number) {
+  const other = await repo.findSaleById(otherSaleId);
+  if (!other || other.branch_id !== branchId || (other.status !== 'open' && other.status !== 'held')) {
+    throw new BusinessError(409, 'That invoice is closed; this service cannot move', 'sale_service_not_movable', {
+      sale_id: otherSaleId,
+    });
+  }
+  const line = await repo.findServiceLine(otherSaleId, kind, refId);
+  await db.transaction(async (tx) => {
+    if (line) await repo.deleteLine(otherSaleId, line.id, tx);
+    await serviceLineHandler(kind).detach(tx, refId, otherSaleId);
+  });
+}
+
+/**
+ * An open basket untouched this long is not someone paying — it is a basket
+ * left open (tidy-up 2026-10-06). Held is idle at once.
+ */
+const IDLE_OPEN_AFTER_MS = 2 * 60 * 60 * 1000;
+
+export async function tillSaleState(saleId: number): Promise<TillSaleState> {
+  const sale = await repo.findSaleById(saleId);
+  if (!sale || (sale.status !== 'open' && sale.status !== 'held')) return 'gone';
+  if (sale.status === 'held') return 'idle';
+  return Date.now() - sale.created_at.getTime() > IDLE_OPEN_AFTER_MS ? 'idle' : 'active';
+}
+
+/** The owner asked its service back (the customer cancelled): the line goes, the owner detaches. */
+export async function releaseServiceLine(kind: ServiceKind, refId: number, saleId: number): Promise<void> {
+  const line = await repo.findServiceLine(saleId, kind, refId);
+  await db.transaction(async (tx) => {
+    if (line) await repo.deleteLine(saleId, line.id, tx);
+    await serviceLineHandler(kind).detach(tx, refId, saleId);
+  });
 }
 
 /** يُبلغ الموديول المالك أن خدمته غادرت السلّة — **بنفس معاملة الحذف**. */
@@ -671,7 +739,20 @@ export async function paySale(
   }
 
   const branch = await repo.findBranch(preview.branch_id);
-  const year = new Date().getFullYear();
+
+  // **التكلفة تُجمَّد لحظة البيع** (`finance_ledger.md` §٢) — بمتوسط الفرع الآن.
+  // الربح يُحسب بما كلّفت البضاعة يوم بيعت، لا بسعر شرائها اليوم.
+  const goods = lines.filter((l) => l.variant_id !== null);
+  const avgCosts = await resolveAvgCostAt(
+    preview.branch_id,
+    goods.map((l) => l.variant_id!),
+  );
+  /** تكلفة الوحدة المباعة (لا وحدة الأساس) — `null` حين لا تُعرف. */
+  const unitCostOf = (line: SaleLineRow): number | null => {
+    if (line.variant_id === null) return null;
+    const base = avgCosts.get(line.variant_id);
+    return base === null || base === undefined ? null : base * num(line.unit_factor);
+  };
 
   const paid = await db.transaction(async (tx) => {
     const locked = await repo.lockSale(tx, saleId);
@@ -681,19 +762,17 @@ export async function paySale(
       throw new BusinessError(409, 'This sale is already paid', 'sale_already_paid');
     }
 
-    const sequence = await repo.nextSequence(tx, preview.branch_id, year);
-    const number = formatSaleNumber(
-      branchPrefix(branch?.name ?? '', preview.branch_id),
-      year,
-      sequence,
-    );
+    // Central numbering (`system_settings.md`) — the format is a setting now.
+    const { number, sequence } = await issueNumber(tx, 'sale', branchPrefix(branch?.code, preview.branch_id));
 
     for (let i = 0; i < lines.length; i += 1) {
       const amounts = totals.lines[i]!;
+      const unitCost = unitCostOf(lines[i]!);
       await repo.updateLine(tx, lines[i]!.id, {
         manual_discount_syp: String(amounts.manualDiscountSyp),
         tax_syp: String(amounts.taxSyp),
         line_total_syp: String(amounts.lineTotalSyp),
+        unit_cost_syp: unitCost === null ? null : unitCost.toFixed(2),
       });
     }
 
@@ -718,6 +797,36 @@ export async function paySale(
           p.tenderedSyp === null || p.tenderedSyp === undefined ? null : String(p.tenderedSyp),
       })),
     );
+
+    // الإيراد بطريقة دفعه ومجموعه الفاتورة، وتكلفة البضاعة المجمَّدة — بقيدٍ
+    // واحد للفاتورة لكلٍّ. مواد الطباعة تُقيَّد حيث تُخصم (عند بدء الطباعة أو
+    // بسداد البيع المباشر)، لا هنا.
+    const cogs = lines.reduce((sum, l) => {
+      const c = unitCostOf(l);
+      return c === null ? sum : sum + c * num(l.qty);
+    }, 0);
+    await recordFinance(tx, [
+      ...allocateRevenue(input.payments, roundSyp(totals.totalSyp)).map((r) => ({
+        branchId: preview.branch_id,
+        type: 'sale_revenue' as const,
+        method: r.method,
+        amountSyp: r.amountSyp,
+        docType: 'sale' as const,
+        docId: saleId,
+        saleId,
+        userId: actor.userId,
+      })),
+      {
+        branchId: preview.branch_id,
+        type: 'cogs',
+        method: 'value',
+        amountSyp: -cogs,
+        docType: 'sale',
+        docId: saleId,
+        saleId,
+        userId: actor.userId,
+      },
+    ]);
 
     if (preview.customer_id !== null) {
       const entries = [];

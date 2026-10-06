@@ -1,3 +1,4 @@
+import type { ZodTypeAny } from 'zod';
 import { randomBytes } from 'node:crypto';
 import { and, eq, lt } from 'drizzle-orm';
 import { db } from '../../db/client.js';
@@ -157,11 +158,18 @@ function mapHeader(
  * they name the column and the offending text, which a zod message flattened
  * from a whole-object parse cannot do.
  */
+/** The row schema for this file — prepared with lookups when the resource asks. */
+async function rowSchemaFor(resource: TransferResource, ctx: TransferContext): Promise<ZodTypeAny> {
+  const spec = resource.import!;
+  return spec.prepareRowSchema ? spec.prepareRowSchema(ctx) : spec.rowSchema;
+}
+
 function validateRow(
   resource: TransferResource,
   mapped: Array<ColumnDef | null>,
   cells: string[],
   rowNumber: number,
+  schema: ZodTypeAny = resource.import!.rowSchema,
 ): { raw: RawRow; errors: ImportRowError[] } {
   const errors: ImportRowError[] = [];
   const raw: RawRow = {};
@@ -201,7 +209,7 @@ function validateRow(
 
   if (errors.length > 0) return { raw, errors };
 
-  const result = resource.import!.rowSchema.safeParse(typed);
+  const result = schema.safeParse(typed);
   if (!result.success) {
     for (const issue of result.error.issues) {
       errors.push({
@@ -299,6 +307,7 @@ export interface ImportAnalysis {
 export function analyzeImport(
   resource: TransferResource,
   matrix: string[][],
+  schema: ZodTypeAny = resource.import!.rowSchema,
 ): ImportAnalysis {
   if (matrix.length === 0) {
     throw new ValidationError({ file: ['The file is empty'] });
@@ -323,7 +332,7 @@ export function analyzeImport(
     // 1-based over **data** rows: the first row under the header is 1. The
     // client adds the header offset when it points at a spreadsheet line.
     const rowNumber = index + 1;
-    const result = validateRow(resource, columns, cells, rowNumber);
+    const result = validateRow(resource, columns, cells, rowNumber, schema);
     // Every row is kept, not only the good ones — the client renders the file
     // as a grid and needs the rows it is going to paint red.
     rows.push(result.raw);
@@ -482,7 +491,7 @@ async function validateMatrix(
   ctx: TransferContext,
   matrix: string[][],
 ): Promise<ImportValidateReport> {
-  const analysis = analyzeImport(resource, matrix);
+  const analysis = analyzeImport(resource, matrix, await rowSchemaFor(resource, ctx));
 
   // The database check runs after the cheap ones, and only over rows that
   // survived them — no point asking whether a row with no name already exists.
@@ -619,11 +628,12 @@ export async function commitImport(
   // record alone.
   const typedRows: unknown[] = [];
   let failed = 0;
+  const schema = await rowSchemaFor(resource, ctx);
 
   rawRows.forEach((raw, index) => {
     const cells = resource.columns.map((c) => raw[c.key] ?? '');
     const mapped = resource.columns.map((c) => (c.key in raw && c.importable ? c : null));
-    const result = validateRow(resource, mapped, cells, index + 1);
+    const result = validateRow(resource, mapped, cells, index + 1, schema);
     if (result.errors.length > 0) {
       failed += 1;
       return;
@@ -634,7 +644,7 @@ export async function commitImport(
       const parsed = parseCell(raw[column.key] ?? '', column.type);
       if (parsed.ok && parsed.value !== null) typed[column.key] = parsed.value;
     });
-    typedRows.push(resource.import!.rowSchema.parse(typed));
+    typedRows.push(schema.parse(typed));
   });
 
   // Consumed before the write, so a token is spendable exactly once. A retry

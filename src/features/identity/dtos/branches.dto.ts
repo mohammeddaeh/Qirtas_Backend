@@ -12,6 +12,8 @@ import {
 export const branchResponseSchema = z.object({
   id: z.number().int(),
   name: z.string(),
+  name_en: z.string().nullable(),
+  code: z.string(),
   address: z.string().nullable(),
   contact_info: z.string().nullable(),
   status: z.enum(['active', 'temporarily_closed', 'closed']),
@@ -48,6 +50,9 @@ export interface BranchRetirementFacts {
 export interface WireBranch {
   id: number;
   name: string;
+  name_en: string | null;
+  /** `MZ` — starts every number the branch issues. */
+  code: string;
   address: string | null;
   contact_info: string | null;
   /** Both null until an admin places the branch on the map. */
@@ -79,6 +84,8 @@ export function toWireBranch(row: BranchRow, facts?: BranchRetirementFacts): Wir
   return {
     id: row.id,
     name: row.name,
+    name_en: row.name_en,
+    code: row.code,
     address: row.address,
     contact_info: row.contact_info,
     latitude: row.latitude === null ? null : Number(row.latitude),
@@ -192,9 +199,23 @@ const bothOrNeither = (v: { latitude?: number | null; longitude?: number | null 
 
 const COORDINATES_MESSAGE = { message: 'latitude and longitude must be sent together' };
 
+/**
+ * `MZ` — 2 to 6 Latin capitals or digits, starting with a letter. Upper-cased
+ * on the way in so «mz» and «MZ» cannot become two branches' codes.
+ */
+export const branchCodeSchema = z
+  .string()
+  .trim()
+  .transform((v) => v.toUpperCase())
+  .pipe(z.string().regex(/^[A-Z][A-Z0-9]{1,5}$/, 'code must be 2-6 Latin letters or digits, starting with a letter'));
+
+const nameEnSchema = z.string().trim().max(150);
+
 export const createBranchBodySchema = z
   .object({
     name: z.string().trim().min(1).max(150),
+    name_en: nameEnSchema.optional(),
+    code: branchCodeSchema,
     address: z.string().trim().max(2000).optional(),
     contact_info: optionalSyrianPhoneSchema,
     latitude: latitudeSchema.optional(),
@@ -206,6 +227,8 @@ export type CreateBranchBody = z.infer<typeof createBranchBodySchema>;
 export const updateBranchBodySchema = z
   .object({
     name: z.string().trim().min(1).max(150).optional(),
+    name_en: nameEnSchema.nullable().optional(),
+    code: branchCodeSchema.optional(),
     address: z.string().trim().max(2000).nullable().optional(),
     contact_info: nullableSyrianPhoneSchema,
     status: z.enum(['active', 'temporarily_closed', 'closed']).optional(),

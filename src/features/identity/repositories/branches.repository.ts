@@ -121,6 +121,32 @@ export async function findByName(name: string): Promise<BranchRow | undefined> {
   return rows[0];
 }
 
+/**
+ * A free `BR<n>` code for a branch created without one (the first-run default
+ * branch, an imported row). The admin renames it from the branch screen.
+ */
+export async function allocateCode(exec: Pick<typeof db, 'select'> = db): Promise<string> {
+  const [row] = await exec
+    .select({ max: sql<number>`COALESCE(MAX(${branchesTable.id}), 0)` })
+    .from(branchesTable);
+  let n = Number(row?.max ?? 0) + 1;
+  for (;;) {
+    const code = `BR${n}`;
+    const [taken] = await exec
+      .select({ id: branchesTable.id })
+      .from(branchesTable)
+      .where(eq(branchesTable.code, code))
+      .limit(1);
+    if (!taken) return code;
+    n += 1;
+  }
+}
+
+export async function findByCode(code: string): Promise<BranchRow | undefined> {
+  const rows = await db.select().from(branchesTable).where(eq(branchesTable.code, code)).limit(1);
+  return rows[0];
+}
+
 /** One active assignment in a branch, flattened with the person and the role it grants. */
 export interface BranchStaffRow {
   assignment_id: number;
@@ -316,9 +342,15 @@ export async function insertManyFromImport(
   let inserted = 0;
 
   await db.transaction(async (tx) => {
+    // Codes are not imported (two rows of one file could claim the same one):
+    // each row gets the next free `BR<n>`, renamed later from the branch screen.
+    const base = Number(await allocateCode(tx).then((c) => c.slice(2)));
+    let offset = 0;
     for (let i = 0; i < rows.length; i += CHUNK) {
       const chunk = rows.slice(i, i + CHUNK).map((r) => ({
         name: r.name,
+        name_en: r.name_en?.trim() || null,
+        code: `BR${base + offset++}`,
         address: r.address ?? null,
         contact_info: r.contact_info ?? null,
       }));

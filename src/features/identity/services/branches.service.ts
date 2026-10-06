@@ -342,14 +342,31 @@ async function assertNameIsFree(name: string): Promise<void> {
   );
 }
 
+/**
+ * Codes are unique across archived branches too — an archived branch's old
+ * numbers still carry its code, and reusing it would make two branches' runs
+ * look like one.
+ */
+async function assertCodeIsFree(code: string): Promise<void> {
+  const existing = await branchesRepository.findByCode(code);
+  if (!existing) return;
+  throw new BusinessError(409, `Branch code "${code}" is already used by another branch`, 'branch_code_taken', {
+    branch_id: existing.id,
+    branch_name: existing.name,
+  });
+}
+
 export async function createBranch(
   actor: RequestActorContext,
   body: CreateBranchBody,
 ): Promise<WireBranch> {
   await assertNameIsFree(body.name);
+  await assertCodeIsFree(body.code);
 
   const row = await branchesRepository.insert({
     name: body.name,
+    name_en: body.name_en?.trim() || null,
+    code: body.code,
     address: body.address,
     contact_info: body.contact_info,
     ...(body.latitude !== undefined && body.longitude !== undefined
@@ -358,6 +375,7 @@ export async function createBranch(
   });
   await auditService.record(actor, AUDIT.branchCreate, target.branch(row.id), null, {
     name: row.name,
+    code: row.code,
     status: row.status,
   });
   return toWireBranch(row);
@@ -405,12 +423,18 @@ export async function updateBranch(
     await assertNameIsFree(body.name);
   }
 
+  if (body.code !== undefined && body.code !== existing.code) {
+    await assertCodeIsFree(body.code);
+  }
+
   if (body.status === 'closed' && existing.status !== 'closed') {
     await assertBranchIsEmptyBeforeClosing(id);
   }
 
   const row = await branchesRepository.update(id, {
     ...(body.name !== undefined ? { name: body.name } : {}),
+    ...(body.name_en !== undefined ? { name_en: body.name_en?.trim() || null } : {}),
+    ...(body.code !== undefined ? { code: body.code } : {}),
     ...(body.address !== undefined ? { address: body.address } : {}),
     ...(body.contact_info !== undefined ? { contact_info: body.contact_info } : {}),
     ...(body.latitude !== undefined && body.longitude !== undefined
@@ -437,11 +461,20 @@ export async function updateBranch(
     target.branch(id),
     {
       name: existing.name,
+      name_en: existing.name_en,
+      code: existing.code,
       address: existing.address,
       contact_info: existing.contact_info,
       status: existing.status,
     },
-    { name: row.name, address: row.address, contact_info: row.contact_info, status: row.status },
+    {
+      name: row.name,
+      name_en: row.name_en,
+      code: row.code,
+      address: row.address,
+      contact_info: row.contact_info,
+      status: row.status,
+    },
   );
   return toWireBranch(row);
 }

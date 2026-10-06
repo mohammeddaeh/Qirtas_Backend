@@ -1,14 +1,15 @@
 /**
- * بادئة الفرع من اسمه: أول حرفين لاتينيين، وإلا `BR<id>`.
+ * The branch's code as the start of every number it issues (`system_settings.md`).
  *
- * الاسم العربي لا يُشتقّ منه حرفان لاتينيان، ورقمُ الفرع جوابٌ صادق يبقى
- * فريداً — بخلاف بادئةٍ مخترَعة يتشاركها فرعان فيتصادم رقماهما.
+ * The code is a column the admin sets at creation and keeps unique — the old
+ * rule derived it from the first two Latin letters of the name, and two branches
+ * («Mazzeh», «Malki») shared `MA`. `BR<id>` is the fallback for a row read
+ * before the column existed; the migration gives every branch that same value.
  *
- * بـ`core/` لأن كل ترقيم بفرع يبدأ بها (الفواتير والطلبات بـ`sales`، وطلبات
- * الطباعة بـ`printing`) — ونسختان تختلفان أول تعديل فيبدأ رقمان لنفس الفرع
- * ببادئتين.
+ * In `core/` because every branch-numbered document starts with it (sales,
+ * returns and orders in `sales`, print orders in `printing`).
  */
-export function branchPrefix(name: string, branchId: number): string {
-  const letters = name.replace(/[^A-Za-z]/g, '');
-  return letters.length >= 2 ? letters.slice(0, 2).toUpperCase() : `BR${branchId}`;
+export function branchPrefix(code: string | null | undefined, branchId: number): string {
+  const clean = (code ?? '').trim().toUpperCase();
+  return clean.length > 0 ? clean : `BR${branchId}`;
 }

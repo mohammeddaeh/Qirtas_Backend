@@ -380,6 +380,7 @@ async function ensureBranches(actor: RequestActorContext): Promise<number[]> {
     }
     const created = await branchesService.createBranch(actor, {
       name: def.name,
+      code: `D${ids.length + 1}`,
       address: def.address,
       contact_info: def.contact_info,
       ...(where ? where : {}),

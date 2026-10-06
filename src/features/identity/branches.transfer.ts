@@ -8,6 +8,9 @@ import type {
   TransferRow,
 } from '../../core/data-transfer/types.js';
 import { createBranchBodySchema, type CreateBranchBody } from './dtos/branches.dto.js';
+
+/** The API body without `code` — an imported branch gets a free `BR<n>` (see the repository). */
+const importRowSchema = createBranchBodySchema.innerType().omit({ code: true });
 import * as branchesRepository from './repositories/branches.repository.js';
 import * as userRoleAssignmentsRepository from './repositories/user-role-assignments.repository.js';
 
@@ -74,6 +77,15 @@ export const branchesTransferResource = defineTransferResource({
         ar: 'إلزامي · اسم مميّز لا يتكرر مع فرع آخر',
         en: 'Required · must not repeat another branch',
       },
+    },
+    {
+      key: 'code',
+      label: { ar: 'رمز الفرع', en: 'Branch code' },
+      type: 'string',
+      // Exported, never imported: two rows of one file could claim the same
+      // code. Imported branches get `BR<n>` and are renamed on screen.
+      importable: false,
+      hint: { ar: 'يُعطى تلقائياً ويُعدَّل من شاشة الفرع', en: 'Assigned automatically, edited on the branch screen' },
     },
     {
       key: 'address',
@@ -165,6 +177,7 @@ export const branchesTransferResource = defineTransferResource({
       yield {
         id: row.id,
         name: row.name,
+        code: row.code,
         address: row.address,
         contact_info: row.contact_info,
         status: row.status,
@@ -176,7 +189,7 @@ export const branchesTransferResource = defineTransferResource({
 
   import: {
     /** **The same schema `POST /api/v1/branches` validates against** — not a copy. */
-    rowSchema: createBranchBodySchema,
+    rowSchema: importRowSchema,
 
     /**
      * A branch is identified by its name.

@@ -206,11 +206,11 @@ describe('رقم الفاتورة', () => {
   });
 
   it('البادئة تُشتقّ من الاسم اللاتيني، والعربي يأخذ رقم فرعه', () => {
-    expect(branchPrefix('Mazzeh Branch', 7)).toBe('MA');
+    expect(branchPrefix('mz', 7)).toBe('MZ');
     // الاسم العربي لا يُشتقّ منه حرفان لاتينيان — ورقمُ الفرع جوابٌ فريد،
     // بخلاف بادئةٍ مخترَعة يتشاركها فرعان فيتصادم رقماهما.
-    expect(branchPrefix('فرع المزة', 7)).toBe('BR7');
+    expect(branchPrefix(null, 7)).toBe('BR7');
     expect(branchPrefix('', 3)).toBe('BR3');
-    expect(branchPrefix('A', 3)).toBe('BR3');
+    expect(branchPrefix('  ', 3)).toBe('BR3');
   });
 });

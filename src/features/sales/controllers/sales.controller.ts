@@ -1,3 +1,4 @@
+import type { SalesSettings } from '../repositories/returns.repository.js';
 import type { Request, Response } from 'express';
 import { verifyPassword } from '../../../core/auth/services/password.service.js';
 import { staffRealm } from '../../../core/auth/realm.js';
@@ -162,11 +163,19 @@ const toReturnInput = (body: CreateReturnBody) => ({
   sale_id: body.sale_id,
   refund_method: body.refund_method,
   reason: body.reason ?? null,
+  reason_code: body.reason_code ?? null,
   approver_user_id: body.approver_user_id ?? null,
   lines: body.lines.map((line) => ({
     saleLineId: line.sale_line_id,
     qty: line.qty,
     condition: line.condition,
+  })),
+  service_lines: body.service_lines.map((line) => ({
+    saleLineId: line.sale_line_id,
+    copies: line.copies,
+    refundSyp: line.refund_syp,
+    disposition: line.disposition,
+    label: line.label ?? null,
   })),
 });
 
@@ -224,7 +233,7 @@ export async function getSalesSettings(_req: Request, res: Response): Promise<vo
 }
 
 export async function setSalesSettings(req: Request, res: Response): Promise<void> {
-  ok(res, await returns.setSettings(actorOf(req), req.body as Record<string, number>));
+  ok(res, await returns.setSettings(actorOf(req), req.body as Partial<SalesSettings>));
 }
 
 export async function getCaps(_req: Request, res: Response): Promise<void> {

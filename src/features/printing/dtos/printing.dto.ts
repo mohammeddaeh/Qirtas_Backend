@@ -32,6 +32,58 @@ export const quoteBodySchema = z
   })
   .strict();
 
+/** بيعٌ مباشر بالصندوق (9-و) — التسعير نفسه، و**اسم المطبوع** اختياري (م-٢). */
+/**
+ * A print for the customer at the till (9-ح-1) — **for someone**: a registered
+ * customer, a name typed at the counter (with an optional phone), or a
+ * walk-in said so explicitly. Every print reaches the record and the reports.
+ */
+export const counterSaleBodySchema = quoteBodySchema
+  .extend({
+    label: z.string().trim().max(120).nullable().optional(),
+    customer_id: z.number().int().positive().nullable().optional(),
+    contact_name: z.string().trim().min(2).max(120).nullable().optional(),
+    contact_phone: z.string().trim().max(32).nullable().optional(),
+    walk_in: z.boolean().optional(),
+  })
+  .strict()
+  .refine((b) => b.customer_id != null || (b.contact_name?.length ?? 0) >= 2 || b.walk_in === true, {
+    message: 'Say who the print is for — a customer, a name, or a walk-in',
+    path: ['contact_name'],
+  });
+
+export const contactsQuerySchema = z.object({ q: z.string().trim().min(2).max(80) }).strict();
+
+/** بيعٌ من رفّ الجاهز — **السعر حرّ** (قرار المستخدم)، والعدد ضمن المتاح. */
+export const readySaleBodySchema = z
+  .object({
+    copies: z.number().int().min(1).max(10_000),
+    unit_price_syp: z.number().min(0).max(100_000_000),
+  })
+  .strict();
+
+export const READY_WRITE_OFF_REASONS = ['season_over', 'damaged_on_shelf', 'other'] as const;
+
+export const readyWriteOffBodySchema = z
+  .object({
+    copies: z.number().int().min(1).max(10_000),
+    reason_code: z.enum(READY_WRITE_OFF_REASONS),
+    note: z.string().trim().max(300).nullable().optional(),
+  })
+  .strict();
+
+export const readyCopiesQuerySchema = z
+  .object({
+    branch_id: z.coerce.number().int().positive(),
+    search: z.string().trim().min(1).max(120).optional(),
+    // `z.coerce.boolean()` reads "false" as true — the string is matched instead.
+    include_closed: z
+      .enum(['true', 'false'])
+      .transform((v) => v === 'true')
+      .optional(),
+  })
+  .strict();
+
 /** الرمز معرّفٌ يقرؤه الكود — حروف لاتينية صغيرة وأرقام وشرطة سفلية. */
 export const createOptionBodySchema = z
   .object({
@@ -92,6 +144,7 @@ export const settingsBodySchema = z
     max_pages: z.number().int().min(1).max(100_000).optional(),
     /** صفرٌ = بلا مهلة (`job-rules.ts` `paymentDeadline`). */
     unpaid_timeout_days: z.number().int().min(0).max(90).optional(),
+    ready_stale_days: z.number().int().min(1).max(365).optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
@@ -112,3 +165,7 @@ export type RatesBody = z.infer<typeof ratesBodySchema>;
 export type TiersBody = z.infer<typeof tiersBodySchema>;
 export type SettingsBody = z.infer<typeof settingsBodySchema>;
 export type BranchOptionsBody = z.infer<typeof branchOptionsBodySchema>;
+export type CounterSaleBody = z.infer<typeof counterSaleBodySchema>;
+export type ReadySaleBody = z.infer<typeof readySaleBodySchema>;
+export type ReadyWriteOffBody = z.infer<typeof readyWriteOffBodySchema>;
+export type ReadyCopiesQuery = z.infer<typeof readyCopiesQuerySchema>;

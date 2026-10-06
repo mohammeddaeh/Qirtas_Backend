@@ -65,6 +65,10 @@ export async function uploadLogo(req: Request, res: Response): Promise<void> {
   );
 }
 
+export async function labelBranches(_req: Request, res: Response): Promise<void> {
+  ok(res, await service.labelBranches());
+}
+
 export async function labels(req: Request, res: Response): Promise<void> {
   ok(res, await service.labelData(req.body as LabelsBody));
 }

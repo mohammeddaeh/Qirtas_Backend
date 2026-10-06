@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { findOneById } from '../../../core/db/crud-helpers.js';
 import { branchesTable } from '../../identity/schemas/branches.schema.js';
@@ -126,6 +126,15 @@ export async function findBranch(branchId: number) {
     .from(branchesTable)
     .where(eq(branchesTable.id, branchId));
   return rows[0];
+}
+
+/** Live branches, default first — where a label can be priced. */
+export function findLabelBranches() {
+  return db
+    .select({ id: branchesTable.id, name: branchesTable.name })
+    .from(branchesTable)
+    .where(isNull(branchesTable.archived_at))
+    .orderBy(desc(branchesTable.is_default), branchesTable.name);
 }
 
 export function findVariants(variantIds: number[]) {

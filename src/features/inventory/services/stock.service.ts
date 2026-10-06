@@ -1,3 +1,6 @@
+import { issueNumber } from '../../../core/numbering/numbering.js';
+import { branchPrefix } from '../../../core/records/branch-prefix.js';
+import type { DocType } from '../../../core/numbering/numbering.js';
 import { recordAudit } from '../../../core/audit/audit-recorder.js';
 import { db } from '../../../core/db/client.js';
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
@@ -286,15 +289,30 @@ export async function getSignals(branchId: number): Promise<WireStockSignals> {
   };
 }
 
-/** `GRN-3-000012` — the branch's own run of numbers for that document type. */
+const NUMBERED: Partial<Record<InventoryDocType, DocType>> = {
+  receipt: 'receipt',
+  return: 'purchase_return',
+  adjustment: 'adjustment',
+  transfer: 'transfer',
+  count: 'count',
+};
+
+/**
+ * The document's number from central numbering (`system_settings.md`) — was
+ * `GRN-3-000012` (branch id, no code, no year); now the branch code and the
+ * configured shape. `_prefix` stays for the callers' readability only.
+ */
 export async function nextNumber(
   exec: stockRepository.Exec,
   branchId: number,
   docType: InventoryDocType,
-  prefix: string,
+  _prefix: string,
 ): Promise<string> {
-  const next = await stockRepository.nextDocNumber(exec, branchId, docType);
-  return `${prefix}-${branchId}-${String(next).padStart(6, '0')}`;
+  const type = NUMBERED[docType];
+  if (!type) throw new Error(`No numbering for inventory document ${docType}`);
+  const code = await stockRepository.findBranchCode(exec, branchId);
+  const { number } = await issueNumber(exec, type, branchPrefix(code, branchId));
+  return number;
 }
 
 /** Shared by the writers: a variant that cannot hold stock must not get a movement. */

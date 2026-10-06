@@ -116,6 +116,8 @@ export interface WireDocumentContext {
   /** The default of each kind; `null` only if someone deleted every one of that kind. */
   receipt_template: WireTemplate | null;
   label_template: WireTemplate | null;
+  /** The print-order sticker (9-ز-3). */
+  job_tag_template: WireTemplate | null;
 }
 
 export interface WireLabelItem {

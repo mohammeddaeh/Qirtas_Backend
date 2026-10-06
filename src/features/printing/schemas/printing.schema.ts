@@ -120,6 +120,8 @@ export const printSettingsTable = pgTable('print_settings', {
   max_pages: integer('max_pages').notNull().default(2000),
   /** الطلب المسعَّر غير المدفوع يسقط بعدها — قرار 2026-09-28. */
   unpaid_timeout_days: integer('unpaid_timeout_days').notNull().default(3),
+  /** A copy on the ready shelf this old is marked — the season it was printed for is likely over (9-ح-3). */
+  ready_stale_days: integer('ready_stale_days').notNull().default(30),
   updated_by: integer('updated_by').references(() => usersTable.id, { onDelete: 'set null' }),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

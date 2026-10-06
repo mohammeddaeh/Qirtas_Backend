@@ -1,3 +1,4 @@
+import { recordFinance } from '../../../core/finance/finance-recorder.js';
 import { recordAudit } from '../../../core/audit/audit-recorder.js';
 import { db } from '../../../core/db/client.js';
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
@@ -81,7 +82,7 @@ export async function createAdjustment(actor: RequestActorContext, body: Adjustm
     await stockRepository.insertAdjustmentLines(tx, row.id, lines);
     // Only a posted document touches stock. A pending one is a request, and
     // stock that left "pending" would be counted twice until someone decided.
-    if (!pending) await post(tx, row.id, body.branch_id, lines, actor.userId, body.reason);
+    if (!pending) await post(tx, row.id, body.branch_id, lines, actor.userId, body.reason, value);
     return row.id;
   });
 
@@ -101,7 +102,21 @@ async function post(
   lines: { variant_id: number; qty_base: number }[],
   userId: number,
   reason: string,
+  valueSyp: number,
 ): Promise<void> {
+  // الخسارة تُقيَّد حين تتحرّك البضاعة فعلاً — المعلَّق طلبٌ لا خسارة بعد.
+  await recordFinance(tx, [
+    {
+      branchId,
+      type: 'loss_inventory',
+      method: 'value',
+      amountSyp: -valueSyp,
+      docType: 'stock_adjustment',
+      docId: adjustmentId,
+      userId,
+      reason,
+    },
+  ]);
   await postMovements(tx, {
     branchId,
     // Every reason posts as `damage`: the ledger records that stock left
@@ -162,6 +177,7 @@ export async function decideAdjustment(
         lines.map((line) => ({ variant_id: line.variant_id, qty_base: Number(line.qty_base) })),
         actor.userId,
         row.reason,
+        Number(row.total_value_syp),
       );
   });
   await recordAudit(

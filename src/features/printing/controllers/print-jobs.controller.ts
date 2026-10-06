@@ -9,6 +9,8 @@ import type {
   CreateJobBody,
   DeferBody,
   MyJobsQuery,
+  PickupLookupQuery,
+  QueueCountsQuery,
   QueueQuery,
   QuoteJobBody,
   ReserveFileBody,
@@ -103,6 +105,21 @@ export async function queueBranches(req: Request, res: Response): Promise<void> 
   ok(res, await service.queueBranches(actorOf(req)));
 }
 
+export async function handOver(req: Request, res: Response): Promise<void> {
+  const { id } = req.params as unknown as { id: number };
+  ok(res, await service.handOver(actorOf(req), Number(id)));
+}
+
+export async function lookupForPickup(req: Request, res: Response): Promise<void> {
+  const query = req.query as unknown as PickupLookupQuery;
+  ok(res, await service.lookupForPickup(actorOf(req), query.branch_id, query.q, query.sale_id ?? null));
+}
+
+export async function queueCounts(req: Request, res: Response): Promise<void> {
+  const query = req.query as unknown as QueueCountsQuery;
+  ok(res, await service.queueCounts(actorOf(req), query.branch_id));
+}
+
 export async function listQueue(req: Request, res: Response): Promise<void> {
   const query = req.query as unknown as QueueQuery;
   const p = toPaginationParams(query);
@@ -131,6 +148,19 @@ export async function quote(req: Request, res: Response): Promise<void> {
 
 export async function advance(req: Request, res: Response): Promise<void> {
   ok(res, await service.advanceJob(actorOf(req), params(req).id, (req.body as StageBody).status));
+}
+
+/** «سلِّم من الجاهز» — بدل بدء الطباعة. */
+export async function fulfillFromReady(req: Request, res: Response): Promise<void> {
+  ok(
+    res,
+    await service.fulfillFromReady(
+      actorOf(req),
+      params(req).id,
+      (req.body as { ready_copy_id: number }).ready_copy_id,
+      (req.body as { copies?: number }).copies,
+    ),
+  );
 }
 
 export async function defer(req: Request, res: Response): Promise<void> {

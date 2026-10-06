@@ -1,3 +1,4 @@
+import { issueNumber } from '../../../core/numbering/numbering.js';
 import { recordAudit } from '../../../core/audit/audit-recorder.js';
 import { db } from '../../../core/db/client.js';
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
@@ -13,7 +14,6 @@ import type { OrderRow } from '../schemas/orders.schema.js';
 import { thumbnailsFor } from './line-thumbnails.js';
 import { branchPrefix, roundSyp } from './sale-rules.js';
 import {
-  formatOrderNumber,
   hoursLeft,
   isOpen,
   nextStates,
@@ -335,7 +335,6 @@ export async function checkout(
 
   const settings = await returnsRepo.findSettings();
   const now = new Date();
-  const year = now.getFullYear();
   const until = reservationDeadline(now, settings.reservation_hours);
 
   const subtotal = priced.reduce(
@@ -365,9 +364,9 @@ export async function checkout(
       });
     }
 
-    const sequence = await repo.nextOrderSequence(tx, branchId, year);
+    const { number, sequence } = await issueNumber(tx, 'order', branchPrefix(branch.code, branchId));
     const order = await repo.insertOrder(tx, {
-      number: formatOrderNumber(branchPrefix(branch.name, branchId), year, sequence),
+      number,
       sequence,
       branch_id: branchId,
       customer_id: customerId,

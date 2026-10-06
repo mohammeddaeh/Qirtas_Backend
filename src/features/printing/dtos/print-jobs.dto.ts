@@ -94,9 +94,22 @@ export const queueQuerySchema = paginationQuerySchema
   .extend({ branch_id: id, status: statusList })
   .strict();
 
+/** What the customer brings to the till — code, number, barcode, phone or name. */
+export const pickupLookupQuerySchema = z
+  // sale_id — the invoice the till has open, so «already on this one» is told apart (9-ح-2 audit).
+  .object({ branch_id: id, q: z.string().trim().min(2).max(80), sale_id: id.optional() })
+  .strict();
+
+/** One branch, or — absent — every branch the reader sees the queue of. */
+export const queueCountsQuerySchema = z.object({ branch_id: id.optional() }).strict();
+
 /** صفحات **النسخة الواحدة** — كما عدّها الموظف من الملفات. */
 export const quoteJobBodySchema = z
-  .object({ pages: z.number().int().min(1).max(100_000) })
+  .object({
+    pages: z.number().int().min(1).max(100_000),
+    /** اسم المطبوع (اختياري، م-٢) — به يُطابَق رفّ الجاهز ويُقرأ سطر الفاتورة. */
+    label: z.string().trim().max(120).nullable().optional(),
+  })
   .strict();
 
 export const stageBodySchema = z.object({ status: z.enum(STAFF_STAGES) }).strict();
@@ -109,5 +122,7 @@ export type CancelJobBody = z.infer<typeof cancelJobBodySchema>;
 export type StaffCancelBody = z.infer<typeof staffCancelBodySchema>;
 export type MyJobsQuery = z.infer<typeof myJobsQuerySchema>;
 export type QueueQuery = z.infer<typeof queueQuerySchema>;
+export type QueueCountsQuery = z.infer<typeof queueCountsQuerySchema>;
+export type PickupLookupQuery = z.infer<typeof pickupLookupQuerySchema>;
 export type QuoteJobBody = z.infer<typeof quoteJobBodySchema>;
 export type StageBody = z.infer<typeof stageBodySchema>;

@@ -92,6 +92,8 @@ const lines = z
     show_unit_price: z.boolean().default(true),
     show_discount: z.boolean().default(true),
     show_sku: z.boolean().default(false),
+    /** A print order's number as a barcode under its line — scanned when the customer returns. */
+    show_service_barcode: z.boolean().default(true),
   })
   .strict();
 const totals = z
@@ -236,6 +238,89 @@ export const labelBlockSchema = z.discriminatedUnion('type', [
   spacer,
 ]);
 
+// ── Job tag blocks (9-ز-3) — the sticker on a finished print order ─────────
+
+const pickupCode = z
+  .object({ type: z.literal('pickup_code'), visible, align: align.default('center'), size: textSize.default('xlarge') })
+  .strict();
+/** The order number as a barcode — what the till scans (the code is for the eye). */
+const jobBarcode = z
+  .object({
+    type: z.literal('job_barcode'),
+    visible,
+    align: align.default('center'),
+    height_mm: z.number().min(4).max(40).default(8),
+    show_digits: z.boolean().default(true),
+  })
+  .strict();
+const customerName = z
+  .object({ type: z.literal('customer_name'), visible, align, size: textSize, bold: z.boolean().default(true) })
+  .strict();
+const phoneTail = z
+  .object({ type: z.literal('phone_tail'), visible, align, size: textSize.default('small') })
+  .strict();
+const jobSpec = z
+  .object({
+    type: z.literal('job_spec'),
+    visible,
+    align,
+    size: textSize.default('small'),
+    max_lines: z.number().int().min(1).max(3).default(2),
+  })
+  .strict();
+const copiesPages = z
+  .object({ type: z.literal('copies_pages'), visible, align, size: textSize.default('small') })
+  .strict();
+/** What is still owed — or «paid» — so the till knows before it scans. */
+const amountDue = z
+  .object({
+    type: z.literal('amount_due'),
+    visible,
+    align,
+    size: textSize.default('large'),
+    show_currency: z.boolean().default(true),
+  })
+  .strict();
+const readyDate = z
+  .object({ type: z.literal('ready_date'), visible, align, size: textSize.default('small') })
+  .strict();
+const printLabel = z
+  .object({
+    type: z.literal('print_label'),
+    visible,
+    align,
+    size: textSize,
+    max_lines: z.number().int().min(1).max(3).default(1),
+  })
+  .strict();
+const customerNote = z
+  .object({
+    type: z.literal('customer_note'),
+    visible,
+    align,
+    size: textSize.default('small'),
+    max_lines: z.number().int().min(1).max(3).default(2),
+  })
+  .strict();
+
+export const jobTagBlockSchema = z.discriminatedUnion('type', [
+  pickupCode,
+  jobBarcode,
+  customerName,
+  phoneTail,
+  jobSpec,
+  copiesPages,
+  amountDue,
+  readyDate,
+  printLabel,
+  customerNote,
+  shopName,
+  logo,
+  text,
+  divider,
+  spacer,
+]);
+
 /** Blocks that may appear more than once; every other type is at most once. */
 export const REPEATABLE_BLOCKS: ReadonlySet<string> = new Set(['text', 'divider', 'spacer']);
 
@@ -366,6 +451,29 @@ export const labelLayoutSchema = z
     if (problem) ctx.addIssue({ code: 'custom', path: ['page', 'medium'], message: problem });
   });
 
+/** The sticker on a finished print order — a label's page and printers, job blocks. */
+export const jobTagLayoutSchema = z
+  .object({
+    version: z.literal(LAYOUT_VERSION).default(LAYOUT_VERSION),
+    page: z
+      .object({
+        width_mm: z.number().min(15).max(150),
+        height_mm: z.number().min(10).max(150),
+        margin_mm: z.number().min(0).max(10).default(1),
+        font_scale: fontScale,
+        language,
+        medium,
+      })
+      .strict(),
+    blocks: z.array(jobTagBlockSchema).min(1).max(20),
+  })
+  .strict()
+  .superRefine((layout, ctx) => {
+    uniqueBlockTypes(layout.blocks, ctx);
+    const problem = labelFitProblem(layout.page);
+    if (problem) ctx.addIssue({ code: 'custom', path: ['page', 'medium'], message: problem });
+  });
+
 export type ReceiptLayout = z.infer<typeof receiptLayoutSchema>;
 export type LabelLayout = z.infer<typeof labelLayoutSchema>;
 export type LabelPage = LabelLayout['page'];
@@ -409,10 +517,10 @@ export function labelFitProblem(page: LabelPage): string | null {
 
 const round = (n: number): number => Math.round(n * 10) / 10;
 
-export const DOCUMENT_KINDS = ['receipt', 'label'] as const;
+export const DOCUMENT_KINDS = ['receipt', 'label', 'job_tag'] as const;
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
 /** Validate and normalise (fill every default) a layout for its kind. */
 export function layoutSchemaFor(kind: DocumentKind): z.ZodTypeAny {
-  return kind === 'receipt' ? receiptLayoutSchema : labelLayoutSchema;
+  return kind === 'receipt' ? receiptLayoutSchema : kind === 'label' ? labelLayoutSchema : jobTagLayoutSchema;
 }

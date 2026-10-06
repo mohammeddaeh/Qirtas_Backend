@@ -1,3 +1,5 @@
+import { issueNumber } from '../../../core/numbering/numbering.js';
+import { takeReadyForJob } from './print-ready.js';
 import { recordAudit } from '../../../core/audit/audit-recorder.js';
 import { db } from '../../../core/db/client.js';
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
@@ -16,11 +18,15 @@ import type { MediaAssetStatus } from '../../../core/media/schemas/media-assets.
 import { branchPrefix } from '../../../core/records/branch-prefix.js';
 import { PRINTING_AUDIT, printingTarget } from '../audit-actions.js';
 import * as printingRepo from '../repositories/printing.repository.js';
+import { emitPrintJobEvent, eventForStage } from './print-job-events.js';
+import { tillSale } from '../../../core/till/service-line-port.js';
+import { tillActionFor, type TillAction } from './job-rules.js';
 import * as repo from '../repositories/print-jobs.repository.js';
 import type { JobFile } from '../repositories/print-jobs.repository.js';
 import type { PrintOptionKind } from '../schemas/printing.schema.js';
 import type {
   PrintJobRow,
+  PrintJobSource,
   PrintJobStatus,
   PrintPaymentStatus,
 } from '../schemas/print-jobs.schema.js';
@@ -35,13 +41,13 @@ import {
   canMove,
   customerCanCancel,
   fileExpiryFor,
-  formatJobNumber,
   hoursLeft,
   isEditable,
   isOverdue,
   isPrintableLink,
   nextStates,
   paymentDeadline,
+  canHandOver,
   paymentSettled,
   submitProblem,
   type StaffStage,
@@ -93,9 +99,12 @@ export interface WirePrintJob {
   number: string | null;
   branch_id: number;
   branch_name: string | null;
-  customer_id: number;
+  /** `null` for a regular known by name, or a walk-in (9-ح-1). */
+  customer_id: number | null;
+  /** The account's name — or the name typed at the counter; `null` = walk-in. */
   customer_name: string | null;
   customer_phone: string | null;
+  source: PrintJobSource;
   status: PrintJobStatus;
   /** الأزرار تُبنى منها — لا آلة حالاتٍ ثانية بالعميل. */
   next_states: PrintJobStatus[];
@@ -113,6 +122,14 @@ export interface WirePrintJob {
   spec: Record<PrintOptionKind, WireSpecOption | null>;
   copies: number;
   note: string | null;
+  /** اسم المطبوع يكتبه الموظف عند التسعير (م-٢). */
+  label: string | null;
+  /** Handed over **wholly** from the ready shelf, not printed (`finance_ledger.md` §٤). */
+  from_ready: boolean;
+  /** `1005-042` — issued when ready, written on the copies (9-ز-2). `null` before. */
+  pickup_code: string | null;
+  /** Copies taken from the ready shelf (9-ز-5) — fewer than `copies` ⇒ the rest is printed. */
+  from_ready_copies: number;
   /** صفحات النسخة الواحدة كما كتبها الموظف — `null` حتى يُسعَّر. */
   total_pages: number | null;
   /** تفصيل السعر المجمَّد — شكل `POST /printing/quote` نفسه. */
@@ -147,7 +164,7 @@ async function wireJob(row: PrintJobRow): Promise<WirePrintJob> {
     repo.findJobFiles(row.id),
     repo.findJobLinks(row.id),
     repo.findBranchName(row.branch_id),
-    repo.findCustomer(row.customer_id),
+    row.customer_id === null ? Promise.resolve(undefined) : repo.findCustomer(row.customer_id),
     printingRepo.findOptions(),
   ]);
   const byId = new Map(options.map((o) => [o.id, o]));
@@ -164,12 +181,15 @@ async function wireJob(row: PrintJobRow): Promise<WirePrintJob> {
     branch_id: row.branch_id,
     branch_name: branchName,
     customer_id: row.customer_id,
-    customer_name: customer?.name ?? null,
-    customer_phone: customer?.phone ?? null,
+    customer_name: customer?.name ?? row.contact_name,
+    customer_phone: customer?.phone ?? row.contact_phone,
+    source: row.source,
     status: row.status,
     next_states: nextStates(row.status),
     payment_status: row.payment_status,
-    at_till: isAtTill(row),
+    // For the customer: at the till only while a cashier is at it — a basket
+    // left open or held is not a payment in progress, and must not block cancel.
+    at_till: isAtTill(row) && (await tillSale().state(row.sale_id!)) === 'active',
     sale_id: row.sale_id,
     paid_at: row.paid_at?.toISOString() ?? null,
     deferred:
@@ -185,6 +205,11 @@ async function wireJob(row: PrintJobRow): Promise<WirePrintJob> {
     },
     copies: row.copies,
     note: row.note,
+    label: row.label,
+    // The whole order from the shelf — a partial take still printed the rest.
+    from_ready: row.fulfilled_from_ready_id !== null && row.from_ready_copies >= row.copies,
+    pickup_code: row.pickup_code,
+    from_ready_copies: row.from_ready_copies,
     total_pages: row.total_pages,
     quote: (row.quote as WireQuote | null) ?? null,
     quoted_total_syp: num(row.quoted_total_syp),
@@ -493,7 +518,6 @@ export async function submitJob(customerId: number, jobId: number): Promise<Wire
   }
 
   const now = new Date();
-  const year = now.getFullYear();
   await db.transaction(async (tx) => {
     const locked = await repo.lockJob(tx, jobId);
     if (!locked || locked.status !== 'draft') {
@@ -506,9 +530,9 @@ export async function submitJob(customerId: number, jobId: number): Promise<Wire
         },
       );
     }
-    const sequence = await repo.nextJobSequence(tx, row.branch_id, year);
+    const { number, sequence } = await issueNumber(tx, 'print_job', branchPrefix(branch.code, branch.id));
     await repo.updateJob(tx, jobId, {
-      number: formatJobNumber(branchPrefix(branch.name, branch.id), year, sequence),
+      number,
       sequence,
       status: 'awaiting_quote',
       submitted_at: now,
@@ -518,7 +542,9 @@ export async function submitJob(customerId: number, jobId: number): Promise<Wire
     files.map((f) => f.asset.id),
     null,
   );
-  return wireJob((await repo.findJob(jobId))!);
+  const submitted = (await repo.findJob(jobId))!;
+  emitPrintJobEvent('submitted', submitted);
+  return wireJob(submitted);
 }
 
 // ── الزبون: القراءة والإلغاء ────────────────────────────────────────────────
@@ -553,6 +579,11 @@ export async function cancelMine(
         status: row.status,
       },
     );
+  }
+  // On a forgotten basket (held, or open for hours): taken off it first, so
+  // the cancel goes through. A basket being paid now still refuses (closeJob).
+  if (isAtTill(row) && (await tillSale().state(row.sale_id!)) !== 'active') {
+    await tillSale().release('print_job', row.id, row.sale_id!);
   }
   await closeJob(jobId, 'cancelled', reason?.trim() || null, null);
   return wireJob((await repo.findJob(jobId))!);
@@ -614,6 +645,44 @@ export async function queueBranches(
   return branches.filter((_, i) => allowed[i]);
 }
 
+/** What the production board's stage row and the home tile count. */
+export interface WireQueueCounts {
+  to_price: number;
+  awaiting_payment: number;
+  /** Paid (or deferred) and waiting for the printer. */
+  queued: number;
+  in_production: number;
+  ready: number;
+  /** What the branch has to act on now: price it, print it, finish it. */
+  waiting: number;
+}
+
+/**
+ * Open jobs per stage — **one branch**, or every branch the reader sees the
+ * queue of (the home tile). Overdue jobs are swept first, so a job past its
+ * payment window is not counted as still waiting.
+ */
+export async function queueCounts(actor: RequestActorContext, branchId?: number): Promise<WireQueueCounts> {
+  let branchIds: number[];
+  if (branchId !== undefined) {
+    await requireScope(actor, QUEUE_VIEW_KEY, branchId);
+    branchIds = [branchId];
+  } else {
+    branchIds = (await queueBranches(actor)).map((b) => b.id);
+  }
+  await sweepOverdue();
+  const m = await repo.countByStatus(branchIds);
+  const n = (s: PrintJobStatus): number => m.get(s) ?? 0;
+  return {
+    to_price: n('awaiting_quote'),
+    awaiting_payment: n('awaiting_payment'),
+    queued: n('queued'),
+    in_production: n('in_production'),
+    ready: n('ready'),
+    waiting: n('awaiting_quote') + n('queued') + n('in_production'),
+  };
+}
+
 export async function listQueue(
   actor: RequestActorContext,
   branchId: number,
@@ -624,7 +693,7 @@ export async function listQueue(
   await requireScope(actor, QUEUE_VIEW_KEY, branchId);
   await sweepOverdue();
   const { rows, total } = await repo.findJobs(
-    { branchId, statuses, excludeDrafts: true },
+    { branchId, statuses, excludeDrafts: true, excludeCounter: true },
     limit,
     offset,
   );
@@ -666,7 +735,7 @@ export async function staffFileLink(
 export async function quoteJob(
   actor: RequestActorContext,
   jobId: number,
-  input: { pages: number },
+  input: { pages: number; label?: string | null },
 ): Promise<WireStaffPrintJob> {
   const row = await requireStaffJob(actor, STATUS_UPDATE_KEY, jobId);
   if (row.status !== 'awaiting_quote' && row.status !== 'awaiting_payment') {
@@ -698,6 +767,8 @@ export async function quoteJob(
     await repo.updateJob(tx, jobId, {
       status: 'awaiting_payment',
       total_pages: input.pages,
+      // Omitted ⇒ keep what was there; an empty string clears it.
+      ...(input.label === undefined ? {} : { label: input.label?.trim() || null }),
       quote,
       quoted_total_syp: String(quote.total_syp),
       quoted_by: actor.userId,
@@ -712,6 +783,7 @@ export async function quoteJob(
     { total_pages: row.total_pages, quoted_total_syp: num(row.quoted_total_syp) },
     { total_pages: input.pages, quoted_total_syp: quote.total_syp },
   );
+  emitPrintJobEvent('priced', row);
   return staffWireFor(actor, jobId);
 }
 
@@ -741,6 +813,13 @@ export async function advanceJob(
         },
       );
     }
+    // Unpaid (or deferred) copies are handed over at the till, which collects
+    // first — a pickup here would let them leave unpaid (9-ز-4).
+    if (to === 'picked_up' && !canHandOver(locked.status, locked.payment_status)) {
+      throw new BusinessError(409, 'This print order is paid at the till before pickup', 'print_job_pickup_unpaid', {
+        payment_status: locked.payment_status,
+      });
+    }
     if (to === 'in_production' && !paymentSettled(locked.payment_status)) {
       throw new BusinessError(409, 'This print job is not paid', 'print_job_unpaid', {
         payment_status: locked.payment_status,
@@ -756,10 +835,11 @@ export async function advanceJob(
         ? {
             production_started_at: now,
             consumed_at: now,
-            materials_cost_syp: String(materialsCost ?? 0),
+            // A partial ready hand-over: the shelf copies' value plus the rest's paper.
+            materials_cost_syp: String((materialsCost ?? 0) + (num(locked.ready_value_syp) ?? 0)),
           }
         : {}),
-      ...(to === 'ready' ? { ready_at: now } : {}),
+      ...(to === 'ready' ? { ready_at: now, pickup_code: await issuePickupCode(tx, locked.branch_id, now) } : {}),
       ...(to === 'picked_up' ? { picked_up_at: now, closed_at: now } : {}),
     });
   });
@@ -771,6 +851,234 @@ export async function advanceJob(
     { status: row.status },
     { status: to },
   );
+  emitPrintJobEvent(eventForStage(to), row);
+  return staffWireFor(actor, jobId);
+}
+
+// ── الطباعة الفورية أمراً (9-ح-1) ────────────────────────────────────────
+
+export interface CounterJobInput {
+  branchId: number;
+  spec: { paperSizeId: number; colorModeId: number; sidesId: number; bindingId: number; coverId: number };
+  pages: number;
+  copies: number;
+  label: string | null;
+  /** A registered customer — or [contactName] typed at the counter — or neither (walk-in). */
+  customerId: number | null;
+  contactName: string | null;
+  contactPhone: string | null;
+}
+
+/**
+ * A print for the customer standing at the till — **an order like any other**
+ * (9-ح-1), so it is in the record, the reports and the customer's history.
+ * Priced now, joins the basket as a `print_job` line, and is printed, handed
+ * over and its paper deducted as the invoice settles (`print-till.settle`).
+ * It never sits on the production board: the cashier prints it.
+ */
+export async function createCounterJob(
+  actor: RequestActorContext,
+  input: CounterJobInput,
+): Promise<{ id: number; kind: 'print_job'; number: string | null; total_syp: number }> {
+  if (input.customerId !== null && !(await repo.findCustomer(input.customerId))) {
+    throw new NotFoundError('Customer not found');
+  }
+  await assertPrintableSpec(input.branchId, input.spec);
+  const quote = await priceJob(input.branchId, { ...input.spec, pages: input.pages, copies: input.copies });
+  const now = new Date();
+  const settings = await printingRepo.getSettings();
+  const row = await db.transaction(async (tx) => {
+    const code = await repo.findBranchCode(tx, input.branchId);
+    const { number, sequence } = await issueNumber(tx, 'print_job', branchPrefix(code, input.branchId));
+    return repo.insertJob({
+      branch_id: input.branchId,
+      customer_id: input.customerId,
+      source: 'counter',
+      contact_name: input.customerId === null ? input.contactName?.trim() || null : null,
+      contact_phone: input.customerId === null ? input.contactPhone?.trim() || null : null,
+      number,
+      sequence,
+      status: 'awaiting_payment',
+      paper_size_id: input.spec.paperSizeId,
+      color_mode_id: input.spec.colorModeId,
+      sides_id: input.spec.sidesId,
+      binding_id: input.spec.bindingId,
+      cover_id: input.spec.coverId,
+      copies: input.copies,
+      total_pages: input.pages,
+      label: input.label?.trim() || null,
+      quote,
+      quoted_total_syp: quote.total_syp.toFixed(2),
+      quoted_at: now,
+      submitted_at: now,
+      // Swept like any unpaid order if it never reaches a basket.
+      payment_due_at: paymentDeadline(now, settings.unpaid_timeout_days),
+    }, tx);
+  });
+  await recordAudit(actor, PRINTING_AUDIT.jobStage, printingTarget.job(row.id), null, {
+    status: 'awaiting_payment',
+    source: 'counter',
+  });
+  emitPrintJobEvent('priced', row);
+  return { id: row.id, kind: 'print_job', number: row.number, total_syp: quote.total_syp };
+}
+
+/** Who a counter print may be for — accounts first, then typed names. */
+export async function findContacts(q: string) {
+  return repo.findContacts(q.trim());
+}
+
+/** The pickup code — inside the transaction that makes the job ready. */
+async function issuePickupCode(tx: Parameters<Parameters<typeof db.transaction>[0]>[0], branchId: number, at: Date): Promise<string> {
+  const code = await repo.findBranchCode(tx, branchId);
+  return (await issueNumber(tx, 'pickup', branchPrefix(code, branchId), at)).number;
+}
+
+/**
+ * Ready jobs a till can hand over, matched by **any** of what the customer
+ * brings (9-ز-2): the pickup code written on the copies, the order number,
+ * the barcode (which carries the order number), or their phone or name.
+ * Ready jobs only — a code that came round again matches today's open job, and
+ * when two still match both are returned, never one picked for the cashier.
+ */
+export async function lookupForPickup(
+  actor: RequestActorContext,
+  branchId: number,
+  q: string,
+  saleId: number | null = null,
+): Promise<(WireStaffPrintJob & { till_action: TillAction; other_sale_id: number | null })[]> {
+  const [queue, till] = await Promise.all([
+    holdsPermissionAt(actor.userId, QUEUE_VIEW_KEY, branchId),
+    holdsPermissionAt(actor.userId, 'sales.sell', branchId),
+  ]);
+  if (!queue && !till) {
+    throw new BusinessError(403, 'No printing permission at this branch', 'print_scope_denied', {
+      branch_id: branchId,
+    });
+  }
+  const rows = await repo.findForTill(branchId, q.trim());
+  const seeCost = await canSeeCost(actor.userId, branchId);
+  return Promise.all(
+    rows.map(async (row) => {
+      const action = tillActionFor(row, saleId);
+      return {
+        ...(await staffWire(row, seeCost)),
+        till_action: action,
+        other_sale_id: action === 'in_other_sale' ? row.sale_id : null,
+      };
+    }),
+  );
+}
+
+/**
+ * The cashier hands a **paid** ready order over (9-ز-4) — found at the till by
+ * its pickup code. Either key at the job's branch: the production clerk who
+ * works the board, or the cashier who stands at the counter.
+ */
+export async function handOver(actor: RequestActorContext, jobId: number): Promise<WireStaffPrintJob> {
+  const row = await repo.findJob(jobId);
+  if (!row || row.status === 'draft') throw new NotFoundError('Print order not found');
+  const [board, till] = await Promise.all([
+    holdsPermissionAt(actor.userId, STATUS_UPDATE_KEY, row.branch_id),
+    holdsPermissionAt(actor.userId, 'sales.sell', row.branch_id),
+  ]);
+  if (!board && !till) {
+    throw new BusinessError(403, 'No printing permission at this branch', 'print_scope_denied', {
+      branch_id: row.branch_id,
+    });
+  }
+  const now = new Date();
+  await db.transaction(async (tx) => {
+    const locked = await repo.lockJob(tx, jobId);
+    if (!locked || !canHandOver(locked.status, locked.payment_status)) {
+      throw new BusinessError(409, 'This print order is paid at the till before pickup', 'print_job_pickup_unpaid', {
+        status: locked?.status ?? null,
+        payment_status: locked?.payment_status ?? null,
+      });
+    }
+    await repo.updateJob(tx, jobId, { status: 'picked_up', picked_up_at: now, closed_at: now });
+  });
+  await applyFileRetention(jobId, 'picked_up', now);
+  await recordAudit(actor, PRINTING_AUDIT.jobStage, printingTarget.job(jobId), { status: row.status }, {
+    status: 'picked_up',
+  });
+  emitPrintJobEvent('picked_up', row);
+  return staffWireFor(actor, jobId);
+}
+
+/**
+ * Hand a paid order over from the ready shelf (`finance_ledger.md` §٤) — the
+ * step «start printing» would take, skipped: the order goes straight to
+ * `ready`, the copies come off the shelf and their value is the order's cost.
+ * Same gate as printing: queued and paid (or deferred).
+ */
+export async function fulfillFromReady(
+  actor: RequestActorContext,
+  jobId: number,
+  readyCopyId: number,
+  copies?: number,
+): Promise<WireStaffPrintJob> {
+  const row = await requireStaffJob(actor, STATUS_UPDATE_KEY, jobId);
+  const now = new Date();
+  let taken = '';
+  let partial = false;
+  await db.transaction(async (tx) => {
+    const locked = await repo.lockJob(tx, jobId);
+    if (!locked || locked.status !== 'queued') {
+      throw new BusinessError(409, 'This print job cannot move to that stage', 'print_job_wrong_status', {
+        status: locked?.status ?? null,
+        to: 'ready',
+      });
+    }
+    if (!paymentSettled(locked.payment_status)) {
+      throw new BusinessError(409, 'This print job is not paid', 'print_job_unpaid', {
+        payment_status: locked.payment_status,
+      });
+    }
+    if (locked.from_ready_copies > 0) {
+      throw new BusinessError(409, 'Part of this order already came off the ready shelf', 'print_ready_already_taken');
+    }
+    // All the order's copies — or fewer (9-ز-5): the shelf has 3 of 5, the
+    // three are handed over and the order stays queued for the other two.
+    const take = copies ?? locked.copies;
+    if (take < 1 || take > locked.copies) {
+      throw new BusinessError(422, 'Take between one copy and the whole order', 'print_ready_take_invalid', {
+        copies: locked.copies,
+      });
+    }
+    const { value, number } = await takeReadyForJob(tx, {
+      copyId: readyCopyId,
+      branchId: locked.branch_id,
+      copies: take,
+      jobId,
+      saleId: locked.sale_id,
+      userId: actor.userId,
+    });
+    taken = number;
+    partial = take < locked.copies;
+    await repo.updateJob(
+      tx,
+      jobId,
+      partial
+        ? { fulfilled_from_ready_id: readyCopyId, from_ready_copies: take, ready_value_syp: String(value) }
+        : {
+            status: 'ready',
+            production_started_at: now,
+            consumed_at: now,
+            ready_at: now,
+            pickup_code: await issuePickupCode(tx, locked.branch_id, now),
+            materials_cost_syp: String(value),
+            fulfilled_from_ready_id: readyCopyId,
+            from_ready_copies: take,
+          },
+    );
+  });
+  if (!partial) await applyFileRetention(jobId, 'ready', now);
+  await recordAudit(actor, PRINTING_AUDIT.jobStage, printingTarget.job(jobId), { status: row.status }, {
+    status: partial ? row.status : 'ready',
+    from_ready: taken,
+  });
+  if (!partial) emitPrintJobEvent('ready', row);
   return staffWireFor(actor, jobId);
 }
 
@@ -847,6 +1155,7 @@ export async function deferPayment(
     { status: row.status, payment_status: row.payment_status },
     { status: 'queued', payment_status: 'deferred', reason: reason.trim() },
   );
+  emitPrintJobEvent('deferred', row);
   return staffWireFor(actor, jobId);
 }
 
@@ -859,7 +1168,7 @@ async function closeJob(
   userId: number | null,
 ): Promise<void> {
   const now = new Date();
-  await db.transaction(async (tx) => {
+  const closed = await db.transaction(async (tx) => {
     const locked = await repo.lockJob(tx, jobId);
     if (!locked) throw new NotFoundError('Print job not found');
     const allowed =
@@ -884,8 +1193,10 @@ async function closeJob(
       payment_due_at: null,
       closed_at: now,
     });
+    return locked;
   });
   await applyFileRetention(jobId, status, now);
+  emitPrintJobEvent(status, closed);
 }
 
 /**

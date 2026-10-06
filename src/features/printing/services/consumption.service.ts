@@ -5,6 +5,7 @@ import { BusinessError } from '../../../core/http/api-error.js';
 import type { RequestActorContext } from '../../../core/http/require-actor.js';
 import { holdsPermissionAt } from '../../../core/http/require-permission.js';
 import { postConsumption } from '../../../core/stock/consumption-port.js';
+import { recordFinance } from '../../../core/finance/finance-recorder.js';
 import { PRINTING_AUDIT, printingTarget } from '../audit-actions.js';
 import * as repo from '../repositories/consumption.repository.js';
 import * as printingRepo from '../repositories/printing.repository.js';
@@ -59,30 +60,126 @@ function toRule(r: repo.RuleWithMaterial): ConsumptionRule {
 export async function consumeForJob(tx: Tx, job: PrintJobRow, userId: number): Promise<number> {
   const quote = job.quote as { sheets?: number; printed_pages?: number; copies?: number } | null;
   if (quote === null) return 0;
+  // Part came off the ready shelf (9-ز-5): only the rest is printed, so only
+  // the rest consumes — the quote's totals scaled to the copies left.
+  const quoted = quote.copies ?? job.copies;
+  const toPrint = Math.max(0, quoted - job.from_ready_copies);
+  const share = quoted > 0 ? toPrint / quoted : 1;
+  if (toPrint === 0) return 0;
+  const { cost, lines } = await consumeMaterials(tx, {
+    branchId: job.branch_id,
+    optionIds: [job.paper_size_id, job.color_mode_id, job.sides_id, job.binding_id, job.cover_id],
+    sheets: Math.round((quote.sheets ?? 0) * share),
+    printedPages: Math.round((quote.printed_pages ?? 0) * share),
+    copies: toPrint,
+    printJobId: job.id,
+    printCounterId: null,
+    saleId: job.sale_id,
+    userId,
+  });
+  if (lines.length > 0) {
+    await repo.insertJobConsumption(
+      tx,
+      lines.map((l) => ({ job_id: job.id, ...l })),
+    );
+  }
+  return cost;
+}
+
+/**
+ * The same deduction for a print sold straight at the till (slice 9-و) — no
+ * job, the movement is filed under the counter sale. Returns the cost.
+ */
+export async function consumeForCounterSale(
+  tx: Tx,
+  sale: {
+    id: number;
+    branchId: number;
+    saleId: number | null;
+    optionIds: number[];
+    sheets: number;
+    printedPages: number;
+    copies: number;
+  },
+  userId: number,
+): Promise<number> {
+  const { cost } = await consumeMaterials(tx, {
+    branchId: sale.branchId,
+    optionIds: sale.optionIds,
+    sheets: sale.sheets,
+    printedPages: sale.printedPages,
+    copies: sale.copies,
+    printJobId: null,
+    printCounterId: sale.id,
+    saleId: sale.saleId,
+    userId,
+  });
+  return cost;
+}
+
+/**
+ * A reprint the shop owes (slice M-2): the same deduction again, booked as
+ * **waste** — no money came in for these copies. The stock movement points at
+ * the original job or counter sale.
+ */
+export async function consumeForReprint(
+  tx: Tx,
+  input: {
+    branchId: number;
+    optionIds: number[];
+    sheets: number;
+    printedPages: number;
+    copies: number;
+    printJobId: number | null;
+    printCounterId: number | null;
+    saleId: number | null;
+  },
+  userId: number,
+): Promise<number> {
+  const { cost } = await consumeMaterials(tx, { ...input, userId, ledgerType: 'print_waste' });
+  return cost;
+}
+
+/** The deduction itself — meters, postable whole units, exact-quantity cost. */
+async function consumeMaterials(
+  tx: Tx,
+  input: {
+    branchId: number;
+    optionIds: number[];
+    sheets: number;
+    printedPages: number;
+    copies: number;
+    printJobId: number | null;
+    printCounterId: number | null;
+    saleId: number | null;
+    userId: number;
+    /** `print_waste` for a reprint the shop owes — no money came in for it. */
+    ledgerType?: 'print_materials' | 'print_waste';
+  },
+): Promise<{
+  cost: number;
+  lines: { variant_id: number; qty: string; unit_cost_syp: string; cost_syp: string }[];
+}> {
   const rules = (await repo.findRules(tx)).map(toRule);
-  const materials = consumptionFor(
-    [job.paper_size_id, job.color_mode_id, job.sides_id, job.binding_id, job.cover_id],
-    rules,
-    {
-      sheets: quote.sheets ?? 0,
-      printedPages: quote.printed_pages ?? 0,
-      copies: quote.copies ?? job.copies,
-    },
-  );
-  if (materials.length === 0) return 0;
+  const materials = consumptionFor(input.optionIds, rules, {
+    sheets: input.sheets,
+    printedPages: input.printedPages,
+    copies: input.copies,
+  });
+  if (materials.length === 0) return { cost: 0, lines: [] };
 
   const costs = await resolveAvgCostAt(
-    job.branch_id,
+    input.branchId,
     materials.map((m) => m.variantId),
   );
   const posts: { variantId: number; qtyBase: number }[] = [];
   const lines = [];
   let total = 0;
   for (const m of materials) {
-    const meter = await repo.lockMeter(tx, job.branch_id, m.variantId);
+    const meter = await repo.lockMeter(tx, input.branchId, m.variantId);
     const pending = round9(Number(meter.pending) + m.qty);
     const { post, remaining } = splitPostable(pending);
-    await repo.updateMeter(tx, job.branch_id, m.variantId, {
+    await repo.updateMeter(tx, input.branchId, m.variantId, {
       pending: String(remaining),
       since_install: String(round9(Number(meter.since_install) + m.qty)),
       pages_since_install: meter.pages_since_install + m.yieldPages,
@@ -92,7 +189,6 @@ export async function consumeForJob(tx: Tx, job: PrintJobRow, userId: number): P
     const cost = Math.round(m.qty * unit * 100) / 100;
     total += cost;
     lines.push({
-      job_id: job.id,
       variant_id: m.variantId,
       qty: String(m.qty),
       unit_cost_syp: money(unit),
@@ -101,13 +197,27 @@ export async function consumeForJob(tx: Tx, job: PrintJobRow, userId: number): P
   }
   await postConsumption({
     exec: tx,
-    branchId: job.branch_id,
+    branchId: input.branchId,
     lines: posts,
-    printJobId: job.id,
-    userId,
+    printJobId: input.printJobId,
+    printCounterId: input.printCounterId,
+    userId: input.userId,
   });
-  await repo.insertJobConsumption(tx, lines);
-  return Math.round(total * 100) / 100;
+  const cost = Math.round(total * 100) / 100;
+  // التكلفة تُقيَّد حيث تُخصم المواد (`finance_ledger.md` §٢) — بمعاملة الخصم.
+  await recordFinance(tx, [
+    {
+      branchId: input.branchId,
+      type: input.ledgerType ?? 'print_materials',
+      method: 'value',
+      amountSyp: -cost,
+      docType: input.printJobId !== null ? 'print_job' : 'print_counter',
+      docId: input.printJobId ?? input.printCounterId!,
+      saleId: input.saleId,
+      userId: input.userId,
+    },
+  ]);
+  return { cost, lines };
 }
 
 export interface WireJobMaterials {

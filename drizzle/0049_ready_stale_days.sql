@@ -1,0 +1,1 @@
+ALTER TABLE "print_settings" ADD COLUMN "ready_stale_days" integer DEFAULT 30 NOT NULL;

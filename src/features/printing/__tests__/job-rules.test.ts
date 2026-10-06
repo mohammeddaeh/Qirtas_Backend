@@ -13,6 +13,7 @@ import {
   nextStates,
   paymentDeadline,
   paymentSettled,
+  canHandOver,
   statusAfterPayment,
   submitProblem,
 } from '../services/job-rules.js';
@@ -99,10 +100,20 @@ describe('what the till may collect', () => {
     expect(isPayable('in_production', 'unpaid')).toBe(false);
   });
 
-  it('payment moves a waiting order into the queue, and leaves a deferred one at its stage', () => {
+  it('payment moves a waiting order into the queue — and a ready one out of the door', () => {
     expect(statusAfterPayment('awaiting_payment')).toBe('queued');
-    expect(statusAfterPayment('ready')).toBe('ready');
+    // Printed before payment, paid at the till with the copies in hand (9-ز-4).
+    expect(statusAfterPayment('ready')).toBe('picked_up');
+    // Deferred mid-production stays where it is — nothing is in the customer's hand yet.
+    expect(statusAfterPayment('in_production')).toBe('in_production');
     expect(statusAfterPayment('picked_up')).toBe('picked_up');
+  });
+
+  it('copies leave the counter paid — deferred still owes', () => {
+    expect(canHandOver('ready', 'paid')).toBe(true);
+    expect(canHandOver('ready', 'deferred')).toBe(false);
+    expect(canHandOver('ready', 'unpaid')).toBe(false);
+    expect(canHandOver('in_production', 'paid')).toBe(false);
   });
 });
 

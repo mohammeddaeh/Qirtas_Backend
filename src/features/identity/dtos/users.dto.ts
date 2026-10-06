@@ -60,6 +60,9 @@ export const userResponseSchema = z.object({
       }),
     )
     .optional(),
+  /** List responses only — see `WireUser.requested_role_name`. */
+  requested_role_name: z.string().nullable().optional(),
+  requested_branch_name: z.string().nullable().optional(),
 });
 
 export interface WireUser {
@@ -159,6 +162,13 @@ export interface WireUser {
    * carry posts", and a client cannot render "بلا منصب" from that.
    */
   current_posts?: WireUserPost[];
+  /**
+   * List responses only: the names of the role and branch this applicant asked
+   * for. The review queue's row is about exactly that, and an id is not
+   * readable. `null` when nothing was requested (or the row is gone).
+   */
+  requested_role_name?: string | null;
+  requested_branch_name?: string | null;
 }
 
 /** A compact assignment: only what a picker row needs to be readable. */

@@ -25,6 +25,7 @@ export const CATALOG_AUDIT = {
   brandArchive: 'catalog.brand.archive',
   brandUnarchive: 'catalog.brand.unarchive',
   productCreate: 'catalog.product.create',
+  productImport: 'catalog.product.import',
   productUpdate: 'catalog.product.update',
   productDelete: 'catalog.product.delete',
   productArchive: 'catalog.product.archive',

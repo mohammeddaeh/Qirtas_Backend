@@ -274,6 +274,83 @@
       "when": 1790663197789,
       "tag": "0038_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1791105489968,
+      "tag": "0039_print_counter_sales",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1791108985907,
+      "tag": "0040_finance_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1791112211168,
+      "tag": "0041_print_returns_ready",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1791180206086,
+      "tag": "0042_system_settings_step1",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1791182709307,
+      "tag": "0043_numbering",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1791189545653,
+      "tag": "0044_job_from_ready",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1791198239320,
+      "tag": "0045_pickup_code",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1791200942017,
+      "tag": "0046_job_tag_kind",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1791268068793,
+      "tag": "0047_partial_ready",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1791270194024,
+      "tag": "0048_unified_print_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1791278899521,
+      "tag": "0049_ready_stale_days",
+      "breakpoints": true
     }
   ]
 }

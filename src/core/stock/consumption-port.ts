@@ -25,6 +25,8 @@ export interface ConsumptionRequest {
   lines: ConsumptionLine[];
   /** The print job the materials went into; `null` for a reconciliation. */
   printJobId: number | null;
+  /** A print sold straight at the till (slice 9-و) — instead of a job. */
+  printCounterId?: number | null;
   userId: number;
 }
 

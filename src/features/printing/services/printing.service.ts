@@ -291,6 +291,7 @@ export interface WirePrintConfig {
     max_file_mb: number;
     max_pages: number;
     unpaid_timeout_days: number;
+    ready_stale_days: number;
   };
   /** الأزرار تتبع هذين لا تخميناً محلياً — نطاق الصلاحية قد يكون فرعاً واحداً. */
   can_edit_central: boolean;
@@ -377,6 +378,7 @@ export async function getConfig(
       max_file_mb: settings.max_file_mb,
       max_pages: settings.max_pages,
       unpaid_timeout_days: settings.unpaid_timeout_days,
+      ready_stale_days: settings.ready_stale_days,
     },
     can_edit_central: canCentral,
     can_edit_branch: branchId !== null && canBranch,
@@ -540,6 +542,7 @@ export async function setSettings(
     max_file_mb?: number;
     max_pages?: number;
     unpaid_timeout_days?: number;
+    ready_stale_days?: number;
   },
 ): Promise<WirePrintConfig> {
   const before = await repo.getSettings();
@@ -556,6 +559,7 @@ export async function setSettings(
       ...(input.unpaid_timeout_days === undefined
         ? {}
         : { unpaid_timeout_days: input.unpaid_timeout_days }),
+      ...(input.ready_stale_days === undefined ? {} : { ready_stale_days: input.ready_stale_days }),
     },
     actor.userId,
   );

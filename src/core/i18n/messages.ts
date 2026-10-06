@@ -937,6 +937,122 @@ export const MESSAGES = {
     en: 'A return needs at least one line',
     ar: 'المرتجع يحتاج سطراً واحداً على الأقل',
   },
+  print_counter_not_found: {
+    en: 'No open print sale with this reference',
+    ar: 'لا بيع طباعة مفتوح بهذا المرجع',
+  },
+  print_counter_other_branch: {
+    en: 'This print sale belongs to another branch',
+    ar: 'بيع الطباعة هذا لفرعٍ آخر',
+  },
+  print_counter_in_other_sale: {
+    en: 'This print sale is already at another till',
+    ar: 'بيع الطباعة هذا مضافٌ لفاتورة أخرى',
+  },
+  print_counter_not_payable: {
+    en: 'This print sale cannot be paid now',
+    ar: 'لا يمكن تحصيل بيع الطباعة هذا الآن',
+  },
+  print_job_not_printed: {
+    en: 'This print order was never printed — nothing comes back',
+    ar: 'هذا الطلب لم يُطبع بعد — لا نسخة تُرجَع',
+  },
+  print_return_no_reprint: {
+    en: 'A ready copy is not reprinted',
+    ar: 'نسخة الجاهز لا يُعاد طبعها',
+  },
+  print_return_label_required: {
+    en: 'A ready copy needs a name',
+    ar: 'نسخة الجاهز تحتاج اسماً',
+  },
+  print_ready_not_enough: {
+    en: 'Not that many ready copies left',
+    ar: 'لا يكفي المتاح من الجاهز',
+  },
+  print_ready_sale_not_found: {
+    en: 'No open ready-copy sale with this reference',
+    ar: 'لا بيع جاهز مفتوح بهذا المرجع',
+  },
+  print_ready_other_branch: {
+    en: 'This ready copy is on another branch shelf',
+    ar: 'هذه النسخة على رفّ فرعٍ آخر',
+  },
+  print_ready_not_payable: {
+    en: 'This ready-copy sale cannot be paid now',
+    ar: 'لا يمكن تحصيل بيع الجاهز هذا الآن',
+  },
+  return_line_duplicate: {
+    en: 'A line appears twice',
+    ar: 'السطر مكرَّر بالمرتجع',
+  },
+  return_not_returnable: {
+    en: 'This line cannot be returned',
+    ar: 'هذا السطر لا يُرجَع',
+  },
+  return_reprint_no_refund: {
+    en: 'A reprint pays nothing back',
+    ar: 'إعادة الطبع لا يُرَدّ معها مال',
+  },
+  return_refund_above_paid: {
+    en: 'That is more than what was paid',
+    ar: 'المبلغ أكثر مما دُفع',
+  },
+  branch_code_taken: {
+    en: 'This branch code is already used by another branch',
+    ar: 'رمز الفرع مستعمل لفرعٍ آخر',
+  },
+  return_window_closed: {
+    en: 'This sale is past the return window',
+    ar: 'انتهت مهلة الإرجاع لهذه الفاتورة',
+  },
+  return_needs_approval: {
+    en: 'A return this large needs a manager',
+    ar: 'مرتجعٌ بهذا المبلغ يحتاج موافقة مدير',
+  },
+  returns_goods_disabled: {
+    en: 'Goods returns are turned off',
+    ar: 'إرجاع البضاعة موقوف بسياسة المحل',
+  },
+  returns_prints_disabled: {
+    en: 'Print returns are turned off',
+    ar: 'إرجاع المطبوعات موقوف بسياسة المحل',
+  },
+  return_refund_method_not_allowed: {
+    en: 'This refund method is not allowed',
+    ar: 'طريقة الردّ هذه غير مسموحة',
+  },
+  return_reason_required: {
+    en: 'A return needs a reason',
+    ar: 'اختر سبب الإرجاع',
+  },
+  return_damaged_not_allowed: {
+    en: 'Damaged goods are not taken back',
+    ar: 'البضاعة التالفة لا تُستقبل',
+  },
+  settings_refund_method_required: {
+    en: 'Allow at least one refund method',
+    ar: 'اسمح بطريقة ردٍّ واحدة على الأقل',
+  },
+  numbering_prefix_invalid: {
+    en: 'A prefix is up to 4 Latin capitals',
+    ar: 'البادئة حتى أربعة أحرف لاتينية',
+  },
+  numbering_digits_invalid: {
+    en: 'Digits must be between 3 and 8',
+    ar: 'الخانات من ٣ إلى ٨',
+  },
+  numbering_prefix_taken: {
+    en: 'Another document type already uses this prefix',
+    ar: 'البادئة مستعملة لنوع مستندٍ آخر',
+  },
+  numbering_too_long: {
+    en: 'This number would be too long to print',
+    ar: 'الرقم أطول من أن يُطبع',
+  },
+  import_sku_repeated: {
+    en: 'A SKU repeats in the file',
+    ar: 'رمز SKU مكرَّر داخل الملف',
+  },
   /** رصيدٌ لمن لا حساب له مالٌ لا يعود إليه أبداً. */
   return_credit_needs_customer: {
     en: 'Store credit needs a named customer — refund in cash instead',
@@ -1152,6 +1268,26 @@ export const MESSAGES = {
   print_job_not_found: {
     en: 'No print order with this number',
     ar: 'لا يوجد طلب طباعة بهذا الرقم',
+  },
+  print_job_pickup_unpaid: {
+    en: 'This print order is paid at the till before it is handed over',
+    ar: 'هذا الطلب يُدفع بالصندوق قبل تسليمه',
+  },
+  print_ready_already_taken: {
+    en: 'Part of this order already came off the ready shelf',
+    ar: 'جزءٌ من هذا الطلب سُلِّم من رفّ الجاهز سابقاً',
+  },
+  print_ready_take_invalid: {
+    en: 'Take between one copy and the whole order',
+    ar: 'خذ من نسخة واحدة حتى نسخ الطلب كلها',
+  },
+  sale_service_not_movable: {
+    en: 'That invoice is closed; this service cannot move',
+    ar: 'الفاتورة الأخرى مغلقة — لا يُنقل منها شيء',
+  },
+  print_pickup_ambiguous: {
+    en: 'Two ready orders share this pickup code — search by the order number or the customer name',
+    ar: 'طلبان جاهزان يحملان رقم الاستلام نفسه — ابحث برقم الطلب أو باسم الزبون',
   },
   print_job_other_branch: {
     en: 'This print order belongs to another branch',

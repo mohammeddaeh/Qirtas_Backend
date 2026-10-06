@@ -152,6 +152,15 @@ export interface TransferImportSpec {
   rowSchema: ZodTypeAny;
 
   /**
+   * Builds the row schema **once per file**, with whatever lookups it needs —
+   * a category named by text, a brand, a unit. Optional: when present it is
+   * used instead of [rowSchema] for validation and commit alike, so a row that
+   * names a category the shop does not have is refused **on its own cell**
+   * during review rather than failing the whole commit.
+   */
+  prepareRowSchema?(ctx: TransferContext): Promise<ZodTypeAny>;
+
+  /**
    * Column keys that together identify a record — a branch's `name`, a
    * product's `sku`, an employee's `national_id`.
    *

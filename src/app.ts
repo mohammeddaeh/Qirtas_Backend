@@ -20,6 +20,8 @@ import { buildOpenApiDocument } from './core/openapi/document.js';
 import { configureAuth } from './core/auth/composition.js';
 import { configureDataTransfer } from './core/data-transfer/composition.js';
 import { dataTransferRouter } from './core/data-transfer/routes/data-transfer.routes.js';
+import { systemSettingsRouter } from './features/system-settings/system-settings.routes.js';
+import { reportsRouter } from './features/reports/reports.routes.js';
 import { staffAuthRealm } from './features/identity/auth-realm.js';
 import { customerAuthRealm } from './features/customers/auth-realm.js';
 import { customerActivitySink } from './features/customers/repositories/customer-activity-sink.impl.js';
@@ -44,6 +46,7 @@ import { roleAssignmentsRouter } from './features/identity/routes/user-role-assi
 import { auditLogRouter } from './features/identity/routes/audit-log.routes.js';
 import { languagesRouter } from './features/localization/routes/languages.routes.js';
 import { branchesTransferResource } from './features/identity/branches.transfer.js';
+import { productsTransferResource } from './features/catalog/products.transfer.js';
 import { configureMedia } from './core/media/composition.js';
 import { filesRouter } from './core/media/routes/files.routes.js';
 import { catalogRouter } from './features/catalog/routes/catalog.routes.js';
@@ -68,6 +71,13 @@ import { installInventoryCostResolver } from './features/inventory/services/cost
 import { installInventoryConsumptionPoster, installInventoryStockIssuer } from './features/inventory/services/stock-issuer.js';
 import { installInventoryReservation } from './features/inventory/services/reservation-provider.js';
 import { installPrintServiceLine } from './features/printing/services/print-till.js';
+import { setTillSaleAccess } from './core/till/service-line-port.js';
+import {
+  releaseServiceLine as salesReleaseServiceLine,
+  tillSaleState as salesTillState,
+} from './features/sales/services/sales.service.js';
+import { installPrintCounterServiceLine } from './features/printing/services/print-counter.js';
+import { installPrintReadyServiceLine } from './features/printing/services/print-ready.js';
 import { installInventoryDeletionGuard } from './features/inventory/services/deletion-guard.js';
 import { installVariantMergeHandler } from './features/inventory/services/variant-merge.js';
 import { setAuditRecorder } from './core/audit/audit-recorder.js';
@@ -101,6 +111,10 @@ export const API_ROUTERS: ReadonlyArray<{ path: string; router: Router }> = [
   /** What a customer browses — public, and priced for the branch they chose. */
   { path: '/api/v1/storefront', router: storefrontRouter },
   { path: '/api/v1/promotions', router: promotionsRouter },
+  /** Central operating rules — docs/reference/system_settings.md. */
+  { path: '/api/v1/system-settings', router: systemSettingsRouter },
+  /** Financial reports over the ledger — docs/reference/finance_ledger.md §٥. */
+  { path: '/api/v1/reports', router: reportsRouter },
   { path: '/api/v1/sales', router: salesRouter },
   { path: '/api/v1/returns', router: returnsRouter },
   { path: '/api/v1/cart', router: cartRouter },
@@ -207,6 +221,11 @@ export function buildApp(): Express {
   // طلب الطباعة سطرٌ بفاتورة الصندوق — والصندوق يرمي بلا هذا السطر عند أول
   // طلبٍ يُضاف، بدل أن يقبض ثمن خدمةٍ لا يسمع بها موديولها.
   installPrintServiceLine();
+  // Whether a basket holding a print order is being worked on — so a customer
+  // may cancel an order left on a forgotten basket (core/till/).
+  setTillSaleAccess({ state: salesTillState, release: salesReleaseServiceLine });
+  installPrintCounterServiceLine();
+  installPrintReadyServiceLine();
   // البضاعة تغادر الرفّ **بمعاملة الفاتورة نفسها** — منفذٌ لا استيراد،
   // وفصلُ الكتابتين يترك فاتورةً لبضاعة ما زالت بالدفتر.
   // And carries a branch draft’s stock onto the product it turns out to be.
@@ -234,7 +253,7 @@ export function buildApp(): Express {
   // carry `requireAuth` and nothing more, so without one an import would bypass
   // the permission that resource's own POST route enforces — see
   // `features/identity/branches.transfer.ts`.
-  configureDataTransfer([branchesTransferResource]);
+  configureDataTransfer([branchesTransferResource, productsTransferResource]);
 
   app.use(helmet());
   app.use(cors(corsOptions()));

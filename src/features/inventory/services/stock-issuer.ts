@@ -41,12 +41,12 @@ export function installInventoryStockIssuer(): void {
  * back at the current average, like a return.
  */
 export function installInventoryConsumptionPoster(): void {
-  registerConsumptionPoster(({ exec, branchId, lines, printJobId, userId }) =>
+  registerConsumptionPoster(({ exec, branchId, lines, printJobId, printCounterId, userId }) =>
     postMovements(exec, {
       branchId,
       type: 'production_consume',
-      docType: printJobId === null ? null : 'print_job',
-      docId: printJobId,
+      docType: printJobId !== null ? 'print_job' : printCounterId ? 'print_counter' : null,
+      docId: printJobId ?? printCounterId ?? null,
       lines: lines.map((line) => ({
         variantId: line.variantId,
         qtyBase: -line.qtyBase,

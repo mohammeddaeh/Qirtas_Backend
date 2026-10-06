@@ -34,6 +34,7 @@ const context: WireDocumentContext = {
     updated_at: '2026-09-29T00:00:00.000Z',
   },
   label_template: null,
+  job_tag_template: null,
 };
 
 const label: WireLabelItem = {
@@ -52,7 +53,7 @@ const label: WireLabelItem = {
 
 describe('documents wire contract', () => {
   it('context carries the keys the app reads', () => {
-    expect(Object.keys(context).sort()).toEqual(['branch', 'label_template', 'profile', 'receipt_template']);
+    expect(Object.keys(context).sort()).toEqual(['branch', 'job_tag_template', 'label_template', 'profile', 'receipt_template']);
     expect(Object.keys(context.profile).sort()).toEqual([
       'commercial_register',
       'logo',

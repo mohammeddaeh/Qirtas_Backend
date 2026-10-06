@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { branchesTable } from '../../identity/schemas/branches.schema.js';
 import { usersTable } from '../../identity/schemas/users.schema.js';
+import { customersTable } from '../../customers/schemas/customers.schema.js';
 import { userRoleAssignmentsTable } from '../../identity/schemas/user-role-assignments.schema.js';
 import {
   catalogProductMediaTable,
@@ -33,6 +34,17 @@ export async function insertSale(values: NewSaleRow, exec: Exec = db): Promise<S
 }
 
 /** «أحمد علي» — printed on the receipt; a reprint must name who sold, not who reprints. */
+/** The registered customer's name — what the receipt prints for an invoice in their name. */
+export async function findCustomerName(customerId: number): Promise<string | null> {
+  const [row] = await db
+    .select({ first: customersTable.first_name, last: customersTable.last_name })
+    .from(customersTable)
+    .where(eq(customersTable.id, customerId))
+    .limit(1);
+  const name = row ? `${row.first ?? ''} ${row.last ?? ''}`.trim() : '';
+  return name.length > 0 ? name : null;
+}
+
 export async function findUserName(userId: number): Promise<string | null> {
   const rows = await db
     .select({ first: usersTable.first_name, last: usersTable.last_name })
@@ -256,9 +268,9 @@ export async function nextSequence(exec: Exec, branchId: number, year: number): 
 
 export async function findBranch(
   branchId: number,
-): Promise<{ id: number; name: string } | undefined> {
+): Promise<{ id: number; name: string; code: string } | undefined> {
   const [row] = await db
-    .select({ id: branchesTable.id, name: branchesTable.name })
+    .select({ id: branchesTable.id, name: branchesTable.name, code: branchesTable.code })
     .from(branchesTable)
     .where(eq(branchesTable.id, branchId))
     .limit(1);

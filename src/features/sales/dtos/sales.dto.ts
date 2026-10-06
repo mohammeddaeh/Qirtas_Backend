@@ -32,6 +32,11 @@ export const addServiceBodySchema = z
   .object({
     kind: z.enum(SERVICE_KINDS),
     reference: z.string().trim().min(1).max(40),
+    /**
+     * It sits on another open invoice (a basket left open, a second till) —
+     * move it here: the line leaves that invoice in the same transaction.
+     */
+    take_over: z.boolean().optional(),
   })
   .strict();
 
@@ -135,26 +140,52 @@ const returnLineSchema = z
   })
   .strict();
 
-export const createReturnBodySchema = z
+/** A print line coming back (`finance_ledger.md` §٣). */
+const serviceReturnLineSchema = z
+  .object({
+    sale_line_id: id,
+    copies: z.number().int().positive().max(100000),
+    /** The cashier's amount — the server caps it at what is left. */
+    refund_syp: z.number().min(0).max(100_000_000),
+    disposition: z.enum(['ready', 'damaged', 'reprint']),
+    /** The ready-shelf name — defaults to the print's own label. */
+    label: z.string().trim().max(120).nullable().optional(),
+  })
+  .strict();
+
+export const RETURN_REASON_CODES = ['duplicate', 'shop_error', 'changed_mind', 'other'] as const;
+
+const createReturnBodyBase = z
   .object({
     /** الفرع **المستلِم** لا البائع: الإرجاع بأي فرع (§٢). */
     branch_id: id,
     sale_id: id,
-    lines: z.array(returnLineSchema).min(1).max(50),
+    lines: z.array(returnLineSchema).max(50).default([]),
+    service_lines: z.array(serviceReturnLineSchema).max(50).default([]),
     refund_method: z.enum(['cash', 'customer_credit']),
     reason: z.string().trim().max(300).nullable().optional(),
+    reason_code: z.enum(RETURN_REASON_CODES).nullable().optional(),
     approver_user_id: id.nullable().optional(),
   })
   .strict();
 
+const hasLines = (b: { lines: unknown[]; service_lines: unknown[] }) =>
+  b.lines.length + b.service_lines.length > 0;
+
+export const createReturnBodySchema = createReturnBodyBase.refine(hasLines, {
+    message: 'A return needs at least one line',
+    path: ['lines'],
+  });
+
 /** موافقة المدير على تجاوز المهلة — بنفس جهاز الكاشير، ولا جلسة تُفتح. */
-export const approveReturnBodySchema = createReturnBodySchema
+export const approveReturnBodySchema = createReturnBodyBase
   .omit({ approver_user_id: true })
   .extend({
     email: z.string().trim().email(),
     password: z.string().min(1).max(200),
   })
-  .strict();
+  .strict()
+  .refine(hasLines, { message: 'A return needs at least one line', path: ['lines'] });
 
 export const returnsQuerySchema = paginationQuerySchema
   .extend({ branch_id: id.optional(), sale_id: id.optional() })
@@ -172,6 +203,19 @@ export const salesSettingsBodySchema = z
     return_window_days: z.number().int().min(0).max(365).optional(),
     /** صفرٌ = حجزٌ بلا مهلة، لا «تنتهي فوراً». */
     reservation_hours: z.number().int().min(0).max(720).optional(),
+    // ── سياسة المرتجع (`system_settings.md`) ──
+    goods_returns_enabled: z.boolean().optional(),
+    print_returns_enabled: z.boolean().optional(),
+    beyond_window_action: z.enum(['approve', 'refuse']).optional(),
+    /** `null` = المطبوعات بلا مهلة. */
+    print_return_window_days: z.number().int().min(0).max(365).nullable().optional(),
+    refund_cash_allowed: z.boolean().optional(),
+    refund_credit_allowed: z.boolean().optional(),
+    /** `null` = بلا سقف. */
+    approval_above_syp: z.number().min(0).max(1_000_000_000).nullable().optional(),
+    return_reason_required: z.boolean().optional(),
+    damaged_returns_allowed: z.boolean().optional(),
+    print_refund_suggest_percent: z.number().int().min(0).max(100).optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).length > 0, {

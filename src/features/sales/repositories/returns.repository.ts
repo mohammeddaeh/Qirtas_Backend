@@ -23,19 +23,45 @@ export type Exec = typeof db | Tx;
 export interface SalesSettings {
   return_window_days: number;
   reservation_hours: number;
+  goods_returns_enabled: boolean;
+  print_returns_enabled: boolean;
+  beyond_window_action: 'approve' | 'refuse';
+  print_return_window_days: number | null;
+  refund_cash_allowed: boolean;
+  refund_credit_allowed: boolean;
+  approval_above_syp: number | null;
+  return_reason_required: boolean;
+  damaged_returns_allowed: boolean;
+  print_refund_suggest_percent: number;
+}
+
+type SettingsRow = typeof salesSettingsTable.$inferSelect;
+
+function toSettings(row: SettingsRow): SalesSettings {
+  return {
+    return_window_days: row.return_window_days,
+    reservation_hours: row.reservation_hours,
+    goods_returns_enabled: row.goods_returns_enabled,
+    print_returns_enabled: row.print_returns_enabled,
+    // Anything but `refuse` reads as `approve` — today's behaviour.
+    beyond_window_action: row.beyond_window_action === 'refuse' ? 'refuse' : 'approve',
+    print_return_window_days: row.print_return_window_days,
+    refund_cash_allowed: row.refund_cash_allowed,
+    refund_credit_allowed: row.refund_credit_allowed,
+    approval_above_syp: row.approval_above_syp === null ? null : Number(row.approval_above_syp),
+    return_reason_required: row.return_reason_required,
+    damaged_returns_allowed: row.damaged_returns_allowed,
+    print_refund_suggest_percent: row.print_refund_suggest_percent,
+  };
 }
 
 export async function findSettings(): Promise<SalesSettings> {
   const [row] = await db.select().from(salesSettingsTable).where(eq(salesSettingsTable.id, 1));
-  if (row) {
-    return { return_window_days: row.return_window_days, reservation_hours: row.reservation_hours };
-  }
+  if (row) return toSettings(row);
   await db.insert(salesSettingsTable).values({ id: 1 }).onConflictDoNothing();
   const [created] = await db.select().from(salesSettingsTable).where(eq(salesSettingsTable.id, 1));
-  return {
-    return_window_days: created?.return_window_days ?? 14,
-    reservation_hours: created?.reservation_hours ?? 48,
-  };
+  if (!created) throw new Error('sales_settings row missing');
+  return toSettings(created);
 }
 
 /**
@@ -49,7 +75,11 @@ export async function saveSettings(
   userId: number | null,
 ): Promise<void> {
   const current = await findSettings();
-  const next = { ...current, ...values };
+  const merged = { ...current, ...values };
+  const next = {
+    ...merged,
+    approval_above_syp: merged.approval_above_syp === null ? null : merged.approval_above_syp.toFixed(2),
+  };
   await db
     .insert(salesSettingsTable)
     .values({ id: 1, ...next, updated_by: userId })
@@ -77,6 +107,31 @@ export async function findReturnedQty(
     .select({
       sale_line_id: saleReturnLinesTable.sale_line_id,
       total: sql<string>`COALESCE(SUM(${saleReturnLinesTable.qty}), 0)`,
+    })
+    .from(saleReturnLinesTable)
+    // A reprint hands the customer new copies — they still hold what they bought.
+    .where(
+      and(
+        inArray(saleReturnLinesTable.sale_line_id, saleLineIds),
+        sql`${saleReturnLinesTable.disposition} IS DISTINCT FROM 'reprint'`,
+      ),
+    )
+    .groupBy(saleReturnLinesTable.sale_line_id);
+  for (const row of rows) out.set(row.sale_line_id, Number(row.total));
+  return out;
+}
+
+/** Money already paid back per sale line — the cap on the next refund. */
+export async function findRefundedSyp(
+  saleLineIds: number[],
+  exec: Exec = db,
+): Promise<Map<number, number>> {
+  const out = new Map<number, number>();
+  if (saleLineIds.length === 0) return out;
+  const rows = await exec
+    .select({
+      sale_line_id: saleReturnLinesTable.sale_line_id,
+      total: sql<string>`COALESCE(SUM(${saleReturnLinesTable.refund_syp}), 0)`,
     })
     .from(saleReturnLinesTable)
     .where(inArray(saleReturnLinesTable.sale_line_id, saleLineIds))

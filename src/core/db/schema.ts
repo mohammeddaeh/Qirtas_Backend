@@ -53,6 +53,12 @@ export * from '../security/schemas/rate-limits.schema.js';
 // another feature.
 export * from '../media/schemas/media-assets.schema.js';
 
+// The financial ledger. Owned by core/finance/ because sales, inventory and
+// printing all write to it — docs/reference/finance_ledger.md.
+export * from '../finance/schemas/finance-entries.schema.js';
+// Central document numbering — docs/reference/system_settings.md §الترقيم.
+export * from '../numbering/schemas/numbering.schema.js';
+
 // The central catalog (features/catalog/) — docs/reference/store_system.md §٩.
 export * from '../../features/catalog/schemas/catalog-enums.schema.js';
 export * from '../../features/catalog/schemas/units.schema.js';
@@ -88,6 +94,8 @@ export * from '../../features/sales/schemas/orders.schema.js';
 export * from '../../features/printing/schemas/printing.schema.js';
 export * from '../../features/printing/schemas/print-jobs.schema.js';
 export * from '../../features/printing/schemas/print-consumption.schema.js';
+export * from '../../features/printing/schemas/print-counter-sales.schema.js';
+export * from '../../features/printing/schemas/print-ready.schema.js';
 
 // الفواتير والملصقات — القوالب وملف المحل (features/documents/) — docs/reference/receipts_labels.md.
 export * from '../../features/documents/schemas/documents.schema.js';
