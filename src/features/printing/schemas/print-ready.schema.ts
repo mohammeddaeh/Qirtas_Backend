@@ -75,6 +75,10 @@ export const printReadySalesTable = pgTable(
     copies: integer('copies').notNull(),
     unit_price_syp: numeric('unit_price_syp', { precision: 14, scale: 2 }).notNull(),
     total_syp: numeric('total_syp', { precision: 14, scale: 2 }).notNull(),
+    /** Who bought it (9-ح-5) — an account, a typed name, or neither (walk-in). */
+    customer_id: integer('customer_id'),
+    contact_name: varchar('contact_name', { length: 120 }),
+    contact_phone: varchar('contact_phone', { length: 32 }),
     created_by: integer('created_by'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     settled_at: timestamp('settled_at', { withTimezone: true }),

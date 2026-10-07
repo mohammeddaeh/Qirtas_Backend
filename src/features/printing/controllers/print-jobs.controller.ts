@@ -4,6 +4,7 @@ import { requireCustomerId } from '../../../core/http/require-customer.js';
 import { created, ok } from '../../../core/http/response.js';
 import { paginated, toPaginationParams } from '../../../core/pagination/pagination.js';
 import type {
+  RecordQuery,
   AddLinkBody,
   CancelJobBody,
   CreateJobBody,
@@ -110,6 +111,32 @@ export async function handOver(req: Request, res: Response): Promise<void> {
   ok(res, await service.handOver(actorOf(req), Number(id)));
 }
 
+function recordQueryOf(req: Request): service.RecordQuery {
+  const q = req.query as unknown as RecordQuery;
+  return {
+    branchId: q.branch_id,
+    q: q.q,
+    source: q.source,
+    state: q.state,
+    from: q.from,
+    to: q.to,
+    customerId: q.customer_id,
+  };
+}
+
+/** The record (9-ح-5) — every print, newest first. */
+export async function listRecord(req: Request, res: Response): Promise<void> {
+  const p = toPaginationParams(req.query as unknown as RecordQuery);
+  const { items, total } = await service.listRecord(actorOf(req), recordQueryOf(req), p.limit, p.offset);
+  ok(res, paginated(items, total, p));
+}
+
+export async function recordSummary(req: Request, res: Response): Promise<void> {
+  ok(res, await service.recordSummary(actorOf(req), recordQueryOf(req)));
+}
+
+/** «اطبع مثله» — a new order with the old one's spec, at today's prices. */
+
 export async function lookupForPickup(req: Request, res: Response): Promise<void> {
   const query = req.query as unknown as PickupLookupQuery;
   ok(res, await service.lookupForPickup(actorOf(req), query.branch_id, query.q, query.sale_id ?? null));
@@ -117,7 +144,7 @@ export async function lookupForPickup(req: Request, res: Response): Promise<void
 
 export async function queueCounts(req: Request, res: Response): Promise<void> {
   const query = req.query as unknown as QueueCountsQuery;
-  ok(res, await service.queueCounts(actorOf(req), query.branch_id));
+  ok(res, await service.queueCounts(actorOf(req), query.branch_id, { q: query.q, payment: query.payment }));
 }
 
 export async function listQueue(req: Request, res: Response): Promise<void> {
@@ -129,6 +156,7 @@ export async function listQueue(req: Request, res: Response): Promise<void> {
     query.status,
     p.limit,
     (p.page - 1) * p.limit,
+    { q: query.q, payment: query.payment },
   );
   ok(res, paginated(items, total, p));
 }

@@ -59,6 +59,10 @@ export const readySaleBodySchema = z
   .object({
     copies: z.number().int().min(1).max(10_000),
     unit_price_syp: z.number().min(0).max(100_000_000),
+    /** Who bought it (9-ح-5) — optional: a shelf copy is goods, not an order. */
+    customer_id: z.number().int().positive().nullable().optional(),
+    contact_name: z.string().trim().min(2).max(120).nullable().optional(),
+    contact_phone: z.string().trim().max(32).nullable().optional(),
   })
   .strict();
 

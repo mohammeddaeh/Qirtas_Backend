@@ -14,6 +14,8 @@ import {
   jobParamsSchema,
   myJobsQuerySchema,
   pickupLookupQuerySchema,
+  recordQuerySchema,
+  recordSummaryQuerySchema,
   queueCountsQuerySchema,
   queueQuerySchema,
   quoteJobBodySchema,
@@ -171,6 +173,15 @@ printJobsQueueRouter.get(
   asyncHandler(controller.lookupForPickup),
 );
 
+/** The record (9-ح-5) — every print of every source. Before `/:id`. */
+printJobsQueueRouter.get('/record', canViewQueue(), validate(recordQuerySchema, 'query'), asyncHandler(controller.listRecord));
+printJobsQueueRouter.get(
+  '/record/summary',
+  canViewQueue(),
+  validate(recordSummaryQuerySchema, 'query'),
+  asyncHandler(controller.recordSummary),
+);
+
 /** Open jobs per stage — the board's stage row and the home tile. Before `/:id`. */
 printJobsQueueRouter.get(
   '/counts',
@@ -200,6 +211,8 @@ printJobsQueueRouter.post(
   validate(quoteJobBodySchema, 'body'),
   asyncHandler(controller.quote),
 );
+
+/** «اطبع مثله» (9-ح-5) — a new order like this one, at today's prices. */
 
 /** A paid ready order leaves the counter (9-ز-4) — the board or the till. */
 printJobsQueueRouter.post(

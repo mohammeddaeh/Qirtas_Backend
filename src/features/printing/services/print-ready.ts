@@ -280,7 +280,13 @@ function assertAvailable(row: PrintReadyCopyRow, copies: number): void {
 export async function createReadySale(
   userId: number,
   copyId: number,
-  body: { copies: number; unit_price_syp: number },
+  body: {
+    copies: number;
+    unit_price_syp: number;
+    customer_id?: number | null;
+    contact_name?: string | null;
+    contact_phone?: string | null;
+  },
 ): Promise<{ id: number; total_syp: number }> {
   const [copy] = await db.select().from(printReadyCopiesTable).where(eq(printReadyCopiesTable.id, copyId)).limit(1);
   if (!copy) throw new NotFoundError('Ready copy not found');
@@ -294,6 +300,9 @@ export async function createReadySale(
       copies: body.copies,
       unit_price_syp: body.unit_price_syp.toFixed(2),
       total_syp: total.toFixed(2),
+      customer_id: body.customer_id ?? null,
+      contact_name: body.customer_id ? null : body.contact_name?.trim() || null,
+      contact_phone: body.customer_id ? null : body.contact_phone?.trim() || null,
       created_by: userId,
     })
     .returning();

@@ -662,7 +662,11 @@ export interface WireQueueCounts {
  * queue of (the home tile). Overdue jobs are swept first, so a job past its
  * payment window is not counted as still waiting.
  */
-export async function queueCounts(actor: RequestActorContext, branchId?: number): Promise<WireQueueCounts> {
+export async function queueCounts(
+  actor: RequestActorContext,
+  branchId?: number,
+  filters: repo.QueueFilters = {},
+): Promise<WireQueueCounts> {
   let branchIds: number[];
   if (branchId !== undefined) {
     await requireScope(actor, QUEUE_VIEW_KEY, branchId);
@@ -671,7 +675,7 @@ export async function queueCounts(actor: RequestActorContext, branchId?: number)
     branchIds = (await queueBranches(actor)).map((b) => b.id);
   }
   await sweepOverdue();
-  const m = await repo.countByStatus(branchIds);
+  const m = await repo.countByStatus(branchIds, filters);
   const n = (s: PrintJobStatus): number => m.get(s) ?? 0;
   return {
     to_price: n('awaiting_quote'),
@@ -689,11 +693,12 @@ export async function listQueue(
   statuses: PrintJobStatus[] | undefined,
   limit: number,
   offset: number,
+  filters: repo.QueueFilters = {},
 ): Promise<{ items: WireStaffPrintJob[]; total: number }> {
   await requireScope(actor, QUEUE_VIEW_KEY, branchId);
   await sweepOverdue();
   const { rows, total } = await repo.findJobs(
-    { branchId, statuses, excludeDrafts: true, excludeCounter: true },
+    { branchId, statuses, excludeDrafts: true, excludeCounter: true, q: filters.q, payment: filters.payment },
     limit,
     offset,
   );
@@ -921,6 +926,133 @@ export async function createCounterJob(
   });
   emitPrintJobEvent('priced', row);
   return { id: row.id, kind: 'print_job', number: row.number, total_syp: quote.total_syp };
+}
+
+// ── السجلّ و«اطبع مثله» (9-ح-5) ─────────────────────────────────────────────
+
+export interface RecordQuery {
+  branchId?: number;
+  q?: string;
+  source?: repo.RecordSource;
+  state?: 'open' | 'done' | 'dropped';
+  from?: string;
+  to?: string;
+  customerId?: number;
+}
+
+/** One branch (checked), or every branch the reader sees the queue of. */
+async function recordFilters(actor: RequestActorContext, q: RecordQuery): Promise<repo.RecordFilters> {
+  let branchIds: number[];
+  if (q.branchId !== undefined) {
+    await requireScope(actor, QUEUE_VIEW_KEY, q.branchId);
+    branchIds = [q.branchId];
+  } else {
+    branchIds = (await queueBranches(actor)).map((b) => b.id);
+  }
+  // Whole days: `to` is the last day shown, so the bound is the day after it.
+  const day = (v: string) => new Date(`${v}T00:00:00`);
+  const to = q.to ? day(q.to) : undefined;
+  if (to) to.setDate(to.getDate() + 1);
+  return {
+    branchIds,
+    q: q.q,
+    source: q.source,
+    state: q.state,
+    from: q.from ? day(q.from) : undefined,
+    to,
+    customerId: q.customerId,
+  };
+}
+
+/** Copies sold off the ready shelf, in the record beside the orders (9-ح-5). */
+export interface WireShelfSaleEntry {
+  id: number;
+  branch_id: number;
+  /** The invoice it was paid on — opens the sale. */
+  sale_id: number | null;
+  /** The ready copy's name — what was sold. */
+  label: string;
+  copies: number;
+  /** What the buyer paid — the price typed at the till, not the copy's value. */
+  total_syp: number;
+  /** The account's name — or the name typed; `null` = walk-in. */
+  customer_name: string | null;
+  customer_phone: string | null;
+  sold_at: string | null;
+}
+
+export type WireRecordEntry = { kind: 'job'; job: WireStaffPrintJob } | { kind: 'shelf'; shelf: WireShelfSaleEntry };
+
+function shelfEntryWire(r: repo.ShelfRecordRow): WireShelfSaleEntry {
+  const account = [r.customer_first, r.customer_last].filter(Boolean).join(' ').trim();
+  return {
+    id: r.id,
+    branch_id: r.branch_id,
+    sale_id: r.sale_id,
+    label: r.label,
+    copies: r.copies,
+    total_syp: Number(r.total_syp),
+    customer_name: account || r.contact_name || null,
+    customer_phone: r.customer_phone ?? r.contact_phone ?? null,
+    sold_at: r.settled_at?.toISOString() ?? null,
+  };
+}
+
+/** Every print, every source — orders and shelf sales, the archive the reports and the counter search. */
+export async function listRecord(
+  actor: RequestActorContext,
+  q: RecordQuery,
+  limit: number,
+  offset: number,
+): Promise<{ items: WireRecordEntry[]; total: number }> {
+  await sweepOverdue();
+  const filters = await recordFilters(actor, q);
+  const { rows, total } = await repo.findRecord(filters, limit, offset);
+  const seeCost = new Map<number, boolean>();
+  for (const r of rows) {
+    if (r.kind === 'job' && !seeCost.has(r.job.branch_id)) {
+      seeCost.set(r.job.branch_id, await canSeeCost(actor.userId, r.job.branch_id));
+    }
+  }
+  const items = await Promise.all(
+    rows.map(async (r): Promise<WireRecordEntry> =>
+      r.kind === 'job'
+        ? { kind: 'job', job: await staffWire(r.job, seeCost.get(r.job.branch_id) ?? false) }
+        : { kind: 'shelf', shelf: shelfEntryWire(r.shelf) },
+    ),
+  );
+  return { items, total };
+}
+
+export interface WireRecordSummary {
+  total: number;
+  /** `shelf` — copies sold off the ready shelf. */
+  by_source: { app: number; counter: number; shelf: number };
+  by_state: { open: number; done: number; dropped: number };
+  /** Paid orders' totals and shelf sales — the money the record's prints brought. */
+  revenue_syp: number;
+  /** `null` — the reader may not see costs. */
+  materials_syp: number | null;
+  pages_printed: number;
+  /** From arrival to ready, app and reprint orders — `null` with none. */
+  avg_hours_to_ready: number | null;
+}
+
+export async function recordSummary(actor: RequestActorContext, q: RecordQuery): Promise<WireRecordSummary> {
+  const filters = await recordFilters(actor, q);
+  const r = await repo.recordSummary(filters);
+  const seeCosts = await Promise.all(filters.branchIds.map((id) => canSeeCost(actor.userId, id)));
+  const n = (v: string | number | null | undefined) => Number(v ?? 0);
+  return {
+    total: n(r.total) + n(r.shelf),
+    by_source: { app: n(r.app), counter: n(r.counter), shelf: n(r.shelf) },
+    // A shelf sale is sold the moment it is settled — always «done».
+    by_state: { open: n(r.open), done: n(r.done) + n(r.shelf), dropped: n(r.dropped) },
+    revenue_syp: n(r.revenue) + n(r.shelf_revenue),
+    materials_syp: seeCosts.length > 0 && seeCosts.every(Boolean) ? n(r.materials) : null,
+    pages_printed: n(r.pages),
+    avg_hours_to_ready: r.avg_hours === null ? null : Math.round(n(r.avg_hours) * 10) / 10,
+  };
 }
 
 /** Who a counter print may be for — accounts first, then typed names. */

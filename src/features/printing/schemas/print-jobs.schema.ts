@@ -55,7 +55,7 @@ export const printJobStatusEnum = pgEnum('print_job_status', PRINT_JOB_STATUSES)
  * one search and one report: `app` (sent from the customer app) · `counter`
  * (the customer standing at the till) · `reprint` («print it again»).
  */
-export const PRINT_JOB_SOURCES = ['app', 'counter', 'reprint'] as const;
+export const PRINT_JOB_SOURCES = ['app', 'counter'] as const;
 export type PrintJobSource = (typeof PRINT_JOB_SOURCES)[number];
 export const printJobSourceEnum = pgEnum('print_job_source', PRINT_JOB_SOURCES);
 

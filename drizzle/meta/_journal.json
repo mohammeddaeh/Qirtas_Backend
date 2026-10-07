@@ -351,6 +351,20 @@
       "when": 1791278899521,
       "tag": "0049_ready_stale_days",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1791282680904,
+      "tag": "0050_print_record",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1791287140613,
+      "tag": "0051_drop_reprint",
+      "breakpoints": true
     }
   ]
 }

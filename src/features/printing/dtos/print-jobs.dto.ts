@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
-import { PRINT_JOB_STATUSES, type PrintJobStatus } from '../schemas/print-jobs.schema.js';
+import { PRINT_JOB_STATUSES, type PrintJobStatus, PRINT_PAYMENT_STATUSES } from '../schemas/print-jobs.schema.js';
 import { STAFF_STAGES } from '../services/job-rules.js';
 
 /** طلب الطباعة — `qirtas_backend/docs/rest_api.md` §30. */
@@ -90,8 +90,12 @@ export type DeferBody = z.infer<typeof deferBodySchema>;
 
 export const myJobsQuerySchema = paginationQuerySchema.extend({ status: statusList }).strict();
 
+/** The board's filters (2026-10-06): free search and who paid — narrowing a stage, never widening it. */
+const queueSearch = z.string().trim().min(2).max(80).optional();
+const queuePayment = z.enum(PRINT_PAYMENT_STATUSES).optional();
+
 export const queueQuerySchema = paginationQuerySchema
-  .extend({ branch_id: id, status: statusList })
+  .extend({ branch_id: id, status: statusList, q: queueSearch, payment: queuePayment })
   .strict();
 
 /** What the customer brings to the till — code, number, barcode, phone or name. */
@@ -100,8 +104,29 @@ export const pickupLookupQuerySchema = z
   .object({ branch_id: id, q: z.string().trim().min(2).max(80), sale_id: id.optional() })
   .strict();
 
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+/** The record (9-ح-5) — one branch or all the reader sees; free search; whole days. */
+export const recordQuerySchema = paginationQuerySchema
+  .extend({
+    branch_id: id.optional(),
+    q: z.string().trim().min(2).max(80).optional(),
+    source: z.enum(['app', 'counter', 'shelf']).optional(),
+    state: z.enum(['open', 'done', 'dropped']).optional(),
+    from: day.optional(),
+    to: day.optional(),
+    customer_id: id.optional(),
+  })
+  .strict();
+
+/** The record's summary — the same filters, no page. */
+export const recordSummaryQuerySchema = recordQuerySchema.omit({ page: true, limit: true }).strict();
+
 /** One branch, or — absent — every branch the reader sees the queue of. */
-export const queueCountsQuerySchema = z.object({ branch_id: id.optional() }).strict();
+/** The same filters, so every stage says how many of **these** it holds — a search finds its stage. */
+export const queueCountsQuerySchema = z
+  .object({ branch_id: id.optional(), q: queueSearch, payment: queuePayment })
+  .strict();
 
 /** صفحات **النسخة الواحدة** — كما عدّها الموظف من الملفات. */
 export const quoteJobBodySchema = z
@@ -126,3 +151,5 @@ export type QueueCountsQuery = z.infer<typeof queueCountsQuerySchema>;
 export type PickupLookupQuery = z.infer<typeof pickupLookupQuerySchema>;
 export type QuoteJobBody = z.infer<typeof quoteJobBodySchema>;
 export type StageBody = z.infer<typeof stageBodySchema>;
+
+export type RecordQuery = z.infer<typeof recordQuerySchema>;
