@@ -32,6 +32,8 @@ export interface PrintJobEventPayload {
   customerId: number | null;
   source: PrintJobRow['source'];
   number: string | null;
+  /** Who made the move, when a person did — not told of it (9-ط-1). */
+  actorUserId: number | null;
   at: Date;
 }
 
@@ -59,6 +61,7 @@ export function onPrintJobEvent(listener: Listener): () => void {
 export function emitPrintJobEvent(
   event: PrintJobEvent,
   job: Pick<PrintJobRow, 'id' | 'branch_id' | 'customer_id' | 'source' | 'number'>,
+  actorUserId: number | null = null,
 ): void {
   if (listeners.length === 0) return;
   const payload: PrintJobEventPayload = {
@@ -68,6 +71,7 @@ export function emitPrintJobEvent(
     customerId: job.customer_id,
     source: job.source,
     number: job.number,
+    actorUserId,
     at: new Date(),
   };
   for (const listener of [...listeners]) {

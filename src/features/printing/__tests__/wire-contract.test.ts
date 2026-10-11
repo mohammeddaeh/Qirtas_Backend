@@ -135,6 +135,8 @@ const job: WirePrintJob = {
   created_at: '2026-09-28T09:00:00.000Z',
   submitted_at: '2026-09-28T09:30:00.000Z',
   production_started_at: null,
+  printer: null,
+  started_by: null,
   ready_at: null,
   picked_up_at: null,
 };
@@ -177,6 +179,8 @@ describe('the printing wire', () => {
         'created_at',
         'submitted_at',
         'production_started_at',
+        'printer',
+        'started_by',
         'ready_at',
         'picked_up_at',
       ].sort(),

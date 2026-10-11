@@ -65,6 +65,12 @@ export const financeEntriesTable = pgTable(
     sale_id: integer('sale_id'),
     /** من أحدثه — الكاشير أو موظف المخزون. */
     user_id: integer('user_id'),
+    /**
+     * The registered computer it happened at (docs/reference/stations.md) — the
+     * report's «cash by computer» is a sum over this, so the drawers can be
+     * counted against it. `null` from a phone or an unregistered computer.
+     */
+    station_id: integer('station_id'),
     /** «لماذا» — سبب المرتجع أو التلف، رمزٌ تُترجمه الواجهة. */
     reason: varchar('reason', { length: 40 }),
     note: text('note'),

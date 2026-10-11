@@ -81,7 +81,7 @@ route('get', '/inventory/movements', 'The ledger, newest first', 'inventory.view
 route('get', '/inventory/signals', 'What needs attention at one branch', 'inventory.view', ok('Signals', shape), { query: branchScopeQuerySchema });
 route('get', '/inventory/variants/{id}/threshold-suggestion', 'A reorder threshold suggested from sales', 'inventory.view', ok('Suggestion', shape), { ...params, query: branchScopeQuerySchema });
 route('put', '/inventory/variants/{id}/threshold', "Set the branch's reorder threshold", 'inventory.receive', ok('Stock row', shape), { ...params, ...body(thresholdBodySchema) });
-route('get', '/inventory/settings', 'Approval threshold and expiry warning window', 'inventory.view', ok('Settings', shape));
+route('get', '/inventory/settings', 'Approval threshold, expiry warning window and the branches the reader may pick (any of inventory.view, sales.sell, sales.view, sales.refund, orders.view, promotions.view)', 'inventory.view', ok('Settings', shape));
 route('put', '/inventory/settings', 'Change them', 'inventory.approve', ok('Settings', shape), body(inventorySettingsBodySchema));
 
 // ── Adjustments ─────────────────────────────────────────────────────────────

@@ -77,6 +77,12 @@ export const sessionsTable = pgTable(
      * dead ones. The row states its own deadline.
      */
     expires_at: timestamp('expires_at', { withTimezone: true }).notNull(),
+    /**
+     * The registered computer the session was opened at (`docs/reference/stations.md`)
+     * — `null` on a phone or an unregistered computer. No FK: the stations
+     * table belongs to the application, and revoking a station ends these rows.
+     */
+    station_id: integer('station_id'),
   },
   (table) => [
     index('sessions_user_idx').on(table.user_id),

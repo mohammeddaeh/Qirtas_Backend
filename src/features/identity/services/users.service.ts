@@ -24,7 +24,8 @@ import * as ownershipsRepository from '../repositories/ownerships.repository.js'
 import * as branchesRepository from '../repositories/branches.repository.js';
 import { SUPER_ADMIN_ROLE_NAME } from './roles.service.js';
 import * as rolesService from './roles.service.js';
-import { listEnforcedPermissions } from '../../../core/authz/registry.js';
+import * as stationsService from './stations.service.js';
+import { listEnforcedPermissions, registerPermission } from '../../../core/authz/registry.js';
 import * as assignmentsService from './user-role-assignments.service.js';
 import * as auditService from './audit.service.js';
 import { AUDIT, target } from './audit-actions.js';
@@ -992,8 +993,35 @@ export async function login(body: LoginBody, origin: authService.RequestOrigin):
       { email: body.email, password: body.password },
       { ...origin, deviceInfo: body.device_info ?? origin.deviceInfo },
     ),
+    origin,
   );
 }
+
+/**
+ * **Who may sign in on a counter computer** (2026-10-08). A shared station in
+ * the shop is where an admin account left open does the most harm, so staff
+ * sign-in from a desktop client needs this key — the administration grants it
+ * to the roles that work at a station (till, sales, print production, branch
+ * manager), by permission, never by role name.
+ *
+ * Only an **active** account is held to it: one still verifying its email or
+ * awaiting approval holds no permission at all and needs its session to reach
+ * the screen that moves it on. The Super Admin passes, as everywhere.
+ */
+const STATION_SIGN_IN = registerPermission('stations.sign_in', {
+  display: { ar: 'الدخول من محطة حاسوب', en: 'Sign In at a Computer Station' },
+});
+
+/**
+ * **Who may sign in from a phone** (user decision 2026-10-11). A phone leaves
+ * the shop with its owner; the administration decides whose work does. Every
+ * role held it on the day it appeared (migration 0056), so nothing changed
+ * until someone took it away. A client that does not say what it is (an older
+ * build) is not held to it.
+ */
+const PHONE_SIGN_IN = registerPermission('stations.phone_sign_in', {
+  display: { ar: 'الدخول من الهاتف', en: 'Sign In from a Phone' },
+});
 
 /** What the sign-in endpoint answers when the password was right but a code is owed. */
 export interface MfaChallengeResult {
@@ -1030,6 +1058,7 @@ export async function completeLogin(
       { challenge: body.mfa_token, code: body.code },
       { ...origin, deviceInfo: body.device_info ?? origin.deviceInfo },
     ),
+    origin,
   );
 }
 
@@ -1039,7 +1068,10 @@ async function mfaSetupRequired(userId: number): Promise<boolean> {
   return mfaService.isRequired('staff', userId);
 }
 
-async function buildLoginResult(signedIn: authService.SignInResult): Promise<LoginResult> {
+async function buildLoginResult(
+  signedIn: authService.SignInResult,
+  origin?: authService.RequestOrigin,
+): Promise<LoginResult> {
   const { account, session, token } = signedIn;
 
   const user = await usersRepository.findById(account.id);
@@ -1048,6 +1080,53 @@ async function buildLoginResult(signedIn: authService.SignInResult): Promise<Log
   if (!user) throw new NotFoundError('User not found');
 
   const permissionKeys = await assignmentsRepository.findAllEffectivePermissionKeys(user.id);
+  const isSuperAdmin = await rolesService.actorHoldsSuperAdmin(user.id);
+
+  // A desktop sign-in without the station key: the session just made is ended
+  // at once, and the refusal names its reason (users_roles.md).
+  if (
+    origin?.platform === 'desktop' &&
+    user.status === 'active' &&
+    !isSuperAdmin &&
+    !permissionKeys.includes(STATION_SIGN_IN)
+  ) {
+    await sessionService.revokeById(staffAuthRealm, user.id, session.id);
+    throw new ForbiddenError(
+      'This account may not sign in at a computer station',
+      undefined,
+      'station_sign_in_not_allowed',
+    );
+  }
+
+  if (
+    origin?.platform === 'mobile' &&
+    user.status === 'active' &&
+    !isSuperAdmin &&
+    !permissionKeys.includes(PHONE_SIGN_IN)
+  ) {
+    await sessionService.revokeById(staffAuthRealm, user.id, session.id);
+    throw new ForbiddenError('This account may not sign in from a phone', undefined, 'phone_sign_in_not_allowed');
+  }
+
+  // Phase 2 (docs/reference/stations.md): the session remembers its station,
+  // and — once the administration turns enforcement on — a computer the shop
+  // never registered is refused. Only active accounts, as above.
+  if (origin?.platform === 'desktop' && user.status === 'active') {
+    const station = await stationsService.resolveStation(origin.stationToken ?? undefined);
+    if (station) {
+      // The computer's kind decides who signs in on it — a seller is not the
+      // print station's user (user decision 2026-10-11).
+      const needed = stationsService.KIND_PERMISSION[stationsService.kindOf(station.kind)];
+      if (!isSuperAdmin && !permissionKeys.includes(needed)) {
+        await sessionService.revokeById(staffAuthRealm, user.id, session.id);
+        throw new ForbiddenError('This account does not work at this kind of station', { station_kind: station.kind }, `station_kind_${stationsService.kindOf(station.kind)}_only`);
+      }
+      await stationsService.bindSessionToStation(session.id, station.id);
+    } else if (!isSuperAdmin && (await stationsService.readEnforcement())) {
+      await sessionService.revokeById(staffAuthRealm, user.id, session.id);
+      throw new ForbiddenError('This computer is not a registered station', undefined, 'station_not_registered');
+    }
+  }
 
   // `is_super_admin` here too, not only on `getCurrentUser`: the client seeds
   // its session from THIS response, so omitting it would leave the flag false
@@ -1058,7 +1137,7 @@ async function buildLoginResult(signedIn: authService.SignInResult): Promise<Log
     token,
     session_id: session.id,
     permission_keys: permissionKeys,
-    is_super_admin: await rolesService.actorHoldsSuperAdmin(user.id),
+    is_super_admin: isSuperAdmin,
     mfa_setup_required: await mfaSetupRequired(user.id),
   };
 }

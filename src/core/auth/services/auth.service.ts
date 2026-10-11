@@ -35,6 +35,14 @@ export interface RequestOrigin {
   ipAddress: string | null;
   deviceInfo: string | null;
   lang: Lang;
+  /**
+   * `desktop` when the client says it runs on a computer (`X-Client-Platform`).
+   * Self-reported — a policy line for staff sign-in (`stations.sign_in`), not
+   * a security boundary: every action stays guarded by its own permission.
+   */
+  platform?: 'desktop' | 'mobile' | null;
+  /** The registered computer's token (`X-Station-Token`), when the client has one. */
+  stationToken?: string | null;
 }
 
 export interface SignInResult {

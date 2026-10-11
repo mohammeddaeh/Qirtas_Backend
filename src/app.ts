@@ -40,6 +40,7 @@ import { usersRouter } from './features/identity/routes/users.routes.js';
 import { rolesRouter } from './features/identity/routes/roles.routes.js';
 import { permissionsRouter } from './features/identity/routes/permissions.routes.js';
 import { branchesRouter } from './features/identity/routes/branches.routes.js';
+import { stationsRouter } from './features/identity/routes/stations.routes.js';
 import { dashboardRouter } from './features/dashboard/routes/dashboard.routes.js';
 import { ownershipsRouter } from './features/identity/routes/ownerships.routes.js';
 import { roleAssignmentsRouter } from './features/identity/routes/user-role-assignments.routes.js';
@@ -78,6 +79,9 @@ import {
 } from './features/sales/services/sales.service.js';
 import { installPrintCounterServiceLine } from './features/printing/services/print-counter.js';
 import { installPrintReadyServiceLine } from './features/printing/services/print-ready.js';
+import { installPrintJobNotifier } from './features/printing/services/print-job-notifier.js';
+import { installPrintOrderCustomerNotifier } from './features/printing/services/print-order-customer-notifier.js';
+import { startBackInStockSweep } from './features/storefront/services/back-in-stock.js';
 import { installInventoryDeletionGuard } from './features/inventory/services/deletion-guard.js';
 import { installVariantMergeHandler } from './features/inventory/services/variant-merge.js';
 import { setAuditRecorder } from './core/audit/audit-recorder.js';
@@ -101,6 +105,7 @@ export const API_ROUTERS: ReadonlyArray<{ path: string; router: Router }> = [
   { path: '/api/v1/roles', router: rolesRouter },
   { path: '/api/v1/permissions', router: permissionsRouter },
   { path: '/api/v1/branches', router: branchesRouter },
+  { path: '/api/v1/stations', router: stationsRouter },
   { path: '/api/v1/dashboard', router: dashboardRouter },
   { path: '/api/v1/ownerships', router: ownershipsRouter },
   { path: '/api/v1/role-assignments', router: roleAssignmentsRouter },
@@ -224,12 +229,18 @@ export function buildApp(): Express {
   // Whether a basket holding a print order is being worked on — so a customer
   // may cancel an order left on a forgotten basket (core/till/).
   setTillSaleAccess({ state: salesTillState, release: salesReleaseServiceLine });
+  // Production hears about work as it arrives (9-ط-1).
+  installPrintJobNotifier();
+  // And the customer hears about their own order: priced · ready · declined.
+  installPrintOrderCustomerNotifier();
   installPrintCounterServiceLine();
   installPrintReadyServiceLine();
   // البضاعة تغادر الرفّ **بمعاملة الفاتورة نفسها** — منفذٌ لا استيراد،
   // وفصلُ الكتابتين يترك فاتورةً لبضاعة ما زالت بالدفتر.
   // And carries a branch draft’s stock onto the product it turns out to be.
   installVariantMergeHandler();
+  // «أعلمني عند التوفّر» is answered by a sweep, not by every stock path.
+  startBackInStockSweep();
 
   // One sign-in endpoint for every population: each realm supplies the payload
   // only it knows how to build (staff: permission keys; customer: profile).

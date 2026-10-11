@@ -365,6 +365,41 @@
       "when": 1791287140613,
       "tag": "0051_drop_reprint",
       "breakpoints": true
+    },
+    {
+      "idx": 52,
+      "version": "7",
+      "when": 1791372003156,
+      "tag": "0052_print_printers",
+      "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "7",
+      "when": 1791698653835,
+      "tag": "0053_stations",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "7",
+      "when": 1791699918154,
+      "tag": "0054_station_stamps",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "7",
+      "when": 1791700859550,
+      "tag": "0055_finance_station",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1791702023033,
+      "tag": "0056_station_kinds",
+      "breakpoints": true
     }
   ]
 }

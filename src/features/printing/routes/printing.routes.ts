@@ -23,6 +23,13 @@ import {
 } from '../dtos/printing.dto.js';
 import * as controller from '../controllers/printing.controller.js';
 import * as consumption from '../controllers/consumption.controller.js';
+import * as jobs from '../controllers/print-jobs.controller.js';
+import {
+  createPrinterBodySchema,
+  printerParamsSchema,
+  printersQuerySchema,
+  updatePrinterBodySchema,
+} from '../dtos/print-jobs.dto.js';
 import {
   consumableParamsSchema,
   consumablesQuerySchema,
@@ -227,4 +234,32 @@ printingRouter.get(
   canSetCentral(),
   validate(materialsQuerySchema, 'query'),
   asyncHandler(consumption.searchMaterials),
+);
+
+// ── الطابعات (9-ط-2) — القراءة لمن يرى الطابور أو يدير الفرع، والكتابة للإدارة؛
+// والنطاق (أيّ فرع) يُفحص داخل الخدمة.
+printingRouter.get(
+  '/printers',
+  requireAnyPermission(['printing.queue.view', SETTINGS_KEY, BRANCH_SETTINGS_KEY]),
+  validate(printersQuerySchema, 'query'),
+  asyncHandler(jobs.listPrinters),
+);
+printingRouter.post(
+  '/printers',
+  requireAnyPermission([SETTINGS_KEY, BRANCH_SETTINGS_KEY]),
+  validate(createPrinterBodySchema, 'body'),
+  asyncHandler(jobs.createPrinter),
+);
+printingRouter.patch(
+  '/printers/:id',
+  requireAnyPermission([SETTINGS_KEY, BRANCH_SETTINGS_KEY]),
+  validate(printerParamsSchema, 'params'),
+  validate(updatePrinterBodySchema, 'body'),
+  asyncHandler(jobs.updatePrinter),
+);
+printingRouter.delete(
+  '/printers/:id',
+  requireAnyPermission([SETTINGS_KEY, BRANCH_SETTINGS_KEY]),
+  validate(printerParamsSchema, 'params'),
+  asyncHandler(jobs.deletePrinter),
 );

@@ -98,6 +98,12 @@ export const salesTable = pgTable(
       .references(() => usersTable.id, { onDelete: 'restrict' }),
 
     /**
+     * The registered computer that took the payment (docs/reference/stations.md) — `null` from a
+     * phone or an unregistered computer. No FK: a station row outlives nothing it stamped.
+     */
+    station_id: integer('station_id'),
+
+    /**
      * خصم الكاشير على **الفاتورة كلّها** (§٦)، نسبةً. يُوزَّع على السطور عند
      * السداد ويُجمَّد بكلٍّ منها — والمرتجع يقرأ ما دُفع فعلاً لا السعر المعلن.
      */

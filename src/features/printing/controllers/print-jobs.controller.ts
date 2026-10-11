@@ -4,6 +4,8 @@ import { requireCustomerId } from '../../../core/http/require-customer.js';
 import { created, ok } from '../../../core/http/response.js';
 import { paginated, toPaginationParams } from '../../../core/pagination/pagination.js';
 import type {
+  CreatePrinterBody,
+  UpdatePrinterBody,
   RecordQuery,
   AddLinkBody,
   CancelJobBody,
@@ -20,6 +22,7 @@ import type {
   UpdateJobBody,
 } from '../dtos/print-jobs.dto.js';
 import * as service from '../services/print-jobs.service.js';
+import * as printers from '../services/print-printers.service.js';
 
 const actorOf = (req: Request) => buildActorContext(req, requireActorId(req));
 const params = (req: Request) =>
@@ -156,7 +159,12 @@ export async function listQueue(req: Request, res: Response): Promise<void> {
     query.status,
     p.limit,
     (p.page - 1) * p.limit,
-    { q: query.q, payment: query.payment },
+    {
+      q: query.q,
+      payment: query.payment,
+      printerId: query.printer_id,
+      startedBy: query.mine === 'true' ? actorOf(req).userId : undefined,
+    },
   );
   ok(res, paginated(items, total, p));
 }
@@ -175,7 +183,8 @@ export async function quote(req: Request, res: Response): Promise<void> {
 }
 
 export async function advance(req: Request, res: Response): Promise<void> {
-  ok(res, await service.advanceJob(actorOf(req), params(req).id, (req.body as StageBody).status));
+  const body = req.body as StageBody;
+  ok(res, await service.advanceJob(actorOf(req), params(req).id, body.status, { printerId: body.printer_id }));
 }
 
 /** «سلِّم من الجاهز» — بدل بدء الطباعة. */
@@ -200,4 +209,22 @@ export async function cancelByStaff(req: Request, res: Response): Promise<void> 
     res,
     await service.cancelByStaff(actorOf(req), params(req).id, (req.body as StaffCancelBody).reason),
   );
+}
+
+// ── Printers (9-ط-2) ──
+
+export async function listPrinters(req: Request, res: Response): Promise<void> {
+  ok(res, await printers.listPrinters(actorOf(req), Number((req.query as { branch_id: string | number }).branch_id)));
+}
+
+export async function createPrinter(req: Request, res: Response): Promise<void> {
+  ok(res, await printers.createPrinter(actorOf(req), req.body as CreatePrinterBody));
+}
+
+export async function updatePrinter(req: Request, res: Response): Promise<void> {
+  ok(res, await printers.updatePrinter(actorOf(req), params(req).id, req.body as UpdatePrinterBody));
+}
+
+export async function deletePrinter(req: Request, res: Response): Promise<void> {
+  ok(res, await printers.deletePrinter(actorOf(req), params(req).id));
 }

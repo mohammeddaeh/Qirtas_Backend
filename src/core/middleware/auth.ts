@@ -32,7 +32,7 @@ declare global {
        * they were just authenticated with. Previously such an endpoint would
        * have had to hash the Authorization header a second time.
        */
-      session: { id: number; token: string } | null;
+      session: { id: number; token: string; stationId: number | null } | null;
     }
   }
 }
@@ -144,6 +144,7 @@ export async function auth(req: Request, _res: Response, next: NextFunction): Pr
 
   if (realm.id === 'staff') req.user = { id: account.id, status: account.status };
   else req.customer = { id: account.id };
-  req.session = { id: lookup.session.id, token };
+  // The registered computer the session was opened at (docs/reference/stations.md).
+  req.session = { id: lookup.session.id, token, stationId: lookup.session.station_id ?? null };
   next();
 }

@@ -97,6 +97,11 @@ export const salesQuerySchema = paginationQuerySchema
     search: z.string().trim().min(1).max(64).optional(),
     from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
     to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    // rest_api.md §6.1 — the table's sortable columns (9-ط-3).
+    /** The registered computer that took the payment (docs/reference/stations.md). */
+    station_id: id.optional(),
+    sort_by: z.enum(['created_at', 'total', 'number']).default('created_at'),
+    sort_dir: z.enum(['asc', 'desc']).default('desc'),
   })
   .strict();
 
@@ -188,8 +193,16 @@ export const approveReturnBodySchema = createReturnBodyBase
   .refine(hasLines, { message: 'A return needs at least one line', path: ['lines'] });
 
 export const returnsQuerySchema = paginationQuerySchema
-  .extend({ branch_id: id.optional(), sale_id: id.optional() })
+  .extend({
+    branch_id: id.optional(),
+    sale_id: id.optional(),
+    /** Cash out of the drawer, or credit on the customer's account. */
+    refund_method: z.enum(['cash', 'customer_credit']).optional(),
+    sort_by: z.enum(['created_at', 'total']).default('created_at'),
+    sort_dir: z.enum(['asc', 'desc']).default('desc'),
+  })
   .strict();
+export type ReturnsQuery = z.infer<typeof returnsQuerySchema>;
 
 /**
  * إعدادات البيع — **والحقلان اختياريان**.

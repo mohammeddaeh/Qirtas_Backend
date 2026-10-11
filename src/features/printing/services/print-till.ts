@@ -85,7 +85,11 @@ async function resolve(input: {
   }
   return {
     refId: job.id,
-    nameAr: job.label ? `${job.label} — طلب ${job.number ?? job.id}` : `خدمة طباعة — ${job.number ?? job.id}`,
+    // The pickup code rides on the line once the job has one (2026-10-07):
+    // it is what the customer says at the till, and what the receipt shows.
+    nameAr:
+      (job.label ? `${job.label} — طلب ${job.number ?? job.id}` : `خدمة طباعة — ${job.number ?? job.id}`) +
+      (job.pickup_code ? ` · استلام ${job.pickup_code}` : ''),
     sku: job.number ?? String(job.id),
     amountSyp: amount,
     taxPercent: 0,
@@ -189,8 +193,8 @@ async function settle(exec: ServiceExec, refId: number, saleId: number, userId: 
       updated_at: now,
     })
     .where(eq(printJobsTable.id, refId));
-  emitPrintJobEvent('paid', job);
-  if (statusAfterPayment(job.status) === 'picked_up') emitPrintJobEvent('picked_up', job);
+  emitPrintJobEvent('paid', job, userId);
+  if (statusAfterPayment(job.status) === 'picked_up') emitPrintJobEvent('picked_up', job, userId);
 }
 
 const handler: ServiceLineHandler = {

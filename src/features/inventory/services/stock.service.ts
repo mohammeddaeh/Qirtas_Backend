@@ -5,6 +5,7 @@ import { recordAudit } from '../../../core/audit/audit-recorder.js';
 import { db } from '../../../core/db/client.js';
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
 import type { RequestActorContext } from '../../../core/http/require-actor.js';
+import * as userRoleAssignmentsRepository from '../../identity/repositories/user-role-assignments.repository.js';
 import { normalizeArabic } from '../../../core/i18n/arabic-normalize.js';
 import { paginated, type Paginated, type PaginationParams } from '../../../core/pagination/pagination.js';
 import { INVENTORY_AUDIT, inventoryTarget } from '../audit-actions.js';
@@ -32,11 +33,37 @@ import { applyIssue, applyReceipt,
 export const DEFAULT_APPROVAL_THRESHOLD = 100_000;
 const DEFAULT_EXPIRY_DAYS = 30;
 
-export async function getSettings(): Promise<WireInventorySettings> {
-  const [row, branches] = await Promise.all([
+/**
+ * The keys of the screens that pick a branch from [getSettings] — any one
+ * opens the list (inventory.routes.ts).
+ */
+export const BRANCH_PICKER_KEYS = [
+  'inventory.view',
+  'sales.sell',
+  'sales.view',
+  'sales.refund',
+  'orders.view',
+  'promotions.view',
+] as const;
+
+/**
+ * With [actorUserId], the branches are only those where the reader holds one
+ * of [BRANCH_PICKER_KEYS]: the picker selects the first one by itself, and a
+ * cashier of one branch must not open the till on another where every write
+ * is refused. Without it (the settings write echoing back), every live branch.
+ */
+export async function getSettings(actorUserId?: number): Promise<WireInventorySettings> {
+  const [row, live] = await Promise.all([
     stockRepository.findSettings(),
     stockRepository.findLiveBranches(),
   ]);
+  let branches = live;
+  if (actorUserId !== undefined) {
+    const held = await Promise.all(
+      live.map((b) => userRoleAssignmentsRepository.findEffectivePermissionKeys(actorUserId, b.id)),
+    );
+    branches = live.filter((_, i) => BRANCH_PICKER_KEYS.some((k) => held[i]?.includes(k)));
+  }
   return {
     approval_threshold_syp: row ? Number(row.approval_threshold_syp) : DEFAULT_APPROVAL_THRESHOLD,
     expiry_alert_days: row?.expiry_alert_days ?? DEFAULT_EXPIRY_DAYS,
@@ -51,7 +78,7 @@ export async function setSettings(
   const before = await getSettings();
   await stockRepository.saveSettings(body, actor.userId);
   await recordAudit(actor, INVENTORY_AUDIT.settingsSet, inventoryTarget.settings(), before, body);
-  return getSettings();
+  return getSettings(actor.userId);
 }
 
 export interface PostedLine {

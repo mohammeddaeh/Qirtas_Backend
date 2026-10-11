@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lte, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lte, sql } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { branchesTable } from '../../identity/schemas/branches.schema.js';
 import { customersTable } from '../../customers/schemas/customers.schema.js';
@@ -276,10 +276,22 @@ export async function findOrderLines(orderId: number, exec: Exec = db) {
 }
 
 export async function findOrders(
-  filters: { branchId?: number; customerId?: number; status?: OrderRow['status'] },
+  filters: {
+    branchId?: number;
+    customerId?: number;
+    status?: OrderRow['status'];
+    sortBy?: 'created_at' | 'total' | 'reserved_until';
+    sortDir?: 'asc' | 'desc';
+  },
   limit: number,
   offset: number,
 ): Promise<{ rows: OrderRow[]; total: number }> {
+  const dir = filters.sortDir === 'asc' ? asc : desc;
+  const sortColumn = {
+    created_at: ordersTable.created_at,
+    total: ordersTable.total_syp,
+    reserved_until: ordersTable.reserved_until,
+  }[filters.sortBy ?? 'created_at'];
   const clauses = [];
   if (filters.branchId !== undefined) clauses.push(eq(ordersTable.branch_id, filters.branchId));
   if (filters.customerId !== undefined)
@@ -292,7 +304,7 @@ export async function findOrders(
       .select()
       .from(ordersTable)
       .where(where)
-      .orderBy(desc(ordersTable.created_at), desc(ordersTable.id))
+      .orderBy(dir(sortColumn), dir(ordersTable.id))
       .limit(limit)
       .offset(offset),
     db

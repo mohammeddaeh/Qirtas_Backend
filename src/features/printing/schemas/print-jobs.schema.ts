@@ -20,6 +20,7 @@ import { customersTable } from '../../customers/schemas/customers.schema.js';
 import { mediaAssetsTable } from '../../../core/media/schemas/media-assets.schema.js';
 import { salesTable } from '../../sales/schemas/sales.schema.js';
 import { printOptionsTable } from './printing.schema.js';
+import { printPrintersTable } from './print-printers.schema.js';
 
 /**
  * طلب الطباعة — الشريحة 9-ج-2 (`docs/reference/printing_system.md`
@@ -166,6 +167,14 @@ export const printJobsTable = pgTable(
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     submitted_at: timestamp('submitted_at', { withTimezone: true }),
     production_started_at: timestamp('production_started_at', { withTimezone: true }),
+    /** Where it is printed and who started it — written by «ابدأ الطباعة» (9-ط-2). */
+    printer_id: integer('printer_id').references(() => printPrintersTable.id, { onDelete: 'set null' }),
+    started_by: integer('started_by').references(() => usersTable.id, { onDelete: 'set null' }),
+    /**
+     * The registered computer printing started at (docs/reference/stations.md) — `null` from a
+     * phone or an unregistered computer. No FK: a station row outlives nothing it stamped.
+     */
+    started_station_id: integer('started_station_id'),
     ready_at: timestamp('ready_at', { withTimezone: true }),
     /**
      * Pickup code (9-ز-2) — issued the moment the copies are ready, written or

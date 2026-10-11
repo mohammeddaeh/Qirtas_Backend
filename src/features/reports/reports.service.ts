@@ -3,6 +3,7 @@ import { db } from '../../core/db/client.js';
 import { financeEntriesTable } from '../../core/finance/schemas/finance-entries.schema.js';
 import { branchesTable } from '../identity/schemas/branches.schema.js';
 import { usersTable } from '../identity/schemas/users.schema.js';
+import { stationsTable } from '../identity/schemas/stations.schema.js';
 import { printReadyCopiesTable } from '../printing/schemas/print-ready.schema.js';
 import { saleReturnLinesTable, saleReturnsTable } from '../sales/schemas/returns.schema.js';
 import { saleLinesTable, salesTable } from '../sales/schemas/sales.schema.js';
@@ -67,7 +68,7 @@ async function sumsByType(q: ReportQuery): Promise<Map<string, number>> {
 export async function summary(q: ReportQuery) {
   const { start, end } = window(q);
   const branchSql = q.branchId ? eq(financeEntriesTable.branch_id, q.branchId) : undefined;
-  const [byType, byMethod, byCashier, lossByReason, shelfRow, printLines, printRefunds, branches] = await Promise.all([
+  const [byType, byMethod, byCashier, lossByReason, shelfRow, printLines, printRefunds, branches, byStation] = await Promise.all([
     sumsByType(q),
     db
       .select({
@@ -145,6 +146,20 @@ export async function summary(q: ReportQuery) {
       .from(branchesTable)
       .where(isNull(branchesTable.archived_at))
       .orderBy(desc(branchesTable.is_default), asc(branchesTable.id)),
+    // Cash by computer (docs/reference/stations.md): what each drawer should
+    // hold — counted against the drawer itself at closing.
+    db
+      .select({
+        station_id: financeEntriesTable.station_id,
+        name: stationsTable.name,
+        type: financeEntriesTable.type,
+        method: financeEntriesTable.method,
+        total: sql<string>`sum(${financeEntriesTable.amount_syp})`,
+      })
+      .from(financeEntriesTable)
+      .leftJoin(stationsTable, eq(stationsTable.id, financeEntriesTable.station_id))
+      .where(and(ledgerScope(q), inArray(financeEntriesTable.type, ['sale_revenue', 'refund'])))
+      .groupBy(financeEntriesTable.station_id, stationsTable.name, financeEntriesTable.type, financeEntriesTable.method),
   ]);
 
   const t = (k: string) => byType.get(k) ?? 0;
@@ -174,6 +189,18 @@ export async function summary(q: ReportQuery) {
     cashiers.set(key, row);
   }
 
+  // `station_id: null` = a phone or an unregistered computer — said as such.
+  const stations = new Map<string, { station_id: number | null; name: string | null; revenue: number; refunds: number; cash: number }>();
+  for (const r of byStation) {
+    const key = String(r.station_id ?? 0);
+    const row = stations.get(key) ?? { station_id: r.station_id, name: r.name, revenue: 0, refunds: 0, cash: 0 };
+    const v = n(r.total);
+    if (r.type === 'sale_revenue') row.revenue = n(row.revenue + v);
+    else row.refunds = n(row.refunds - v);
+    if (r.method === 'cash') row.cash = n(row.cash + v);
+    stations.set(key, row);
+  }
+
   const printRevenue = (kind: string) => n(printLines.find((r) => r.kind === kind)?.total);
 
   return {
@@ -198,6 +225,7 @@ export async function summary(q: ReportQuery) {
       refunds: n(-methodTotal('refund', m)),
     })),
     cashiers: [...cashiers.values()].sort((a, b) => b.revenue - a.revenue),
+    stations: [...stations.values()].sort((a, b) => b.cash - a.cash),
     printing: {
       revenue_new: n(printRevenue('print_job') + printRevenue('print_counter')),
       revenue_ready: printRevenue('print_ready'),

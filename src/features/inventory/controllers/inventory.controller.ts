@@ -120,8 +120,8 @@ export async function getSignals(req: Request, res: Response): Promise<void> {
   ok(res, await stockService.getSignals(branch_id));
 }
 
-export async function getSettings(_req: Request, res: Response): Promise<void> {
-  ok(res, await stockService.getSettings());
+export async function getSettings(req: Request, res: Response): Promise<void> {
+  ok(res, await stockService.getSettings(requireActorId(req)));
 }
 
 export async function setSettings(req: Request, res: Response): Promise<void> {

@@ -47,6 +47,8 @@ export interface ProductsQuery {
   status?: CatalogProductRow['status'] | undefined;
   kind?: CatalogProductRow['kind'] | undefined;
   archived: boolean;
+  sortBy?: 'created_at' | 'name';
+  sortDir?: 'asc' | 'desc';
 }
 
 export function findMany(
@@ -77,7 +79,7 @@ export function findMany(
 
   return findManyPaginated<CatalogProductRow>(p, params, {
     where: and(...conditions),
-    orderBy: desc(p.created_at),
+    orderBy: (q.sortDir === 'asc' ? asc : desc)(q.sortBy === 'name' ? p.name_ar : p.created_at),
   });
 }
 

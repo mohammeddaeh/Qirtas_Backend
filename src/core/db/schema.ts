@@ -10,6 +10,7 @@
  * tsx resolves that mismatch without needing an extension-less exception here.
  */
 export * from '../../features/identity/schemas/branches.schema.js';
+export * from '../../features/identity/schemas/stations.schema.js';
 export * from '../../features/identity/schemas/roles.schema.js';
 export * from '../../features/identity/schemas/permissions.schema.js';
 export * from '../../features/identity/schemas/role-permissions.schema.js';
@@ -96,6 +97,7 @@ export * from '../../features/printing/schemas/print-jobs.schema.js';
 export * from '../../features/printing/schemas/print-consumption.schema.js';
 export * from '../../features/printing/schemas/print-counter-sales.schema.js';
 export * from '../../features/printing/schemas/print-ready.schema.js';
+export * from '../../features/printing/schemas/print-printers.schema.js';
 
 // الفواتير والملصقات — القوالب وملف المحل (features/documents/) — docs/reference/receipts_labels.md.
 export * from '../../features/documents/schemas/documents.schema.js';

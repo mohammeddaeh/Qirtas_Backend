@@ -68,10 +68,18 @@ export async function createUserByAdmin(req: Request, res: Response): Promise<vo
 
 /** Request metadata every delegating call carries — for security events and email language, never for a decision. */
 function originOf(req: Request): authService.RequestOrigin {
+  const platform = req.header('X-Client-Platform')?.toLowerCase();
   return {
     ipAddress: req.ip ?? null,
     deviceInfo: req.header('User-Agent') ?? null,
     lang: req.lang,
+    platform:
+      platform === undefined
+        ? null
+        : ['windows', 'macos', 'linux', 'desktop'].includes(platform)
+          ? 'desktop'
+          : 'mobile',
+    stationToken: req.header('X-Station-Token') ?? null,
   };
 }
 

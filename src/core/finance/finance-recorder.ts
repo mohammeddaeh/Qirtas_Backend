@@ -27,6 +27,8 @@ export interface FinanceEntry {
   docId: number;
   saleId?: number | null;
   userId?: number | null;
+  /** The registered computer — `RequestActorContext.stationId`. */
+  stationId?: number | null;
   reason?: string | null;
   note?: string | null;
 }
@@ -46,6 +48,7 @@ export async function recordFinance(exec: FinanceExec, entries: FinanceEntry[]):
       doc_id: e.docId,
       sale_id: e.saleId ?? null,
       user_id: e.userId ?? null,
+      station_id: e.stationId ?? null,
       reason: e.reason ?? null,
       note: e.note ?? null,
     }));

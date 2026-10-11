@@ -47,6 +47,11 @@ export const auditLogEntriesTable = pgTable(
     branch_context: integer('branch_context').references(() => branchesTable.id, {
       onDelete: 'set null',
     }),
+    /**
+     * The registered computer the action came from (docs/reference/stations.md) — `null` from a
+     * phone or an unregistered computer. No FK: a station row outlives nothing it stamped.
+     */
+    station_id: integer('station_id'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

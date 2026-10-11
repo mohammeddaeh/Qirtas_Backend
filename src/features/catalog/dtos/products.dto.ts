@@ -33,6 +33,9 @@ export const productsFilterQuerySchema = z
     status: z.enum(PRODUCT_STATUSES).optional(),
     kind: z.enum(PRODUCT_KINDS).optional(),
     archived: queryBooleanSchema.optional(),
+    // rest_api.md §6.1 — the products table's sortable columns (9-ط-3).
+    sort_by: z.enum(['created_at', 'name']).default('created_at'),
+    sort_dir: z.enum(['asc', 'desc']).default('desc'),
   })
   .strict();
 export type ProductsFilterQuery = z.infer<typeof productsFilterQuerySchema>;

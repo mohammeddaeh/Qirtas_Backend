@@ -67,6 +67,7 @@ export async function findMany(
       device_info: auditLogEntriesTable.device_info,
       performed_by_role: auditLogEntriesTable.performed_by_role,
       branch_context: auditLogEntriesTable.branch_context,
+      station_id: auditLogEntriesTable.station_id,
       created_at: auditLogEntriesTable.created_at,
       performed_by_name:
         sql<string | null>`${usersTable.first_name} || ' ' || ${usersTable.last_name}`.as(

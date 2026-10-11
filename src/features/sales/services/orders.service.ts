@@ -290,7 +290,13 @@ export async function getOrder(id: number): Promise<WireOrder> {
 }
 
 export async function listOrders(
-  filters: { branchId?: number; customerId?: number; status?: OrderStatus },
+  filters: {
+    branchId?: number;
+    customerId?: number;
+    status?: OrderStatus;
+    sortBy?: 'created_at' | 'total' | 'reserved_until';
+    sortDir?: 'asc' | 'desc';
+  },
   limit: number,
   offset: number,
 ): Promise<{ items: WireOrder[]; total: number }> {

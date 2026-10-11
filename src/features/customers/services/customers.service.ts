@@ -703,29 +703,6 @@ export async function resendVerification(
   );
 }
 
-/** Mails a reset code to the customer. Same rule as above — the admin cannot read it. */
-export async function sendPasswordReset(
-  actor: RequestActorContext,
-  id: number,
-  origin: authService.RequestOrigin,
-): Promise<void> {
-  const account = await customerAccountStore.findById(id);
-  if (!account) throw new NotFoundError('Customer not found');
-
-  await authService.requestPasswordReset(
-    customerAuthRealm,
-    account.email,
-    await inCustomerLanguage(id, origin),
-  );
-  await auditService.record(
-    actor,
-    AUDIT.customerPasswordResetSend,
-    target.customer(id),
-    null,
-    null,
-  );
-}
-
 export async function listActivity(
   id: number,
   params: PaginationParams,

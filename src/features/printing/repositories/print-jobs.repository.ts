@@ -1,6 +1,8 @@
 import { and, asc, count, desc, eq, inArray, lte, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { branchesTable } from '../../identity/schemas/branches.schema.js';
+import { usersTable } from '../../identity/schemas/users.schema.js';
+import { userRoleAssignmentsTable } from '../../identity/schemas/user-role-assignments.schema.js';
 import { customersTable } from '../../customers/schemas/customers.schema.js';
 import {
   mediaAssetsTable,
@@ -443,6 +445,45 @@ export async function recordSummary(f: RecordFilters) {
 export interface QueueFilters {
   q?: string;
   payment?: PrintPaymentStatus;
+  /** One printer's lane (9-ط-2). */
+  printerId?: number;
+  /** «عملي» — what this person started. */
+  startedBy?: number;
+}
+
+function laneConditions(f: QueueFilters): (SQL | undefined)[] {
+  return [
+    f.printerId === undefined ? undefined : eq(printJobsTable.printer_id, f.printerId),
+    f.startedBy === undefined ? undefined : eq(printJobsTable.started_by, f.startedBy),
+  ];
+}
+
+/**
+ * Jobs being printed per printer, and how many of them [userId] started — the
+ * chips of «للتنفيذ» (9-ط-2). Printer-less rows (started before printers were
+ * defined) count under `null`.
+ */
+export async function countLanes(
+  branchId: number,
+  userId: number,
+  f: QueueFilters = {},
+): Promise<{ byPrinter: Map<number | null, number>; mine: number }> {
+  const base = and(
+    eq(printJobsTable.branch_id, branchId),
+    eq(printJobsTable.status, 'in_production'),
+    sql`${printJobsTable.source} <> 'counter'`,
+    f.payment ? eq(printJobsTable.payment_status, f.payment) : undefined,
+    jobSearchCondition(f.q),
+  );
+  const [rows, [mine]] = await Promise.all([
+    db
+      .select({ printer: printJobsTable.printer_id, n: count() })
+      .from(printJobsTable)
+      .where(base)
+      .groupBy(printJobsTable.printer_id),
+    db.select({ n: count() }).from(printJobsTable).where(and(base, eq(printJobsTable.started_by, userId))),
+  ]);
+  return { byPrinter: new Map(rows.map((r) => [r.printer, Number(r.n)])), mine: Number(mine?.n ?? 0) };
 }
 
 export async function countByStatus(branchIds: number[], f: QueueFilters = {}): Promise<Map<PrintJobStatus, number>> {
@@ -490,6 +531,7 @@ export async function findJobs(
   // Counter prints are printed at the till, not board work (9-ح-1).
   if (filters.excludeCounter) where.push(sql`${printJobsTable.source} <> 'counter'`);
   if (filters.payment) where.push(eq(printJobsTable.payment_status, filters.payment));
+  for (const c of laneConditions(filters)) if (c) where.push(c);
   const search = jobSearchCondition(filters.q);
   if (search) where.push(search);
   const condition = where.length === 0 ? undefined : and(...where);
@@ -607,4 +649,33 @@ export async function deleteJobLink(jobId: number, linkId: number): Promise<bool
     .where(and(eq(printJobLinksTable.job_id, jobId), eq(printJobLinksTable.id, linkId)))
     .returning({ id: printJobLinksTable.id });
   return rows.length > 0;
+}
+
+/**
+ * Active staff with a live assignment at [branchId] or unrestricted — the
+ * candidates for a branch's work notifications; the permission is checked per
+ * person by the caller (roles change, overrides exist).
+ */
+export async function findBranchStaffIds(branchId: number): Promise<number[]> {
+  const rows = await db
+    .selectDistinct({ id: userRoleAssignmentsTable.user_id })
+    .from(userRoleAssignmentsTable)
+    .innerJoin(usersTable, eq(usersTable.id, userRoleAssignmentsTable.user_id))
+    .where(
+      and(
+        sql`${userRoleAssignmentsTable.valid_to} IS NULL`,
+        sql`(${userRoleAssignmentsTable.branch_id} = ${branchId} OR ${userRoleAssignmentsTable.branch_id} IS NULL)`,
+        eq(usersTable.status, 'active'),
+      ),
+    );
+  return rows.map((r) => r.id);
+}
+
+/** «بدأه أحمد» on the job (9-ط-2). */
+export async function findUserName(userId: number): Promise<string | undefined> {
+  const [row] = await db
+    .select({ first: usersTable.first_name, last: usersTable.last_name })
+    .from(usersTable)
+    .where(eq(usersTable.id, userId));
+  return row === undefined ? undefined : `${row.first} ${row.last}`.trim();
 }

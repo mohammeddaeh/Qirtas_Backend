@@ -5,6 +5,12 @@ import { emailSender } from '../auth/ports/email-sender.js';
 import * as tokensRepository from './repositories/push-tokens.repository.js';
 import { pushSender } from './ports/push-sender.js';
 import { NOTIFICATION, notificationText, type NotificationEvent, type NotificationParams } from './events.js';
+import { workNotificationText, type WorkNotificationEvent, type WorkNotificationParams } from './work-events.js';
+import {
+  shoppingNotificationText,
+  type ShoppingNotificationEvent,
+  type ShoppingNotificationParams,
+} from './shopping-events.js';
 import * as sessionsRepository from '../auth/repositories/sessions.repository.js';
 
 /**
@@ -108,6 +114,67 @@ async function sendPushes(params: NotifyParams): Promise<void> {
       if (outcome === 'invalid') dead.push(device.token);
     }),
   );
+  await tokensRepository.removeMany(dead);
+}
+
+/**
+ * Work for staff (9-ط-1): **push only, to every live device of each account**,
+ * with `data` the app opens the work from (`job_id`…). Never throws and is not
+ * awaited, like [notify] — an order sent is sent whether or not Google answered.
+ */
+export function notifyWork(params: {
+  accountIds: number[];
+  event: WorkNotificationEvent;
+  text: WorkNotificationParams;
+  data: Record<string, string>;
+}): void {
+  pushOnly('staff', params.accountIds, params.event, (lang) => workNotificationText(params.event, lang, params.text), params.data);
+}
+
+/**
+ * Something a customer is waiting for moved (2026-10-07): goods back on the
+ * shelf, a print order priced, ready or declined. Push only — see
+ * `shopping-events.ts` for why there is no email.
+ */
+export function notifyShopper(params: {
+  customerId: number;
+  event: ShoppingNotificationEvent;
+  text: ShoppingNotificationParams;
+  data: Record<string, string>;
+}): void {
+  pushOnly('customer', [params.customerId], params.event, (lang) => shoppingNotificationText(params.event, lang, params.text), params.data);
+}
+
+function pushOnly(
+  realm: RealmId,
+  accountIds: number[],
+  event: string,
+  textFor: (lang: Lang) => { title: string; body: string },
+  data: Record<string, string>,
+): void {
+  void deliverPushOnly(realm, accountIds, event, textFor, data).catch((error: unknown) => {
+    logger.warn({ event, err: error instanceof Error ? error.message : 'unknown' }, 'push notification failed');
+  });
+}
+
+async function deliverPushOnly(
+  realm: RealmId,
+  accountIds: number[],
+  event: string,
+  textFor: (lang: Lang) => { title: string; body: string },
+  data: Record<string, string>,
+): Promise<void> {
+  const dead: string[] = [];
+  for (const accountId of new Set(accountIds)) {
+    const registered = await tokensRepository.findByAccount(realm, accountId);
+    await Promise.all(
+      registered.map(async (device) => {
+        if (!(await sessionIsLive(realm, device.session_id))) return;
+        const outcome = await pushSender().send(device.token, { ...textFor(pickLang(device.language)), data: { event, ...data } });
+        if (outcome === 'invalid') dead.push(device.token);
+      }),
+    );
+  }
   await tokensRepository.removeMany(dead);
 }
 

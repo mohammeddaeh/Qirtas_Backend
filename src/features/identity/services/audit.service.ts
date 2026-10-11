@@ -26,6 +26,7 @@ export async function record(
     device_info: actor.deviceInfo,
     performed_by_role: actor.performedByRole,
     branch_context: actor.branchContext,
+    station_id: actor.stationId ?? null,
   });
 }
 

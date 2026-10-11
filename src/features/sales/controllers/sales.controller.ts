@@ -12,6 +12,7 @@ import type {
   DiscountBody,
   PayBody,
   SalesQuery,
+  ReturnsQuery,
 } from '../dtos/sales.dto.js';
 import * as service from '../services/sales.service.js';
 import * as returns from '../services/returns.service.js';
@@ -35,6 +36,12 @@ export async function listOpen(req: Request, res: Response): Promise<void> {
   ok(res, await service.listOpenSales(branchId, requireActorId(req)));
 }
 
+/** The branch's computers, for the sales history's filter (docs/reference/stations.md). */
+export async function listStations(req: Request, res: Response): Promise<void> {
+  const { branch_id } = req.query as unknown as { branch_id: number };
+  ok(res, await repo.findBranchStations(branch_id));
+}
+
 export async function list(req: Request, res: Response): Promise<void> {
   const query = req.query as unknown as SalesQuery;
   const params = toPaginationParams(query);
@@ -52,6 +59,9 @@ export async function list(req: Request, res: Response): Promise<void> {
       search: query.search,
       from: query.from === undefined ? undefined : new Date(`${query.from}T00:00:00`),
       to: query.to === undefined ? undefined : dayAfter(query.to),
+      sortBy: query.sort_by,
+      sortDir: query.sort_dir,
+      stationId: query.station_id,
     },
     params.limit,
     (params.page - 1) * params.limit,
@@ -213,15 +223,16 @@ export async function getReturn(req: Request, res: Response): Promise<void> {
 }
 
 export async function listReturns(req: Request, res: Response): Promise<void> {
-  const query = req.query as unknown as {
-    page: number;
-    limit: number;
-    branch_id?: number;
-    sale_id?: number;
-  };
+  const query = req.query as unknown as ReturnsQuery;
   const params = toPaginationParams(query);
   const { items, total } = await returns.listReturns(
-    { branchId: query.branch_id, saleId: query.sale_id },
+    {
+      branchId: query.branch_id,
+      saleId: query.sale_id,
+      refundMethod: query.refund_method,
+      sortBy: query.sort_by,
+      sortDir: query.sort_dir,
+    },
     params.limit,
     (params.page - 1) * params.limit,
   );

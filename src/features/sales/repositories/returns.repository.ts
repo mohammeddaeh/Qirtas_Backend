@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { saleLinesTable } from '../schemas/sales.schema.js';
 import {
@@ -205,11 +205,21 @@ export async function findReturnLines(returnId: number) {
 }
 
 export async function findReturns(
-  filters: { branchId?: number; saleId?: number },
+  filters: {
+    branchId?: number;
+    saleId?: number;
+    refundMethod?: 'cash' | 'customer_credit';
+    sortBy?: 'created_at' | 'total';
+    sortDir?: 'asc' | 'desc';
+  },
   limit: number,
   offset: number,
 ): Promise<{ rows: SaleReturnRow[]; total: number }> {
+  const dir = filters.sortDir === 'asc' ? asc : desc;
+  const sortColumn = filters.sortBy === 'total' ? saleReturnsTable.total_syp : saleReturnsTable.created_at;
   const clauses = [];
+  if (filters.refundMethod !== undefined)
+    clauses.push(eq(saleReturnsTable.refund_method, filters.refundMethod));
   if (filters.branchId !== undefined)
     clauses.push(eq(saleReturnsTable.branch_id, filters.branchId));
   if (filters.saleId !== undefined) clauses.push(eq(saleReturnsTable.sale_id, filters.saleId));
@@ -220,7 +230,7 @@ export async function findReturns(
       .select()
       .from(saleReturnsTable)
       .where(where)
-      .orderBy(desc(saleReturnsTable.created_at), desc(saleReturnsTable.id))
+      .orderBy(dir(sortColumn), dir(saleReturnsTable.id))
       .limit(limit)
       .offset(offset),
     db

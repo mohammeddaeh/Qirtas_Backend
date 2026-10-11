@@ -46,6 +46,9 @@ export const ordersQuerySchema = paginationQuerySchema
     branch_id: id.optional(),
     customer_id: id.optional(),
     status: z.enum(['pending_pickup', 'picked_up', 'cancelled', 'expired']).optional(),
+    // rest_api.md §6.1 — `reserved_until` puts the order about to lapse first.
+    sort_by: z.enum(['created_at', 'total', 'reserved_until']).default('created_at'),
+    sort_dir: z.enum(['asc', 'desc']).default('desc'),
   })
   .strict();
 

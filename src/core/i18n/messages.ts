@@ -51,6 +51,36 @@ export const MESSAGES = {
     en: 'Your account has been disabled',
     ar: 'تم تعطيل حسابك',
   },
+  // A desktop sign-in without `stations.sign_in` (users.service.ts).
+  // docs/reference/stations.md — phase 2.
+  station_not_registered: {
+    en: 'This computer is not registered as a shop station — ask the administration to register it',
+    ar: 'هذا الحاسوب غير مسجَّل محطةً للمحل — اطلب من الإدارة تسجيله',
+  },
+  station_kind_till_only: {
+    en: 'This computer is a till — only staff who sell can sign in here',
+    ar: 'هذا الحاسوب صندوق بيع — يدخل منه من يبيع فقط',
+  },
+  station_kind_printing_only: {
+    en: 'This computer is the print station — only print staff can sign in here',
+    ar: 'هذا الحاسوب محطة طباعة — يدخل منه موظفو الطباعة فقط',
+  },
+  station_kind_office_only: {
+    en: 'This computer is an office station — for management only',
+    ar: 'هذا الحاسوب حاسوب مكتب — للإدارة فقط',
+  },
+  phone_sign_in_not_allowed: {
+    en: 'This account cannot sign in from a phone — work from the shop computer, or ask the administration',
+    ar: 'لا يمكن لهذا الحساب الدخول من الهاتف — اعمل من حاسوب المحل، أو راجع الإدارة',
+  },
+  station_name_taken: {
+    en: 'A station in this branch already has that name',
+    ar: 'توجد محطة بهذا الاسم في هذا الفرع',
+  },
+  station_sign_in_not_allowed: {
+    en: 'This account cannot sign in on a computer — use the app on your phone, or ask the administration for station access',
+    ar: 'لا يمكن لهذا الحساب الدخول من الحاسوب — استعمل التطبيق على هاتفك، أو اطلب من الإدارة صلاحية الدخول من محطة',
+  },
   account_rejected: {
     en: 'Your registration request was declined',
     ar: 'تم رفض طلب تسجيلك',
@@ -1260,6 +1290,10 @@ export const MESSAGES = {
     ar: 'لا يمكن نقل طلب الطباعة إلى هذه المرحلة الآن',
   },
   /** بوابة الإنتاج: لا ورق ولا حبر قبل دفعٍ مثبَّت. */
+  // ── الطابعات (9-ط-2) ──
+  printer_name_taken: { en: 'A printer with this name already exists at this branch', ar: 'توجد طابعة بهذا الاسم في الفرع' },
+  printer_in_use: { en: 'This printer printed orders — stop it instead of deleting it', ar: 'طُبعت على هذه الطابعة طلبات — أوقفها بدل حذفها' },
+  printer_not_usable: { en: 'This printer cannot print this order', ar: 'هذه الطابعة لا تطبع هذا الطلب' },
   print_job_unpaid: {
     en: 'This print order is not paid yet',
     ar: 'طلب الطباعة لم يُدفع بعد',

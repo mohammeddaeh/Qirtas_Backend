@@ -79,6 +79,8 @@ export interface WireSale {
   cashier_user_id: number;
   /** Read at request time — `null` only when the account is gone. */
   cashier_name: string | null;
+  /** The registered computer that took the payment (docs/reference/stations.md) — `null` from a phone or before paying. */
+  station_name: string | null;
   discount_percent: number;
   discount_reason: string | null;
   discount_approved_by: number | null;
@@ -147,10 +149,11 @@ export async function getSale(id: number): Promise<WireSale> {
   // the registered customer's — an invoice in an account's name printed none.
   const customerName =
     sale.customer_name ?? (sale.customer_id === null ? null : await repo.findCustomerName(sale.customer_id));
-  const [lines, payments, cashierName] = await Promise.all([
+  const [lines, payments, cashierName, stationName] = await Promise.all([
     repo.findLines(id),
     repo.findPayments(id),
     repo.findUserName(sale.cashier_user_id),
+    repo.findStationName(sale.station_id),
   ]);
   const thumbs = await thumbnailsFor(
     lines.map((l) => ({ productId: l.product_id, variantId: l.variant_id })),
@@ -214,6 +217,7 @@ export async function getSale(id: number): Promise<WireSale> {
     customer_name: customerName,
     cashier_user_id: sale.cashier_user_id,
     cashier_name: cashierName,
+    station_name: stationName,
     discount_percent: num(sale.discount_percent),
     discount_reason: sale.discount_reason,
     discount_approved_by: sale.discount_approved_by,
@@ -785,6 +789,8 @@ export async function paySale(
       tax_syp: String(roundSyp(totals.taxSyp)),
       total_syp: String(roundSyp(totals.totalSyp)),
       paid_at: new Date(),
+      // «Which till was this?» — the computer that took the money.
+      station_id: actor.stationId ?? null,
     });
 
     await repo.insertPayments(
@@ -815,6 +821,7 @@ export async function paySale(
         docId: saleId,
         saleId,
         userId: actor.userId,
+        stationId: actor.stationId ?? null,
       })),
       {
         branchId: preview.branch_id,
@@ -825,6 +832,7 @@ export async function paySale(
         docId: saleId,
         saleId,
         userId: actor.userId,
+        stationId: actor.stationId ?? null,
       },
     ]);
 

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { asyncHandler } from '../../../core/http/async-handler.js';
 import { requirePermission } from '../../../core/http/require-permission.js';
 import { validate } from '../../../core/validation/validate.js';
@@ -117,6 +118,14 @@ salesRouter.put(
 );
 
 salesRouter.get('/', canView(), validate(salesQuerySchema, 'query'), asyncHandler(controller.list));
+
+// The computers of a branch — for the history's «by computer» filter.
+salesRouter.get(
+  '/stations',
+  canView(),
+  validate(z.object({ branch_id: z.coerce.number().int().positive() }).strict(), 'query'),
+  asyncHandler(controller.listStations),
+);
 
 salesRouter.get(
   '/:id',

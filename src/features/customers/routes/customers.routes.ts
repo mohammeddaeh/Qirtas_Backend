@@ -236,13 +236,6 @@ customersRouter.post(
   asyncHandler(customersController.resendVerification),
 );
 
-customersRouter.post(
-  '/:id/password-reset',
-  requirePermission('customers.manage'),
-  validate(customerIdParamsSchema, 'params'),
-  asyncHandler(customersController.sendPasswordReset),
-);
-
 customersRouter.get(
   '/:id/activity',
   requirePermission('customers.view'),

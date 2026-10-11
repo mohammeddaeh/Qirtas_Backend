@@ -38,6 +38,12 @@ export interface RequestActorContext {
   deviceInfo: string | null;
   performedByRole: string | null;
   branchContext: number | null;
+  /**
+   * The registered computer the request came from (docs/reference/stations.md)
+   * — read from the session, so every service that takes an actor can stamp it
+   * without knowing stations exist. Optional: system actors have none.
+   */
+  stationId?: number | null;
 }
 
 /** Builds the actor context from the current request — role/branch context is filled in once real auth resolves req.user's assignments. */
@@ -48,6 +54,7 @@ export function buildActorContext(req: Request, actorUserId: number): RequestAct
     deviceInfo: req.header('User-Agent') ?? null,
     performedByRole: null,
     branchContext: null,
+    stationId: req.session?.stationId ?? null,
   };
 }
 

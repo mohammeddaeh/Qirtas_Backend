@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { asyncHandler } from '../../../core/http/async-handler.js';
-import { requirePermission } from '../../../core/http/require-permission.js';
+import { requireAnyPermission, requirePermission } from '../../../core/http/require-permission.js';
+import { BRANCH_PICKER_KEYS } from '../services/stock.service.js';
 import { paginationQuerySchema } from '../../../core/pagination/pagination.js';
 import { validate } from '../../../core/validation/validate.js';
 import { idParamsSchema } from '../../catalog/dtos/common.dto.js';
@@ -190,7 +191,15 @@ inventoryRouter.put(
   validate(thresholdBodySchema, 'body'),
   asyncHandler(inventoryController.setThreshold),
 );
-inventoryRouter.get('/inventory/settings', canView, asyncHandler(inventoryController.getSettings));
+// Read by every screen that opens on «أي فرع؟» — the till, sales history,
+// returns, pickup orders and the promotion preview as well as inventory — so
+// any of their keys opens it, and the branches answer only where it is held.
+// `inventory.view` alone left a cashier on «اختر الفرع» with nothing to pick.
+inventoryRouter.get(
+  '/inventory/settings',
+  requireAnyPermission([...BRANCH_PICKER_KEYS]),
+  asyncHandler(inventoryController.getSettings),
+);
 inventoryRouter.put(
   '/inventory/settings',
   canApprove,

@@ -2,6 +2,8 @@ import { and, asc, count, desc, eq, inArray, isNull, min, sql } from 'drizzle-or
 import { db } from '../../../core/db/client.js';
 import { catalogProductsTable, catalogVariantsTable } from '../../catalog/schemas/products.schema.js';
 import { stockBalancesTable } from '../../inventory/schemas/stock.schema.js';
+import { branchesTable } from '../../identity/schemas/branches.schema.js';
+import { customersTable } from '../../customers/schemas/customers.schema.js';
 import {
   storefrontDemandTable,
   type NewStorefrontDemandRow,
@@ -96,4 +98,67 @@ export async function findDemandSummary(branchId: number, limit: number) {
     // الأقدم أولاً: من انتظر أطول هو من يُنسى، والأحدث-أولاً يدفن الطابور نفسه.
     .orderBy(asc(min(d.created_at)))
     .limit(limit);
+}
+
+/**
+ * Open requests whose goods are on the shelf **at the branch they were asked
+ * at** — the back-in-stock sweep reads this (2026-10-07).
+ *
+ * Only what can actually be bought there: a live branch, a published product,
+ * an active variant, a live customer, and `on_hand − reserved > 0`. The price
+ * is checked by the service (it comes from the pricing port, not a table).
+ * Oldest first, so a long batch tells those who waited longest.
+ */
+export function findOpenDemandInStock(limit: number) {
+  return db
+    .select({
+      id: d.id,
+      customer_id: d.customer_id,
+      variant_id: d.variant_id,
+      branch_id: d.branch_id,
+      product_id: catalogVariantsTable.product_id,
+      product_name_ar: catalogProductsTable.name_ar,
+      product_name_en: catalogProductsTable.name_en,
+      branch_name: branchesTable.name,
+    })
+    .from(d)
+    .innerJoin(catalogVariantsTable, eq(catalogVariantsTable.id, d.variant_id))
+    .innerJoin(catalogProductsTable, eq(catalogProductsTable.id, catalogVariantsTable.product_id))
+    .innerJoin(branchesTable, eq(branchesTable.id, d.branch_id))
+    .innerJoin(customersTable, eq(customersTable.id, d.customer_id))
+    .innerJoin(
+      stockBalancesTable,
+      and(eq(stockBalancesTable.variant_id, d.variant_id), eq(stockBalancesTable.branch_id, d.branch_id)),
+    )
+    .where(
+      and(
+        isNull(d.notified_at),
+        eq(catalogVariantsTable.status, 'active'),
+        isNull(catalogProductsTable.archived_at),
+        eq(catalogProductsTable.status, 'active'),
+        eq(catalogProductsTable.is_sellable, true),
+        eq(catalogProductsTable.is_branch_draft, false),
+        eq(branchesTable.status, 'active'),
+        isNull(branchesTable.archived_at),
+        eq(customersTable.status, 'active'),
+        sql`${stockBalancesTable.on_hand} - ${stockBalancesTable.reserved} > 0`,
+      ),
+    )
+    .orderBy(asc(d.created_at))
+    .limit(limit);
+}
+
+/**
+ * Marks these requests answered and returns the ones **this call** claimed.
+ * The send follows the claim, so two sweeps that overlap never tell the same
+ * person twice.
+ */
+export async function claimNotified(ids: number[], at: Date): Promise<number[]> {
+  if (ids.length === 0) return [];
+  const rows = await db
+    .update(d)
+    .set({ notified_at: at })
+    .where(and(inArray(d.id, ids), isNull(d.notified_at)))
+    .returning({ id: d.id });
+  return rows.map((r) => r.id);
 }

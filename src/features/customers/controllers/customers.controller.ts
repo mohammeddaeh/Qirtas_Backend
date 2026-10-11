@@ -168,12 +168,6 @@ export async function resendVerification(req: Request, res: Response): Promise<v
   ok(res, null, 'Verification code sent');
 }
 
-export async function sendPasswordReset(req: Request, res: Response): Promise<void> {
-  const { id } = req.params as unknown as { id: number };
-  await customersService.sendPasswordReset(staffActor(req), id, originOf(req));
-  ok(res, null, 'Password reset code sent');
-}
-
 export async function listActivity(req: Request, res: Response): Promise<void> {
   const { id } = req.params as unknown as { id: number };
   const query = req.query as unknown as { page: number; limit: number };

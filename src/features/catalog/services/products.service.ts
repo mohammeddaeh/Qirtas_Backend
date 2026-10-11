@@ -344,6 +344,8 @@ export async function listProducts(
     status: filter.status,
     kind: filter.kind,
     archived: filter.archived ?? false,
+    sortBy: filter.sort_by,
+    sortDir: filter.sort_dir,
   });
   return paginated(await listItems(rows, tree), total, params);
 }

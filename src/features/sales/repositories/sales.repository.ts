@@ -2,6 +2,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, lt, sql } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import { branchesTable } from '../../identity/schemas/branches.schema.js';
 import { usersTable } from '../../identity/schemas/users.schema.js';
+import { stationsTable } from '../../identity/schemas/stations.schema.js';
 import { customersTable } from '../../customers/schemas/customers.schema.js';
 import { userRoleAssignmentsTable } from '../../identity/schemas/user-role-assignments.schema.js';
 import {
@@ -52,6 +53,23 @@ export async function findUserName(userId: number): Promise<string | null> {
     .where(eq(usersTable.id, userId));
   const row = rows[0];
   return row ? `${row.first} ${row.last}`.trim() : null;
+}
+
+/** A branch's computers — live ones, and revoked ones that still took money. */
+export async function findBranchStations(branchId: number): Promise<{ id: number; name: string; revoked: boolean }[]> {
+  const rows = await db
+    .select({ id: stationsTable.id, name: stationsTable.name, revoked_at: stationsTable.revoked_at })
+    .from(stationsTable)
+    .where(eq(stationsTable.branch_id, branchId))
+    .orderBy(asc(stationsTable.name));
+  return rows.map((r) => ({ id: r.id, name: r.name, revoked: r.revoked_at !== null }));
+}
+
+/** A station's name, revoked or not — the invoice keeps saying where it was paid. */
+export async function findStationName(stationId: number | null): Promise<string | null> {
+  if (stationId === null) return null;
+  const [row] = await db.select({ name: stationsTable.name }).from(stationsTable).where(eq(stationsTable.id, stationId));
+  return row?.name ?? null;
 }
 
 export async function findSaleById(id: number, exec: Exec = db): Promise<SaleRow | undefined> {
@@ -112,15 +130,23 @@ export async function findSales(
     /** يومٌ كامل بتوقيت الخادم، على وقت الإنشاء. */
     from?: Date;
     to?: Date;
+    sortBy?: 'created_at' | 'total' | 'number';
+    sortDir?: 'asc' | 'desc';
+    stationId?: number;
   },
   limit: number,
   offset: number,
 ): Promise<{ rows: SaleRow[]; total: number }> {
+  const dir = filters.sortDir === 'asc' ? asc : desc;
+  const sortColumn = { created_at: salesTable.created_at, total: salesTable.total_syp, number: salesTable.number }[
+    filters.sortBy ?? 'created_at'
+  ];
   const clauses = [];
   if (filters.branchId !== undefined) clauses.push(eq(salesTable.branch_id, filters.branchId));
   if (filters.cashierId !== undefined)
     clauses.push(eq(salesTable.cashier_user_id, filters.cashierId));
   if (filters.status !== undefined) clauses.push(eq(salesTable.status, filters.status));
+  if (filters.stationId !== undefined) clauses.push(eq(salesTable.station_id, filters.stationId));
   if (filters.search !== undefined) {
     const term = `%${filters.search}%`;
     clauses.push(
@@ -136,7 +162,7 @@ export async function findSales(
       .select()
       .from(salesTable)
       .where(where)
-      .orderBy(desc(salesTable.created_at), desc(salesTable.id))
+      .orderBy(dir(sortColumn), dir(salesTable.id))
       .limit(limit)
       .offset(offset),
     db

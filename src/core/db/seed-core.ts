@@ -388,6 +388,26 @@ const PERMISSIONS: SeedPermission[] = [
     display: { ar: 'سياسات التسعير وسعر الصرف', en: 'Pricing Policies & Exchange Rate' },
   },
   {
+    // محطات الحاسوب (docs/reference/stations.md): من يدخل من حاسوب المحل،
+    // ومن يسجّل الحواسيب ويلغيها.
+    key: 'stations.sign_in',
+    module: 'stations',
+    is_sensitive: false,
+    display: { ar: 'الدخول من محطة حاسوب', en: 'Sign In at a Computer Station' },
+  },
+  {
+    key: 'stations.phone_sign_in',
+    module: 'stations',
+    is_sensitive: false,
+    display: { ar: 'الدخول من الهاتف', en: 'Sign In from a Phone' },
+  },
+  {
+    key: 'stations.manage',
+    module: 'stations',
+    is_sensitive: true,
+    display: { ar: 'إدارة محطات الحاسوب', en: 'Manage Computer Stations' },
+  },
+  {
     // ثلاثة مفاتيح: من يبيع ليس من يقرأ التقارير، ومن يضع السقوف ليس أيّهما.
     key: 'sales.sell',
     module: 'sales',
@@ -488,6 +508,7 @@ const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
   documents: { ar: 'الفواتير والملصقات', en: 'Receipts & Labels' },
   promotions: { ar: 'العروض', en: 'Promotions' },
   sales: { ar: 'المبيعات ونقطة البيع', en: 'Sales & Till' },
+  stations: { ar: 'محطات الحاسوب', en: 'Computer Stations' },
   barcodes: { ar: 'الباركود', en: 'Barcodes' },
   suppliers: { ar: 'الموردون', en: 'Suppliers' },
 };
@@ -657,6 +678,8 @@ const ROLES: SeedRole[] = [
       'sales.view',
       'sales.refund',
       'dashboard.view',
+      // يعمل على حاسوب الفرع (الصندوق والطباعة والجداول).
+      'stations.sign_in',
     ],
   },
   {
@@ -697,7 +720,8 @@ const ROLES: SeedRole[] = [
     category: 'operational',
     level: 20,
     is_system_default: true,
-    permissionKeys: ['printing.queue.view', 'printing.status.update', 'catalog.view'],
+    // محطة الطباعة حاسوبٌ أصلاً (9-ط-3).
+    permissionKeys: ['printing.queue.view', 'printing.status.update', 'catalog.view', 'stations.sign_in'],
   },
   {
     name: 'موظف إنتاج تخصيص',
@@ -735,6 +759,8 @@ const ROLES: SeedRole[] = [
       'sales.sell',
       'sales.view',
       'promotions.view',
+      // الصندوق على حاسوب الفرع.
+      'stations.sign_in',
     ],
   },
   {

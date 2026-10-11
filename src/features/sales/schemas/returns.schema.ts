@@ -72,6 +72,11 @@ export const saleReturnsTable = pgTable(
     cashier_user_id: integer('cashier_user_id')
       .notNull()
       .references(() => usersTable.id, { onDelete: 'restrict' }),
+    /**
+     * The registered computer the refund was made at (docs/reference/stations.md) — `null` from a
+     * phone or an unregistered computer. No FK: a station row outlives nothing it stamped.
+     */
+    station_id: integer('station_id'),
 
     refund_method: refundMethodEnum('refund_method').notNull(),
     total_syp: numeric('total_syp', { precision: 14, scale: 2 }).notNull(),

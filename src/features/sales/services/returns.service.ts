@@ -239,6 +239,8 @@ export interface WireReturn {
   approved_by: number | null;
   reason: string | null;
   reason_code: string | null;
+  /** The registered computer the money went out at (docs/reference/stations.md). */
+  station_name: string | null;
   created_at: string;
   lines: {
     sale_line_id: number;
@@ -259,8 +261,12 @@ export interface WireReturn {
 export async function getReturn(id: number): Promise<WireReturn> {
   const row = await returnsRepo.findReturnById(id);
   if (!row) throw new NotFoundError('Return not found');
-  const lines = await returnsRepo.findReturnLines(id);
+  const [lines, stationName] = await Promise.all([
+    returnsRepo.findReturnLines(id),
+    repo.findStationName(row.station_id),
+  ]);
   return {
+    station_name: stationName,
     id: row.id,
     number: row.number,
     branch_id: row.branch_id,
@@ -437,6 +443,7 @@ export async function createReturn(
       sequence,
       customer_id: sale.customer_id,
       cashier_user_id: actor.userId,
+      station_id: actor.stationId ?? null,
       refund_method: input.refund_method,
       total_syp: String(totalSyp),
       beyond_window: !inWindow,
@@ -514,6 +521,7 @@ export async function createReturn(
         docId: row.id,
         saleId: input.sale_id,
         userId: actor.userId,
+        stationId: actor.stationId ?? null,
         reason: input.reason_code ?? null,
         // Free text (up to 300) is a note; `reason` holds codes only (M-2).
         note: input.reason?.trim() || null,
@@ -533,6 +541,7 @@ export async function createReturn(
         docId: row.id,
         saleId: input.sale_id,
         userId: actor.userId,
+        stationId: actor.stationId ?? null,
         note: frozen === null ? 'cost_estimated_now' : null,
       };
       entries.push({ ...common, type: 'cogs_reversal', amountSyp: value });
@@ -694,7 +703,13 @@ export async function setSettings(
 }
 
 export async function listReturns(
-  filters: { branchId?: number; saleId?: number },
+  filters: {
+    branchId?: number;
+    saleId?: number;
+    refundMethod?: 'cash' | 'customer_credit';
+    sortBy?: 'created_at' | 'total';
+    sortDir?: 'asc' | 'desc';
+  },
   limit: number,
   offset: number,
 ): Promise<{ items: WireReturn[]; total: number }> {

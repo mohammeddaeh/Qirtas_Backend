@@ -74,7 +74,13 @@ export async function listOrders(req: Request, res: Response): Promise<void> {
   const query = req.query as unknown as OrdersQuery;
   const params = toPaginationParams(query);
   const { items, total } = await service.listOrders(
-    { branchId: query.branch_id, customerId: query.customer_id, status: query.status },
+    {
+      branchId: query.branch_id,
+      customerId: query.customer_id,
+      status: query.status,
+      sortBy: query.sort_by,
+      sortDir: query.sort_dir,
+    },
     params.limit,
     (params.page - 1) * params.limit,
   );

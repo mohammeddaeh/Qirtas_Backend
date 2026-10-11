@@ -88,7 +88,9 @@ export type SessionRevokeReason =
   /** The account's email changed; the other sessions ended with it. */
   | 'email_changed'
   /** An administrator acted on the account (today: a second-factor reset). */
-  | 'admin_reset';
+  | 'admin_reset'
+  /** The computer it was opened at was revoked as a station (docs/reference/stations.md). */
+  | 'station_revoked';
 
 export type SessionLookup =
   | { ok: true; session: SessionRow }

@@ -31,6 +31,8 @@ import type {
   PrintPaymentStatus,
 } from '../schemas/print-jobs.schema.js';
 import { assertPrintableSpec, priceJob, type WireQuote } from './printing.service.js';
+import { resolveStartPrinter } from './print-printers.service.js';
+import * as printersRepo from '../repositories/print-printers.repository.js';
 import {
   canSeeCost,
   consumeForJob,
@@ -145,6 +147,9 @@ export interface WirePrintJob {
   created_at: string;
   submitted_at: string | null;
   production_started_at: string | null;
+  /** Where it is printed and who started it (9-ط-2) — `null` before «ابدأ». */
+  printer: { id: number; name: string } | null;
+  started_by: { id: number; name: string } | null;
   ready_at: string | null;
   picked_up_at: string | null;
 }
@@ -160,12 +165,14 @@ function wireFile(file: JobFile): WirePrintJobFile {
 }
 
 async function wireJob(row: PrintJobRow): Promise<WirePrintJob> {
-  const [files, links, branchName, customer, options] = await Promise.all([
+  const [files, links, branchName, customer, options, printerName, starterName] = await Promise.all([
     repo.findJobFiles(row.id),
     repo.findJobLinks(row.id),
     repo.findBranchName(row.branch_id),
     row.customer_id === null ? Promise.resolve(undefined) : repo.findCustomer(row.customer_id),
     printingRepo.findOptions(),
+    row.printer_id === null ? Promise.resolve(undefined) : printersRepo.findNames([row.printer_id]).then((m) => m.get(row.printer_id!)),
+    row.started_by === null ? Promise.resolve(undefined) : repo.findUserName(row.started_by),
   ]);
   const byId = new Map(options.map((o) => [o.id, o]));
   const option = (id: number): WireSpecOption | null => {
@@ -222,6 +229,8 @@ async function wireJob(row: PrintJobRow): Promise<WirePrintJob> {
     created_at: row.created_at.toISOString(),
     submitted_at: row.submitted_at?.toISOString() ?? null,
     production_started_at: row.production_started_at?.toISOString() ?? null,
+    printer: row.printer_id === null ? null : { id: row.printer_id, name: printerName ?? '—' },
+    started_by: row.started_by === null ? null : { id: row.started_by, name: starterName ?? '—' },
     ready_at: row.ready_at?.toISOString() ?? null,
     picked_up_at: row.picked_up_at?.toISOString() ?? null,
   };
@@ -655,6 +664,14 @@ export interface WireQueueCounts {
   ready: number;
   /** What the branch has to act on now: price it, print it, finish it. */
   waiting: number;
+  /**
+   * «للتنفيذ» split by printer (9-ط-2) — every active printer of the branch,
+   * even at zero, so the chips do not come and go; a printer-less lane only
+   * when something prints on none. Empty over several branches.
+   */
+  lanes: { printer_id: number | null; name: string | null; in_production: number }[];
+  /** Being printed and started by the reader — «عملي». */
+  mine: number;
 }
 
 /**
@@ -677,7 +694,23 @@ export async function queueCounts(
   await sweepOverdue();
   const m = await repo.countByStatus(branchIds, filters);
   const n = (s: PrintJobStatus): number => m.get(s) ?? 0;
+  let lanes: WireQueueCounts['lanes'] = [];
+  let mine = 0;
+  if (branchId !== undefined) {
+    const [counted, printers] = await Promise.all([
+      repo.countLanes(branchId, actor.userId, filters),
+      printersRepo.findByBranch(branchId),
+    ]);
+    mine = counted.mine;
+    lanes = printers
+      .filter((p) => p.is_active || (counted.byPrinter.get(p.id) ?? 0) > 0)
+      .map((p) => ({ printer_id: p.id, name: p.name, in_production: counted.byPrinter.get(p.id) ?? 0 }));
+    const none = counted.byPrinter.get(null) ?? 0;
+    if (none > 0 && printers.length > 0) lanes.push({ printer_id: null, name: null, in_production: none });
+  }
   return {
+    lanes,
+    mine,
     to_price: n('awaiting_quote'),
     awaiting_payment: n('awaiting_payment'),
     queued: n('queued'),
@@ -698,7 +731,7 @@ export async function listQueue(
   await requireScope(actor, QUEUE_VIEW_KEY, branchId);
   await sweepOverdue();
   const { rows, total } = await repo.findJobs(
-    { branchId, statuses, excludeDrafts: true, excludeCounter: true, q: filters.q, payment: filters.payment },
+    { branchId, statuses, excludeDrafts: true, excludeCounter: true, ...filters },
     limit,
     offset,
   );
@@ -802,9 +835,19 @@ export async function advanceJob(
   actor: RequestActorContext,
   jobId: number,
   to: StaffStage,
+  opts: { printerId?: number } = {},
 ): Promise<WireStaffPrintJob> {
   const row = await requireStaffJob(actor, STATUS_UPDATE_KEY, jobId);
   const now = new Date();
+  // Where it is printed (9-ط-2) — asked only when the branch has printers.
+  const printerId =
+    to === 'in_production'
+      ? await resolveStartPrinter(
+          row.branch_id,
+          (await printingRepo.findOptions()).find((o) => o.id === row.color_mode_id)?.code ?? null,
+          opts.printerId,
+        )
+      : null;
   await db.transaction(async (tx) => {
     const locked = await repo.lockJob(tx, jobId);
     if (!locked || !canMove(locked.status, to)) {
@@ -840,6 +883,9 @@ export async function advanceJob(
         ? {
             production_started_at: now,
             consumed_at: now,
+            printer_id: printerId,
+            started_by: actor.userId,
+            started_station_id: actor.stationId ?? null,
             // A partial ready hand-over: the shelf copies' value plus the rest's paper.
             materials_cost_syp: String((materialsCost ?? 0) + (num(locked.ready_value_syp) ?? 0)),
           }
@@ -1029,9 +1075,13 @@ export interface WireRecordSummary {
   /** `shelf` — copies sold off the ready shelf. */
   by_source: { app: number; counter: number; shelf: number };
   by_state: { open: number; done: number; dropped: number };
-  /** Paid orders' totals and shelf sales — the money the record's prints brought. */
-  revenue_syp: number;
-  /** `null` — the reader may not see costs. */
+  /**
+   * Paid orders' totals and shelf sales — **`null` without
+   * `reports.financial.view`** (2026-10-07, user: money totals belong to the
+   * reports, not to every screen that lists prints).
+   */
+  revenue_syp: number | null;
+  /** `null` — the reader may not see costs, or not the reports. */
   materials_syp: number | null;
   pages_printed: number;
   /** From arrival to ready, app and reprint orders — `null` with none. */
@@ -1042,14 +1092,17 @@ export async function recordSummary(actor: RequestActorContext, q: RecordQuery):
   const filters = await recordFilters(actor, q);
   const r = await repo.recordSummary(filters);
   const seeCosts = await Promise.all(filters.branchIds.map((id) => canSeeCost(actor.userId, id)));
+  const seeMoney =
+    filters.branchIds.length > 0 &&
+    (await Promise.all(filters.branchIds.map((id) => holdsPermissionAt(actor.userId, 'reports.financial.view', id)))).every(Boolean);
   const n = (v: string | number | null | undefined) => Number(v ?? 0);
   return {
     total: n(r.total) + n(r.shelf),
     by_source: { app: n(r.app), counter: n(r.counter), shelf: n(r.shelf) },
     // A shelf sale is sold the moment it is settled — always «done».
     by_state: { open: n(r.open), done: n(r.done) + n(r.shelf), dropped: n(r.dropped) },
-    revenue_syp: n(r.revenue) + n(r.shelf_revenue),
-    materials_syp: seeCosts.length > 0 && seeCosts.every(Boolean) ? n(r.materials) : null,
+    revenue_syp: seeMoney ? n(r.revenue) + n(r.shelf_revenue) : null,
+    materials_syp: seeMoney && seeCosts.length > 0 && seeCosts.every(Boolean) ? n(r.materials) : null,
     pages_printed: n(r.pages),
     avg_hours_to_ready: r.avg_hours === null ? null : Math.round(n(r.avg_hours) * 10) / 10,
   };
@@ -1287,7 +1340,7 @@ export async function deferPayment(
     { status: row.status, payment_status: row.payment_status },
     { status: 'queued', payment_status: 'deferred', reason: reason.trim() },
   );
-  emitPrintJobEvent('deferred', row);
+  emitPrintJobEvent('deferred', row, actor.userId);
   return staffWireFor(actor, jobId);
 }
 

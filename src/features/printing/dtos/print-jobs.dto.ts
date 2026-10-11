@@ -95,7 +95,15 @@ const queueSearch = z.string().trim().min(2).max(80).optional();
 const queuePayment = z.enum(PRINT_PAYMENT_STATUSES).optional();
 
 export const queueQuerySchema = paginationQuerySchema
-  .extend({ branch_id: id, status: statusList, q: queueSearch, payment: queuePayment })
+  .extend({
+    branch_id: id,
+    status: statusList,
+    q: queueSearch,
+    payment: queuePayment,
+    /** One printer's lane, and «عملي» (9-ط-2). */
+    printer_id: id.optional(),
+    mine: z.enum(['true']).optional(),
+  })
   .strict();
 
 /** What the customer brings to the till — code, number, barcode, phone or name. */
@@ -137,7 +145,29 @@ export const quoteJobBodySchema = z
   })
   .strict();
 
-export const stageBodySchema = z.object({ status: z.enum(STAFF_STAGES) }).strict();
+/** `printer_id` with «ابدأ الطباعة» — required when the branch has printers (9-ط-2). */
+export const stageBodySchema = z.object({ status: z.enum(STAFF_STAGES), printer_id: id.optional() }).strict();
+
+export const printersQuerySchema = z.object({ branch_id: id }).strict();
+export const printerParamsSchema = z.object({ id }).strict();
+const printerName = z.string().trim().min(1).max(80);
+export const createPrinterBodySchema = z
+  .object({
+    branch_id: id,
+    name: printerName,
+    supports_color: z.boolean().optional(),
+    sort_order: z.number().int().min(0).max(999).optional(),
+  })
+  .strict();
+export const updatePrinterBodySchema = z
+  .object({
+    name: printerName.optional(),
+    supports_color: z.boolean().optional(),
+    is_active: z.boolean().optional(),
+    sort_order: z.number().int().min(0).max(999).optional(),
+  })
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, { message: 'Nothing to update' });
 
 export type CreateJobBody = z.infer<typeof createJobBodySchema>;
 export type UpdateJobBody = z.infer<typeof updateJobBodySchema>;
@@ -148,6 +178,8 @@ export type StaffCancelBody = z.infer<typeof staffCancelBodySchema>;
 export type MyJobsQuery = z.infer<typeof myJobsQuerySchema>;
 export type QueueQuery = z.infer<typeof queueQuerySchema>;
 export type QueueCountsQuery = z.infer<typeof queueCountsQuerySchema>;
+export type CreatePrinterBody = z.infer<typeof createPrinterBodySchema>;
+export type UpdatePrinterBody = z.infer<typeof updatePrinterBodySchema>;
 export type PickupLookupQuery = z.infer<typeof pickupLookupQuerySchema>;
 export type QuoteJobBody = z.infer<typeof quoteJobBodySchema>;
 export type StageBody = z.infer<typeof stageBodySchema>;
