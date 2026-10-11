@@ -115,6 +115,19 @@ export type TransferRow = Record<string, TransferCell>;
  */
 export interface TransferContext {
   userId: number;
+  /** The registered computer the request came from — stamped on the run log. */
+  stationId?: number | null;
+  /**
+   * The reader's language — the header row of an exported file and a template
+   * is written in it (the importer reads either language back, and the key).
+   * Absent = the wire keys, as before.
+   */
+  lang?: 'ar' | 'en';
+}
+
+/** The header a person reads: the label in [lang], or the wire key when no language is known. */
+export function columnHeader(column: ColumnDef, lang: 'ar' | 'en' | undefined): string {
+  return lang ? column.label[lang] : column.key;
 }
 
 /** Whatever the resource's `filtersSchema` parsed out of the query string. */
@@ -254,6 +267,14 @@ export interface TransferResourceDefinition {
    * carry labels, placeholders or the two languages every label needs.
    */
   filters?: TransferFilterDef[];
+
+  /**
+   * Options for `select` filters that come from data, not code — the branches
+   * that exist today, say. Called when the resource list is served, keyed by
+   * filter key; a filter not named here keeps its declared options. A picker
+   * of names beats a text box that needs the reader to know a code.
+   */
+  filterOptions?(ctx: TransferContext): Promise<Record<string, Array<{ value: string; label: LocalizedLabel }>>>;
 
   /**
    * Refuses the caller by **throwing** (`ForbiddenError`). Runs first, before

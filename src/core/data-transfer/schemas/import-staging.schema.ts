@@ -48,6 +48,9 @@ export const importStagingTable = pgTable(
 
     row_count: integer('row_count').notNull(),
 
+    /** The uploaded file's name, carried to the run log at commit. Null when the rows came back from the app's grid. */
+    file_name: varchar('file_name', { length: 200 }),
+
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 
     /**

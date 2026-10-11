@@ -443,6 +443,69 @@ export async function setCentralPrice(
   return getProductPricing(actor, variant.product_id, null);
 }
 
+/** One row of a central-price import (`prices.transfer.ts`) — already resolved and checked. */
+export interface CentralPriceImport {
+  variant_id: number;
+  amount: number;
+  /** `null` = keep the stored currency, or the product's rule for a first price. */
+  currency: PricingCurrency | null;
+  wholesale_amount: number | null;
+  wholesale_min_qty: number | null;
+}
+
+/**
+ * **Central prices from a spreadsheet** (2026-10-11, app_structure.md slice د).
+ *
+ * Each row goes the way [setCentralPrice] goes — the same upsert, the same
+ * history lines, the same audit — minus the read-back of a pricing screen
+ * nobody is looking at. A row identical to what is stored is **skipped**, so
+ * exporting the price list, changing twenty prices and importing it back
+ * writes twenty rows, not two thousand, and the history says only what moved.
+ */
+export async function importCentralPrices(
+  actor: RequestActorContext,
+  rows: CentralPriceImport[],
+): Promise<{ inserted: number; updated: number; skipped: number }> {
+  const ctx = await loadContext();
+  const stored = new Map(
+    (await pricingRepository.findVariantPrices(rows.map((r) => r.variant_id))).map((p) => [p.variant_id, p]),
+  );
+  let inserted = 0;
+  let updated = 0;
+  let skipped = 0;
+  for (const row of rows) {
+    const before = stored.get(row.variant_id);
+    const currency =
+      row.currency ??
+      (before?.currency as PricingCurrency | undefined) ??
+      rulesOf(ctx, (await requireVariantAndProduct(row.variant_id)).product).currency;
+    const next = {
+      variant_id: row.variant_id,
+      amount: row.amount,
+      currency,
+      wholesale_amount: row.wholesale_amount,
+      wholesale_min_qty: row.wholesale_min_qty,
+    };
+    const history = centralHistory(row.variant_id, before, next);
+    if (history.length === 0) {
+      skipped += 1;
+      continue;
+    }
+    await pricingRepository.upsertVariantPrice(next, actor.userId);
+    await pricingRepository.insertHistory(history, actor.userId);
+    await recordAudit(
+      actor,
+      CATALOG_AUDIT.centralPriceSet,
+      catalogTarget.variant(row.variant_id),
+      before ? { amount: Number(before.amount), currency: before.currency } : null,
+      { amount: row.amount, currency, source: 'import' },
+    );
+    if (before) updated += 1;
+    else inserted += 1;
+  }
+  return { inserted, updated, skipped };
+}
+
 function centralHistory(
   variantId: number,
   before: pricingRepository.VariantPriceLike | undefined,

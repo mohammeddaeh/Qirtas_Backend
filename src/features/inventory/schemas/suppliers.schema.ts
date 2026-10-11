@@ -22,6 +22,12 @@ export const suppliersTable = pgTable(
     is_active: boolean('is_active').notNull().default(true),
     /** Archived: gone from every picker, still named on old invoices. */
     archived_at: timestamp('archived_at', { withTimezone: true }),
+    /**
+     * A supplier the system writes against itself — today only `opening_stock`
+     * («رصيد افتتاحي», the opening-balance receipts). Hidden from the supplier
+     * list so nobody receives real goods against it; still named on its receipts.
+     */
+    system_key: varchar('system_key', { length: 32 }).unique(),
     created_by_user_id: integer('created_by_user_id').references(() => usersTable.id, { onDelete: 'set null' }),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

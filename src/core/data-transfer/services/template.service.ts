@@ -37,6 +37,7 @@ const CONTENT_TYPES: Record<TransferFormat, string> = {
 export async function planTemplate(
   resource: TransferResource,
   query: unknown,
+  lang?: 'ar' | 'en',
 ): Promise<TemplatePlan> {
   if (!resource.import) {
     throw new BusinessError(
@@ -78,10 +79,11 @@ export async function planTemplate(
             yield example;
           })(),
           `${resource.name}-template`,
+          lang,
         );
         return;
       }
-      sink.end(csvFromRows(columns, [example]));
+      sink.end(csvFromRows(columns, [example], lang));
     },
   };
 }

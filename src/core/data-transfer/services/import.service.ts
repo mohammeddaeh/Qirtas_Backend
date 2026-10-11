@@ -7,6 +7,7 @@ import { parseCsv, unguardFormula } from '../formats/csv.reader.js';
 import { parseXlsx } from '../formats/xlsx.reader.js';
 import { parseCell } from '../formats/cell.js';
 import { importStagingTable } from '../schemas/import-staging.schema.js';
+import { recordImportRun } from './runs.service.js';
 import {
   duplicateKey,
   isBlankKey,
@@ -111,13 +112,22 @@ function mapHeader(
   resource: TransferResource,
   header: string[],
 ): { columns: Array<ColumnDef | null> } {
-  const byKey = new Map(resource.columns.map((c) => [c.key, c]));
+  // The key and both labels: our own exports carry the label in the exporter's
+  // language (2026-10-11), and a file exported in Arabic must import in an
+  // English session — and an old file with wire keys must still import.
+  const fold = (v: string) => v.trim().toLowerCase().replace(/\s+/g, ' ');
+  const byKey = new Map<string, ColumnDef>();
+  for (const c of resource.columns) {
+    byKey.set(fold(c.key), c);
+    byKey.set(fold(c.label.ar), c);
+    byKey.set(fold(c.label.en), c);
+  }
 
   const unknown: string[] = [];
   const columns = header.map((raw) => {
     const key = raw.trim();
     if (key === '') return null;
-    const column = byKey.get(key);
+    const column = byKey.get(fold(key));
     if (!column) {
       unknown.push(key);
       return null;
@@ -433,7 +443,7 @@ export async function validateImport(
   }
 
   const matrix = await toMatrix(file.buffer, format);
-  return validateMatrix(resource, ctx, matrix);
+  return validateMatrix(resource, ctx, matrix, file.originalname);
 }
 
 /**
@@ -454,6 +464,8 @@ export function validateEditedRows(
   ctx: TransferContext,
   columns: string[],
   rows: Array<Record<string, unknown>>,
+  /** The file the grid was loaded from, when the app still knows it — for the run log only. */
+  fileName: string | null = null,
 ): Promise<ImportValidateReport> {
   requireImportable(resource);
 
@@ -482,7 +494,7 @@ export function validateEditedRows(
     ),
   ];
 
-  return validateMatrix(resource, ctx, matrix);
+  return validateMatrix(resource, ctx, matrix, fileName);
 }
 
 /** The single implementation both entry points share. */
@@ -490,6 +502,7 @@ async function validateMatrix(
   resource: TransferResource,
   ctx: TransferContext,
   matrix: string[][],
+  fileName: string | null,
 ): Promise<ImportValidateReport> {
   const analysis = analyzeImport(resource, matrix, await rowSchemaFor(resource, ctx));
 
@@ -519,7 +532,7 @@ async function validateMatrix(
   // A token is issued only when something can actually be written. Handing one
   // back for zero valid rows invites a commit that reports "inserted: 0" as a
   // success.
-  const token = accepted.length > 0 ? await stageRows(resource, ctx, accepted) : null;
+  const token = accepted.length > 0 ? await stageRows(resource, ctx, accepted, fileName) : null;
 
   return {
     token,
@@ -554,6 +567,7 @@ async function stageRows(
   resource: TransferResource,
   ctx: TransferContext,
   rows: RawRow[],
+  fileName: string | null,
 ): Promise<string> {
   const token = `imp_${randomBytes(16).toString('hex')}`;
   const expiresAt = new Date(Date.now() + TOKEN_TTL_SECONDS * 1000);
@@ -570,6 +584,7 @@ async function stageRows(
     resource: resource.name,
     rows,
     row_count: rows.length,
+    file_name: fileName?.slice(0, 200) ?? null,
     expires_at: expiresAt,
   });
 
@@ -654,7 +669,9 @@ export async function commitImport(
 
   try {
     const counts = await resource.import.commit(ctx, typedRows);
-    return { ...counts, failed };
+    const report = { ...counts, failed };
+    await recordImportRun(resource, ctx, record.file_name, report);
+    return report;
   } catch (err: unknown) {
     // A collision here is **expected**, not exceptional, and it has to read that
     // way. `findExisting` runs during validate, so between the review and this

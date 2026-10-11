@@ -154,10 +154,10 @@ async function buildPlan(
     async write(sink: Writable): Promise<void> {
       const rows = resource.readRows(ctx, filters);
       if (format === 'xlsx') {
-        await writeXlsx(sink, columns, rows, resource.name);
+        await writeXlsx(sink, columns, rows, resource.name, ctx.lang);
         return;
       }
-      for await (const chunk of csvChunks(columns, rows)) {
+      for await (const chunk of csvChunks(columns, rows, ctx.lang)) {
         // Respect backpressure: without the drain wait, a fast query into a
         // slow connection buffers the entire export in the socket's write
         // queue — the memory the streaming design exists to avoid.

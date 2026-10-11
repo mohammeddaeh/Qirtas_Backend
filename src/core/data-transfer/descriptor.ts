@@ -54,7 +54,10 @@ export interface WireTransferResource {
   filters: WireTransferFilter[];
 }
 
-export function toWireResource(resource: TransferResource): WireTransferResource {
+export function toWireResource(
+  resource: TransferResource,
+  dynamicOptions: Record<string, Array<{ value: string; label: WireLabel }>> = {},
+): WireTransferResource {
   return {
     name: resource.name,
     label: resource.label,
@@ -79,7 +82,11 @@ export function toWireResource(resource: TransferResource): WireTransferResource
       label: f.label,
       type: f.type,
       ...(f.placeholder !== undefined ? { placeholder: f.placeholder } : {}),
-      ...(f.options !== undefined ? { options: f.options } : {}),
+      ...(dynamicOptions[f.key] !== undefined
+        ? { options: dynamicOptions[f.key] }
+        : f.options !== undefined
+          ? { options: f.options }
+          : {}),
     })),
   };
 }

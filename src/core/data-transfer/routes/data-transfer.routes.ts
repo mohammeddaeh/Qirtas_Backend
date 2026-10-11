@@ -35,6 +35,9 @@ const resourceParamsSchema = z.object({
 
 dataTransferRouter.get('/resources', requireApprovedStaff, asyncHandler(controller.listResources));
 
+// Before `/:resource/...` so «runs» is never read as a resource name.
+dataTransferRouter.get('/runs', requireApprovedStaff, asyncHandler(controller.listTransferRuns));
+
 dataTransferRouter.get(
   '/:resource/export',
   requireApprovedStaff,

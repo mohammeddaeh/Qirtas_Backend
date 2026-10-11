@@ -13,6 +13,8 @@ import {
   validateImport,
 } from '../services/import.service.js';
 import { requireUploadedFile } from '../middleware/upload.js';
+import { listRuns, recordExportRun } from '../services/runs.service.js';
+import { paginated, paginationQuerySchema, toPaginationParams } from '../../pagination/pagination.js';
 
 /**
  * `GET /api/v1/data-transfer/resources` — the descriptor the Flutter module
@@ -41,7 +43,7 @@ export async function listResources(req: Request, res: Response): Promise<void> 
     listTransferResources().map(async (resource) => {
       if (!(await allowed(resource, ctx, 'export'))) return null;
 
-      const wire = toWireResource(resource);
+      const wire = toWireResource(resource, (await resource.filterOptions?.(ctx)) ?? {});
       if (wire.supports_import && !(await allowed(resource, ctx, 'import'))) {
         return { ...wire, supports_import: false, import_formats: [] };
       }
@@ -96,9 +98,10 @@ export async function exportResource(req: Request, res: Response): Promise<void>
   const { resource: resourceName } = req.params as unknown as { resource: string };
 
   const resource = getTransferResource(resourceName);
-  await resource.authorize?.({ userId }, 'export');
+  const ctx = { userId, stationId: req.session?.stationId ?? null, lang: req.lang };
+  await resource.authorize?.(ctx, 'export');
 
-  const plan = await planExport(resource, { userId }, req.query);
+  const plan = await planExport(resource, ctx, req.query);
 
   res.status(200);
   res.setHeader('Content-Type', plan.contentType);
@@ -113,6 +116,7 @@ export async function exportResource(req: Request, res: Response): Promise<void>
   res.setHeader('Cache-Control', 'no-store');
 
   await plan.write(res);
+  await recordExportRun(resource, ctx, plan);
 }
 
 /**
@@ -128,7 +132,7 @@ export async function downloadTemplate(req: Request, res: Response): Promise<voi
   // also leaks the column list of a resource the caller may not import.
   await resource.authorize?.({ userId }, 'import');
 
-  const plan = await planTemplate(resource, req.query);
+  const plan = await planTemplate(resource, req.query, req.lang);
 
   res.status(200);
   res.setHeader('Content-Type', plan.contentType);
@@ -155,6 +159,7 @@ export async function importResource(req: Request, res: Response): Promise<void>
   const userId = requireActorId(req);
   const { resource: resourceName } = req.params as unknown as { resource: string };
   const mode = (req.query['mode'] as string | undefined) ?? 'validate';
+  const ctx = { userId, stationId: req.session?.stationId ?? null };
 
   const resource = getTransferResource(resourceName);
   // Before either phase. Checking only at commit would still let an
@@ -168,7 +173,7 @@ export async function importResource(req: Request, res: Response): Promise<void>
     // the identical rules — a separate "re-validate" endpoint would be a second
     // copy of them, and the copies would drift until the grid accepted rows the
     // upload refused.
-    const body = req.body as { columns?: unknown; rows?: unknown } | undefined;
+    const body = req.body as { columns?: unknown; rows?: unknown; file_name?: unknown } | undefined;
 
     if (Array.isArray(body?.rows)) {
       if (!Array.isArray(body.columns) || !body.columns.every((c) => typeof c === 'string')) {
@@ -184,6 +189,7 @@ export async function importResource(req: Request, res: Response): Promise<void>
           { userId },
           body.columns as string[],
           body.rows as Array<Record<string, unknown>>,
+          typeof body.file_name === 'string' ? body.file_name : null,
         ),
       );
       return;
@@ -201,9 +207,33 @@ export async function importResource(req: Request, res: Response): Promise<void>
     if (typeof token !== 'string' || token.trim() === '') {
       throw new ValidationError({ token: ['A validate token is required'] });
     }
-    ok(res, await commitImport(resource, { userId }, token.trim()));
+    ok(res, await commitImport(resource, ctx, token.trim()));
     return;
   }
 
   throw new ValidationError({ mode: ['Expected "validate" or "commit"'] });
+}
+
+/**
+ * `GET /api/v1/data-transfer/runs` — the run log (app_structure.md slice ج).
+ *
+ * Scoped by each resource's own export guard: a reader sees the runs of the
+ * data they could have moved themselves, no more. `?resource=` narrows it.
+ */
+export async function listTransferRuns(req: Request, res: Response): Promise<void> {
+  const userId = requireActorId(req);
+  const ctx = { userId };
+  const params = toPaginationParams(paginationQuerySchema.parse(req.query));
+  const only = typeof req.query['resource'] === 'string' ? req.query['resource'] : null;
+
+  const visible = (
+    await Promise.all(
+      listTransferResources().map(async (resource) =>
+        (await allowed(resource, ctx, 'export')) ? resource.name : null,
+      ),
+    )
+  ).filter((name): name is string => name !== null && (only === null || name === only));
+
+  const { items, total } = await listRuns(visible, params);
+  ok(res, paginated(items, total, params));
 }

@@ -48,6 +48,8 @@ import { auditLogRouter } from './features/identity/routes/audit-log.routes.js';
 import { languagesRouter } from './features/localization/routes/languages.routes.js';
 import { branchesTransferResource } from './features/identity/branches.transfer.js';
 import { productsTransferResource } from './features/catalog/products.transfer.js';
+import { openingStockTransferResource } from './features/inventory/opening-stock.transfer.js';
+import { pricesTransferResource } from './features/catalog/prices.transfer.js';
 import { configureMedia } from './core/media/composition.js';
 import { filesRouter } from './core/media/routes/files.routes.js';
 import { catalogRouter } from './features/catalog/routes/catalog.routes.js';
@@ -264,7 +266,7 @@ export function buildApp(): Express {
   // carry `requireAuth` and nothing more, so without one an import would bypass
   // the permission that resource's own POST route enforces — see
   // `features/identity/branches.transfer.ts`.
-  configureDataTransfer([branchesTransferResource, productsTransferResource]);
+  configureDataTransfer([branchesTransferResource, productsTransferResource, openingStockTransferResource, pricesTransferResource]);
 
   app.use(helmet());
   app.use(cors(corsOptions()));

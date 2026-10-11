@@ -2,6 +2,7 @@ import ExcelJS from 'exceljs';
 import type { Writable } from 'node:stream';
 import { guardFormula } from './csv.writer.js';
 import type { ColumnDef, TransferRow } from '../types.js';
+import { columnHeader } from '../types.js';
 
 /**
  * XLSX via exceljs' **streaming** workbook writer.
@@ -53,6 +54,7 @@ export async function writeXlsx(
   columns: ColumnDef[],
   rows: AsyncIterable<TransferRow>,
   sheetName = 'Data',
+  lang?: 'ar' | 'en',
 ): Promise<void> {
   const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
     stream: sink,
@@ -72,10 +74,9 @@ export async function writeXlsx(
   });
 
   sheet.columns = columns.map((c) => ({
-    // The wire `key` again, for the same reason as CSV: the file round-trips,
-    // and a header that follows the caller's language makes a file exported in
-    // one session unimportable in another.
-    header: c.key,
+    // The label in the reader's language, as in CSV — the importer reads
+    // either language and the key back.
+    header: columnHeader(c, lang),
     key: c.key,
     width: DEFAULT_COLUMN_WIDTH,
     style:

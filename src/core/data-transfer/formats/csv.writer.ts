@@ -1,5 +1,6 @@
 import { formatCell } from './cell.js';
 import type { ColumnDef, TransferRow } from '../types.js';
+import { columnHeader } from '../types.js';
 
 /**
  * RFC 4180 CSV, written for Excel first because that is what the file is opened
@@ -55,12 +56,12 @@ export function csvEscape(text: string): string {
   return text;
 }
 
-function headerLine(columns: ColumnDef[]): string {
-  // The header carries the wire `key`, never the localized label. The file is
-  // round-tripped — exported, edited, re-imported — and a header that changes
-  // with the caller's `Accept-Language` makes a file exported in Arabic
-  // unimportable by an English session. Labels are the client's job to display.
-  return columns.map((c) => csvEscape(c.key)).join(',') + CRLF;
+function headerLine(columns: ColumnDef[], lang?: 'ar' | 'en'): string {
+  // The header is the label in the reader's language (2026-10-11): a shop
+  // worker opening the file in Excel reads «الكمية», not `qty`. The round trip
+  // still holds because the importer accepts the key **and both labels**
+  // (`mapHeader`), so a file exported in Arabic imports in an English session.
+  return columns.map((c) => csvEscape(columnHeader(c, lang))).join(',') + CRLF;
 }
 
 function bodyLine(columns: ColumnDef[], row: TransferRow): string {
@@ -84,14 +85,15 @@ function bodyLine(columns: ColumnDef[], row: TransferRow): string {
 export async function* csvChunks(
   columns: ColumnDef[],
   rows: AsyncIterable<TransferRow>,
+  lang?: 'ar' | 'en',
 ): AsyncGenerator<string> {
-  yield BOM + headerLine(columns);
+  yield BOM + headerLine(columns, lang);
   for await (const row of rows) {
     yield bodyLine(columns, row);
   }
 }
 
 /** Whole-file variant for small, known-size output — import templates and tests. */
-export function csvFromRows(columns: ColumnDef[], rows: TransferRow[]): string {
-  return BOM + headerLine(columns) + rows.map((r) => bodyLine(columns, r)).join('');
+export function csvFromRows(columns: ColumnDef[], rows: TransferRow[], lang?: 'ar' | 'en'): string {
+  return BOM + headerLine(columns, lang) + rows.map((r) => bodyLine(columns, r)).join('');
 }

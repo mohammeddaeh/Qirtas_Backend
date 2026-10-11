@@ -9,7 +9,11 @@ export function findMany(
   params: PaginationParams,
   filter: { search?: string; archived: boolean },
 ): Promise<{ rows: SupplierRow[]; total: number }> {
-  const conditions: SQL[] = [filter.archived ? isNotNull(suppliersTable.archived_at) : isNull(suppliersTable.archived_at)];
+  const conditions: SQL[] = [
+    filter.archived ? isNotNull(suppliersTable.archived_at) : isNull(suppliersTable.archived_at),
+    // System suppliers (the opening balance) are not for receiving real goods.
+    isNull(suppliersTable.system_key),
+  ];
   if (filter.search) conditions.push(ilike(suppliersTable.search_text, `%${filter.search}%`));
   return findManyPaginated<SupplierRow>(suppliersTable, params, {
     where: and(...conditions),

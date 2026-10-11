@@ -42,6 +42,7 @@ export * from '../../features/localization/schemas/translation-entries.schema.js
 // Staging for two-phase imports. Owned by core/data-transfer/ and shared by
 // every resource — see its own doc for why a table rather than a Map.
 export * from '../data-transfer/schemas/import-staging.schema.js';
+export * from '../data-transfer/schemas/transfer-runs.schema.js';
 
 // Shared rate-limit counters. The table exists in every database regardless of
 // `RATE_LIMIT_STORE` — an unused table costs nothing, and a migration that has
