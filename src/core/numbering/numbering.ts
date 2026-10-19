@@ -22,6 +22,7 @@ export const DOC_TYPES = [
   'count',
   'ready_copy',
   'pickup',
+  'shift',
 ] as const;
 export type DocType = (typeof DOC_TYPES)[number];
 
@@ -48,6 +49,7 @@ export const DEFAULT_FORMATS: Record<DocType, NumberingFormat> = {
   ready_copy: { prefix: 'J', date_format: 'none', digits: 4 },
   /** `1005-042` — written by hand on a copy; the date makes yesterday's 042 a different code. */
   pickup: { prefix: '', date_format: 'mmdd', digits: 3 },
+  shift: { prefix: 'SH', date_format: 'none', digits: 6 },
 };
 
 /**

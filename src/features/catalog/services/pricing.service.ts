@@ -20,6 +20,8 @@ import * as attributesRepository from '../repositories/attributes.repository.js'
 import * as categoriesRepository from '../repositories/categories.repository.js';
 import { db } from '../../../core/db/client.js';
 import * as pricingRepository from '../repositories/pricing.repository.js';
+import { PRICING_CONTEXT_CACHE } from '../repositories/pricing.repository.js';
+import { ttlCache } from '../../../core/db/ttl-cache.js';
 import * as productsRepository from '../repositories/products.repository.js';
 import type { PriceContext, StorePrice } from '../../../core/pricing/price-port.js';
 import { resolvePromotionsOn } from '../../../core/promotions/promotion-port.js';
@@ -51,7 +53,14 @@ interface PricingContext {
   rate: { usd_to_syp: number; effective_at: Date } | null;
 }
 
-async function loadContext(): Promise<PricingContext> {
+/** See `ttlCache` — cleared by category, rounding-band and rate writes. */
+const contextCache = ttlCache(PRICING_CONTEXT_CACHE, 15_000, readContext);
+
+function loadContext(): Promise<PricingContext> {
+  return contextCache.get();
+}
+
+async function readContext(): Promise<PricingContext> {
   const [categories, bands, rate] = await Promise.all([
     categoriesRepository.findAll(),
     pricingRepository.findRoundingBands(),

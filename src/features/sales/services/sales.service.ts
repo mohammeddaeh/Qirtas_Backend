@@ -11,8 +11,10 @@ import { allocateRevenue, recordFinance } from '../../../core/finance/finance-re
 import { type TillSaleState, serviceLineHandler, type ServiceKind } from '../../../core/till/service-line-port.js';
 import { SALES_AUDIT, saleTarget } from '../audit-actions.js';
 import * as repo from '../repositories/sales.repository.js';
+import { findVariantLabels } from '../repositories/orders.repository.js';
 import { thumbnailsFor } from './line-thumbnails.js';
 import { closePaidOrder, reopenVoidedOrder } from './orders.service.js';
+import { shiftForMoney } from './shifts.service.js';
 import type { SaleLineRow, SaleRow } from '../schemas/sales.schema.js';
 import {
   branchPrefix,
@@ -145,19 +147,55 @@ function wireLine(row: SaleLineRow, thumbnail: string | null = null): WireSaleLi
 export async function getSale(id: number): Promise<WireSale> {
   const sale = await repo.findSaleById(id);
   if (!sale) throw new NotFoundError('Sale not found');
-  // The name the receipt prints (tidy-up 2026-10-06): typed at the till, or
-  // the registered customer's — an invoice in an account's name printed none.
-  const customerName =
-    sale.customer_name ?? (sale.customer_id === null ? null : await repo.findCustomerName(sale.customer_id));
-  const [lines, payments, cashierName, stationName] = await Promise.all([
-    repo.findLines(id),
-    repo.findPayments(id),
-    repo.findUserName(sale.cashier_user_id),
-    repo.findStationName(sale.station_id),
+  return (await wireSales([sale]))[0]!;
+}
+
+/**
+ * **Many sales in six queries, not eight per sale** (2026-10-14): the history
+ * page, the waiting baskets and the returns list re-fetched each row through
+ * [getSale] — about 110 queries for one page. The single sale comes here too.
+ */
+export async function wireSales(sales: SaleRow[]): Promise<WireSale[]> {
+  const ids = sales.map((s) => s.id);
+  const uniq = (xs: (number | null)[]): number[] => [...new Set(xs.filter((x): x is number => x !== null))];
+  const [linesBy, paymentsBy, customers, cashiers, stations] = await Promise.all([
+    repo.findLinesFor(ids),
+    repo.findPaymentsFor(ids),
+    // Only where the till typed no name — the typed one wins (tidy-up 2026-10-06).
+    repo.findCustomerNames(uniq(sales.map((s) => (s.customer_name === null ? s.customer_id : null)))),
+    repo.findUserNames(uniq(sales.map((s) => s.cashier_user_id))),
+    repo.findStationNames(uniq(sales.map((s) => s.station_id))),
   ]);
-  const thumbs = await thumbnailsFor(
-    lines.map((l) => ({ productId: l.product_id, variantId: l.variant_id })),
+  const allLines = sales.flatMap((s) => linesBy.get(s.id) ?? []);
+  const thumbs = await thumbnailsFor(allLines.map((l) => ({ productId: l.product_id, variantId: l.variant_id })));
+  const thumbByLine = new Map(allLines.map((l, i) => [l.id, thumbs[i] ?? null]));
+  return sales.map((sale) =>
+    wireSale(sale, {
+      lines: linesBy.get(sale.id) ?? [],
+      payments: paymentsBy.get(sale.id) ?? [],
+      // The name the receipt prints: typed at the till, or the registered
+      // customer's — an invoice in an account's name printed none.
+      customerName: sale.customer_name ?? (sale.customer_id === null ? null : (customers.get(sale.customer_id) ?? null)),
+      cashierName: cashiers.get(sale.cashier_user_id) ?? null,
+      stationName: sale.station_id === null ? null : (stations.get(sale.station_id) ?? null),
+      thumbByLine,
+    }),
   );
+}
+
+function wireSale(
+  sale: SaleRow,
+  ctx: {
+    lines: SaleLineRow[];
+    payments: Awaited<ReturnType<typeof repo.findPayments>>;
+    customerName: string | null;
+    cashierName: string | null;
+    stationName: string | null;
+    thumbByLine: Map<number, string | null>;
+  },
+): WireSale {
+  const { lines, payments, customerName, cashierName, stationName } = ctx;
+  const thumbs = lines.map((l) => ctx.thumbByLine.get(l.id) ?? null);
 
   const totals =
     sale.status === 'paid'
@@ -249,8 +287,7 @@ function toRuleLine(row: SaleLineRow): SaleLineInput {
 }
 
 export async function listOpenSales(branchId: number, cashierId: number): Promise<WireSale[]> {
-  const rows = await repo.findOpenSales(branchId, cashierId);
-  return Promise.all(rows.map((row) => getSale(row.id)));
+  return wireSales(await repo.findOpenSales(branchId, cashierId));
 }
 
 export interface WireSellableItem {
@@ -258,6 +295,8 @@ export interface WireSellableItem {
   product_id: number;
   sku: string;
   name_ar: string;
+  /** What tells this variant from its siblings («أزرق · A5»), `''` for a one-variant product. */
+  label_ar: string;
   on_hand: number;
   price_syp: number | null;
   was_syp: number | null;
@@ -280,13 +319,14 @@ export interface WireSellableItem {
 export async function searchItems(branchId: number, search: string): Promise<WireSellableItem[]> {
   const rows = await repo.searchSellableItems(search.trim(), branchId, 25);
   if (rows.length === 0) return [];
-  const [prices, thumbs] = await Promise.all([
+  const [prices, thumbs, labels] = await Promise.all([
     resolvePricesAt(
       branchId,
       rows.map((r) => r.variant_id),
       POS_PRICES,
     ),
     thumbnailsFor(rows.map((r) => ({ productId: r.product_id, variantId: r.variant_id }))),
+    findVariantLabels(rows.map((r) => r.variant_id)),
   ]);
   return rows.map((row, i) => {
     const price = prices.get(row.variant_id);
@@ -296,6 +336,7 @@ export async function searchItems(branchId: number, search: string): Promise<Wir
       product_id: row.product_id,
       sku: row.sku,
       name_ar: row.product_name_ar,
+      label_ar: labels.get(row.variant_id) ?? '',
       on_hand: Number(row.on_hand ?? 0),
       // «غير مسعَّر» يصل `null` لا صفراً: صفرٌ يُقرأ مجاناً، ويضيفه الكاشير.
       price_syp: priced?.amountSyp ?? null,
@@ -766,6 +807,10 @@ export async function paySale(
       throw new BusinessError(409, 'This sale is already paid', 'sale_already_paid');
     }
 
+    // The shift the money falls in (`cash_shifts.md`) — and with the shift
+    // required, none open refuses the payment before anything is written.
+    const shiftId = await shiftForMoney(tx, preview.branch_id);
+
     // Central numbering (`system_settings.md`) — the format is a setting now.
     const { number, sequence } = await issueNumber(tx, 'sale', branchPrefix(branch?.code, preview.branch_id));
 
@@ -822,6 +867,7 @@ export async function paySale(
         saleId,
         userId: actor.userId,
         stationId: actor.stationId ?? null,
+        shiftId,
       })),
       {
         branchId: preview.branch_id,
@@ -833,6 +879,7 @@ export async function paySale(
         saleId,
         userId: actor.userId,
         stationId: actor.stationId ?? null,
+        shiftId,
       },
     ]);
 
@@ -971,20 +1018,46 @@ export async function setCreditLimit(
 export async function adjustCustomerLedger(
   actor: RequestActorContext,
   customerId: number,
-  input: { amount_syp: number; note: string },
+  input: { amount_syp: number; note: string; cash_branch_id?: number },
 ) {
   if (input.amount_syp === 0) {
     throw new BusinessError(422, 'A ledger entry needs an amount', 'ledger_amount_required');
   }
-  await repo.insertLedgerEntries(db, [
-    {
-      customer_id: customerId,
-      amount_syp: String(roundSyp(input.amount_syp)),
-      reason: 'manual_adjustment',
-      note: input.note.trim() || null,
-      created_by_user_id: actor.userId,
-    },
-  ]);
+  if (input.cash_branch_id !== undefined && input.amount_syp < 0) {
+    // Cash goes into the drawer when a customer pays — a charge takes none in.
+    throw new BusinessError(422, 'Only a payment comes in as cash', 'ledger_cash_needs_payment');
+  }
+  await db.transaction(async (tx) => {
+    // Paid in cash at a till (`cash_shifts.md`): the money is in the drawer,
+    // so it is booked — before, the customer's ledger moved and the books did not.
+    const shiftId =
+      input.cash_branch_id === undefined ? null : await shiftForMoney(tx, input.cash_branch_id);
+    const [entry] = await repo.insertLedgerEntries(tx, [
+      {
+        customer_id: customerId,
+        amount_syp: String(roundSyp(input.amount_syp)),
+        reason: 'manual_adjustment',
+        note: input.note.trim() || null,
+        created_by_user_id: actor.userId,
+      },
+    ]);
+    if (input.cash_branch_id !== undefined) {
+      await recordFinance(tx, [
+        {
+          branchId: input.cash_branch_id,
+          type: 'debt_payment',
+          method: 'cash',
+          amountSyp: roundSyp(input.amount_syp),
+          docType: 'customer_ledger',
+          docId: entry?.id ?? customerId,
+          userId: actor.userId,
+          stationId: actor.stationId ?? null,
+          shiftId,
+          note: input.note.trim() || null,
+        },
+      ]);
+    }
+  });
   await recordAudit(actor, SALES_AUDIT.ledgerAdjust, saleTarget.customer(customerId), null, input);
   return getCustomerAccount(customerId);
 }

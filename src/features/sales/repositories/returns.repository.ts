@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
-import { saleLinesTable } from '../schemas/sales.schema.js';
+import { saleLinesTable, salesTable } from '../schemas/sales.schema.js';
 import {
   returnSequencesTable,
   saleReturnLinesTable,
@@ -33,6 +33,12 @@ export interface SalesSettings {
   return_reason_required: boolean;
   damaged_returns_allowed: boolean;
   print_refund_suggest_percent: number;
+  shift_reason_above_syp: number | null;
+  shift_alert_hours: number;
+  shift_stale_action: 'warn' | 'block';
+  shift_cash_out_approval_syp: number | null;
+  shift_review_above_syp: number | null;
+  shift_denominations: number[];
 }
 
 type SettingsRow = typeof salesSettingsTable.$inferSelect;
@@ -52,6 +58,17 @@ function toSettings(row: SettingsRow): SalesSettings {
     return_reason_required: row.return_reason_required,
     damaged_returns_allowed: row.damaged_returns_allowed,
     print_refund_suggest_percent: row.print_refund_suggest_percent,
+    // The shift is always required (2026-10-19) — the old `shift_mode` column is no longer read.
+    shift_reason_above_syp: row.shift_reason_above_syp === null ? null : Number(row.shift_reason_above_syp),
+    shift_alert_hours: row.shift_alert_hours,
+    // Anything but `block` reads as `warn` — a typo must not stop a branch taking money.
+    shift_stale_action: row.shift_stale_action === 'block' ? 'block' : 'warn',
+    shift_cash_out_approval_syp:
+      row.shift_cash_out_approval_syp === null ? null : Number(row.shift_cash_out_approval_syp),
+    shift_review_above_syp: row.shift_review_above_syp === null ? null : Number(row.shift_review_above_syp),
+    shift_denominations: Array.isArray(row.shift_denominations)
+      ? row.shift_denominations.filter((d): d is number => typeof d === 'number' && d > 0).sort((a, b) => a - b)
+      : [],
   };
 }
 
@@ -79,6 +96,12 @@ export async function saveSettings(
   const next = {
     ...merged,
     approval_above_syp: merged.approval_above_syp === null ? null : merged.approval_above_syp.toFixed(2),
+    shift_reason_above_syp:
+      merged.shift_reason_above_syp === null ? null : merged.shift_reason_above_syp.toFixed(2),
+    shift_cash_out_approval_syp:
+      merged.shift_cash_out_approval_syp === null ? null : merged.shift_cash_out_approval_syp.toFixed(2),
+    shift_review_above_syp:
+      merged.shift_review_above_syp === null ? null : merged.shift_review_above_syp.toFixed(2),
   };
   await db
     .insert(salesSettingsTable)
@@ -202,6 +225,31 @@ export async function findReturnLines(returnId: number) {
     .from(saleReturnLinesTable)
     .where(eq(saleReturnLinesTable.return_id, returnId))
     .orderBy(saleReturnLinesTable.id);
+}
+
+/** Lines of many returns in one query — the returns list (2026-10-14). */
+export async function findReturnLinesFor(returnIds: number[]) {
+  const out = new Map<number, (typeof saleReturnLinesTable.$inferSelect)[]>();
+  if (returnIds.length === 0) return out;
+  const rows = await db
+    .select()
+    .from(saleReturnLinesTable)
+    .where(inArray(saleReturnLinesTable.return_id, returnIds))
+    .orderBy(saleReturnLinesTable.id);
+  for (const r of rows) out.set(r.return_id, [...(out.get(r.return_id) ?? []), r]);
+  return out;
+}
+
+/** The invoice numbers behind many returns — the list names the invoice, not its id. */
+export async function findSaleNumbersFor(saleIds: number[]) {
+  const out = new Map<number, string | null>();
+  if (saleIds.length === 0) return out;
+  const rows = await db
+    .select({ id: salesTable.id, number: salesTable.number })
+    .from(salesTable)
+    .where(inArray(salesTable.id, saleIds));
+  for (const r of rows) out.set(r.id, r.number);
+  return out;
 }
 
 export async function findReturns(

@@ -91,6 +91,7 @@ export * from '../../features/promotions/schemas/promotions.schema.js';
 export * from '../../features/sales/schemas/sales.schema.js';
 export * from '../../features/sales/schemas/returns.schema.js';
 export * from '../../features/sales/schemas/orders.schema.js';
+export * from '../../features/sales/schemas/shifts.schema.js';
 
 // الطباعة — إعدادها وتسعيرها (features/printing/) — docs/reference/printing_system.md.
 export * from '../../features/printing/schemas/printing.schema.js';

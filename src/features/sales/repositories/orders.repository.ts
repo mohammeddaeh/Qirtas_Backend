@@ -334,3 +334,23 @@ export async function findExpiredOrders(now: Date, limit: number): Promise<Order
     )
     .limit(limit);
 }
+
+// ── Batch reads for the pickup queue (2026-10-14) ──────────────────────────
+// The queue wired each order with three queries (lines, branch, customer).
+
+export async function findOrderLinesFor(orderIds: number[]) {
+  const out = new Map<number, (typeof orderLinesTable.$inferSelect)[]>();
+  if (orderIds.length === 0) return out;
+  const rows = await db.select().from(orderLinesTable).where(inArray(orderLinesTable.order_id, orderIds)).orderBy(orderLinesTable.id);
+  for (const r of rows) out.set(r.order_id, [...(out.get(r.order_id) ?? []), r]);
+  return out;
+}
+
+export async function findCustomerNamesFor(customerIds: number[]): Promise<Map<number, string>> {
+  if (customerIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: customersTable.id, first_name: customersTable.first_name, last_name: customersTable.last_name })
+    .from(customersTable)
+    .where(inArray(customersTable.id, customerIds));
+  return new Map(rows.map((r) => [r.id, [r.first_name, r.last_name].filter(Boolean).join(' ').trim()]));
+}

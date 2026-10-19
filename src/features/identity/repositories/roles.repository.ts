@@ -14,6 +14,7 @@ import { usersTable } from '../schemas/users.schema.js';
 import { branchesTable } from '../schemas/branches.schema.js';
 import type { PaginationParams } from '../../../core/pagination/pagination.js';
 import type { RolesFilterQuery } from '../dtos/roles.dto.js';
+import { clearPermissionCache } from '../../../core/authz/permission-cache.js';
 
 const sortColumns = {
   created_at: rolesTable.created_at,
@@ -143,6 +144,7 @@ export async function setArchivedAt(id: number, at: Date | null): Promise<RoleRo
     .set({ archived_at: at })
     .where(eq(rolesTable.id, id))
     .returning();
+  clearPermissionCache();
   return rows[0];
 }
 
@@ -169,6 +171,7 @@ export async function setActive(id: number, isActive: boolean): Promise<RoleRow 
     .set({ is_active: isActive })
     .where(eq(rolesTable.id, id))
     .returning();
+  clearPermissionCache();
   return rows[0];
 }
 
@@ -332,6 +335,7 @@ export async function deleteById(roleId: number): Promise<void> {
   // `role_permissions` cascades; assignments are RESTRICT and were checked by
   // the service before we got here.
   await db.delete(rolesTable).where(eq(rolesTable.id, roleId));
+  clearPermissionCache();
 }
 
 export async function replacePermissions(roleId: number, permissionKeys: string[]): Promise<void> {
@@ -345,6 +349,7 @@ export async function replacePermissions(roleId: number, permissionKeys: string[
       await tx.insert(rolePermissionsTable).values(values);
     }
   });
+  clearPermissionCache();
 }
 
 export async function insertPermissions(
@@ -356,7 +361,9 @@ export async function insertPermissions(
     role_id: roleId,
     permission_key,
   }));
-  return db.insert(rolePermissionsTable).values(values).returning();
+  const rows = await db.insert(rolePermissionsTable).values(values).returning();
+  clearPermissionCache();
+  return rows;
 }
 
 /** Any active (non-expired) assignment referencing this role — used by the deactivation guard. */

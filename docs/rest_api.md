@@ -1000,7 +1000,7 @@ Accept-language: ar | en
 
 خلف `reports.financial.view`. الفترة أيامٌ كاملة `from`/`to` (`YYYY-MM-DD`، والأخير داخلها) و`branch_id` اختياري (غيابه = كل الفروع).
 
-- `GET /reports/summary` ⇒ `{period, branch_id, branches[{id,name,code}], summary{revenue, refunds, net_sales, cost_of_sales, gross_profit, losses, net_profit, ready_shelf_value, expected_cash}, revenue_by_method[{method, revenue, refunds}], cashiers[{user_id, name, revenue, refunds, cash}], printing{revenue_new, revenue_ready, materials, waste, refunds}, ready_shelf{taken_in, sold_cost, written_off, value_now, sales_revenue}, losses[{type, reason, amount, count}]}` — المبالغ موجبة (الخسائر والكلف «خارجة»)، وكلها مجاميع قيود `finance_entries` عدا إيراد الطباعة (أسطر الفواتير المدفوعة) ومردود المطبوعات (أسطر المرتجع).
+- `GET /reports/summary` ⇒ `{period, branch_id, branches[{id,name,code}], summary{revenue, refunds, net_sales, cost_of_sales, gross_profit, losses, cash_difference, net_profit, ready_shelf_value, expected_cash}, revenue_by_method[{method, revenue, refunds}], cashiers[{user_id, name, revenue, refunds, cash}], printing{revenue_new, revenue_ready, materials, waste, refunds}, ready_shelf{taken_in, sold_cost, written_off, value_now, sales_revenue}, losses[{type, reason, amount, count}]}` — المبالغ موجبة (الخسائر والكلف «خارجة»)، وكلها مجاميع قيود `finance_entries` عدا إيراد الطباعة (أسطر الفواتير المدفوعة) ومردود المطبوعات (أسطر المرتجع). **`cash_difference` موقَّع** (زيادة موجبة · عجز سالب، من قيود `cash_over`/`cash_short` عند إقفال الوردية — §35) و`net_profit = gross_profit − losses + cash_difference`؛ و`expected_cash` = نقد البيع − نقد المردود + حركات الدرج (`cash_in`/`cash_out`) + سداد الديون نقداً (`debt_payment`).
 - `GET /reports/losses?type=&page=&limit=` ⇒ صفحة قيود خسارة `{type, amount, reason, note, doc_type, doc_id, sale_id, sale_number, ready_number, ready_label, user_name, occurred_at}` — الأحدث أولاً.
 
 ### الاستيراد والتصدير — العناوين بلغة القارئ وخيارات الفلتر من البيانات (2026-10-11)
@@ -1426,7 +1426,7 @@ requested → approved → in_transit → received                   → closed
 
 - `POST /sales {branch_id, customer_id?, customer_name?}` — العابر بلا حساب **يُكتب اسمه ولا يُنشأ له زبون**.
 - `GET /sales/open?branch_id` — سلّات **هذا الكاشير** وحده: سلّةُ زميلٍ تُقرأ هنا «نسيتُها» فتُلغى، وصاحبها واقفٌ عند الصندوق الآخر.
-- `GET /sales/items?branch_id&search` — **ما يصلح لسطر بيع**، بسعره بالفرع ورصيده، بحثاً بالاسم أو الـSKU أو **الباركود تماماً**. يعيش بموديول المبيعات لا بالكتالوج: الصندوق يحتاج صفّاً بسعره، وقراءة **جدول** موديول آخر مسموحة بينما قراءة خدمته ليست (نفس حلّ `document-items` و`promotions/targets`). والصفّ الذي طابق رمزاً تماماً يُعلَّم `exact_barcode` — **مسحةٌ واحدة تُضيف صنفاً واحداً** بدل أن تعرض خمسة أسماء يقرؤها الكاشير. و«غير مسعَّر» يصل `price_syp: null` لا صفراً: صفرٌ يُقرأ مجاناً ويضيفه الكاشير. **و`thumbnail`** (2026-09-29) رابطٌ نسبي لصورة الصنف المصغّرة أو `null`: صورة المتغيّر إن وُجدت وإلا أول صور المنتج بترتيب المعرض.
+- `GET /sales/items?branch_id&search` — **ما يصلح لسطر بيع**، بسعره بالفرع ورصيده، بحثاً بالاسم أو الـSKU أو **الباركود تماماً**. يعيش بموديول المبيعات لا بالكتالوج: الصندوق يحتاج صفّاً بسعره، وقراءة **جدول** موديول آخر مسموحة بينما قراءة خدمته ليست (نفس حلّ `document-items` و`promotions/targets`). والصفّ الذي طابق رمزاً تماماً يُعلَّم `exact_barcode` — **مسحةٌ واحدة تُضيف صنفاً واحداً** بدل أن تعرض خمسة أسماء يقرؤها الكاشير. و«غير مسعَّر» يصل `price_syp: null` لا صفراً: صفرٌ يُقرأ مجاناً ويضيفه الكاشير. **و`thumbnail`** (2026-09-29) رابطٌ نسبي لصورة الصنف المصغّرة أو `null`: صورة المتغيّر إن وُجدت وإلا أول صور المنتج بترتيب المعرض. **و`label_ar`** (2026-10-18) ما يميّز المتغيّر عن إخوته («أزرق · A5»)، و`''` لمنتجٍ بلا محاور: أربعة صفوف «قلم جاف بيك كريستال» بلا لونها كانت تُقرأ صفاً مكرَّراً.
 - **الفاتورة (`WireSale`) — حقول العرض (2026-09-29)**: `promotion_discount_syp` + `manual_discount_syp` = `discount_syp` مقسوماً (العروض · حصّة الكاشير — تُجمع بالخادم، والعميل لا يجمع مبلغاً) · `received_syp` ما استلمه الكاشير (المسلَّم نقداً، والمبلغ لغير النقد) · `change_syp` الباقي من النقد وحده. الاثنان الأخيران **مشتقّان** من الدفعات المحفوظة لا مخزَّنان. وكل سطر يحمل `thumbnail` كما في بحث الأصناف (`null` لسطر خدمة)، و**`gross_syp`** = السعر المعلن × الكمية قبل أي خصم — يُعرض مشطوباً فوق `line_total_syp` («قبل ← بعد» للسطر كله؛ «خصم ٥٠٠» وحده لا يقول إن كان عن القطعة أم عن الكمية).
 - `GET /sales?page&limit&branch_id&cashier_id&status&search&from&to&sort_by&sort_dir` (`sales.view`) — سجلّ المبيعات. `sort_by`: `created_at` (الافتراضي) · `total` · `number` (2026-10-08، §6.1 — الترتيب بالخادم: ترتيبُ الصفحة المحمَّلة وحدها يجعل «أغلى فاتورة» أغلى خمس عشرة). `search` رقم الفاتورة أو اسم الزبون جزئياً، و`from`/`to` أيامٌ كاملة `yyyy-MM-dd` على وقت الإنشاء و**`to` شامل** (الحدّ منتصف ليل اليوم التالي — «حتى ٣٠» يشمل ٣٠).
 - `POST /sales/:id/lines {variant_id, qty, unit_id?}` — **السعر يُقرأ من الخادم لا من الجهاز**: ثمنٌ يرسله العميل خصمٌ يكتبه من يمسك الجهاز، ولا شيء بالفاتورة يقول إنه اختُرع. ومسحُ الصنف مرتين **يزيد الكمية** ولا يضيف سطراً (سطران بخمسة يفوّتان شريحة العشرة، ويقرأ الزبون صنفه مرتين).
@@ -1507,6 +1507,8 @@ requested → approved → in_transit → received                   → closed
 **والمرتجع ثلاثة أشياء بمعاملة واحدة**: يصرف رقمه · يقيّد الرصيد إن كان الردّ رصيداً · ويُعيد الصالح للرفّ عبر منفذ `core/stock/stock-port.ts`. وأسطر البيع **تُقفَل** بينها وبين الكتابة، فلا يُرجع جهازان القطعة نفسها.
 
 **وحقل `beyond_window` يُحفظ بالصفّ ولا يُشتقّ** من التاريخين: تغيير المهلة لاحقاً كان سيعيد تصنيف مرتجعات قديمة، فيقول تقريرٌ إن استثناءً لم يحدث.
+
+**وكل مرتجع يحمل `sale_number`** (2026-10-18) بجانب `sale_id`: القائمة تسمّي الفاتورة برقمها المطبوع، وكانت تعرض المعرّف الداخلي «فاتورة 214» لفاتورة رقمها `BRI-2026-000046`. يُقرأ لكل الصفحة باستعلامٍ واحد.
 
 ## 28. السلّة والطلب الإلكتروني (8-أ، 2026-09-24) · المرجع: `docs/reference/orders_delivery.md`
 
@@ -1794,3 +1796,50 @@ draft ─submit→ awaiting_quote ─quote→ awaiting_payment ─(الدفع 9-
 **إضافة موديول**: `bulkBodySchema([...actions])` (+ `.extend(...)` و`requireFieldForActions` لحقل خاص) بالـdto · دالة خدمة تُحوّل الإجراء إلى الاستدعاءات المفردة الموجودة عبر `runBulk(ids, lang, fn)` · مسار واحد `POST /bulk` **قبل** مسارات `/:id`.
 
 **التحقق**: `core/bulk/__tests__/bulk.test.ts` (٨) · `features/identity/__tests__/branches-bulk.test.ts` (٧ — المكدّس الحقيقي للمسار بمستودعات مزيّفة: خليط منجَز/مرفوض بمفاتيحه · إزالة المكرَّر · الأرشفة بلا `records.archive` ← `403` **والحذف بلا حاجة إليه** · `422` لـ`set_status` بلا `status` ولـ١٠١ معرّف). · `features/catalog/__tests__/products-bulk.test.ts` (١٠ — `set_category` بخليط منجَز/مرفوض بمفاتيح `PATCH` · الحذف بمنتج له حركات · `set_brand` بـ`null` · `422` للحقل الناقص والزائد و`draft` و١٠١ معرّف · الأرشفة بلا `records.archive` ← `403` · `set_sellable` بلا `catalog.edit` ← `403` · الحذف يحتاج `catalog.delete` لا `catalog.edit`). · `features/identity/__tests__/users-bulk.test.ts` (٩) · `features/identity/__tests__/roles-bulk.test.ts` (٨) · `features/customers/__tests__/customers-bulk.test.ts` (١١) · `features/catalog/__tests__/brands-bulk.test.ts` (٨) · `features/promotions/__tests__/promotions-bulk.test.ts` (٥).
+
+## 34. البحث الشامل — `GET /search` (2026-10-18) · المرجع: `docs/reference/global_search.md`
+
+`GET /api/v1/search?q=<نص>` — `q` من ٢ إلى ٨٠ حرفاً (`.strict()`). حارس الدخول `requireAnyPermission` بأحد: `catalog.view` · `sales.view` · `printing.queue.view` · `customers.view` · `users.view`، **وكل نوع يُفحص بمفتاحه داخل الخدمة**؛ الفواتير وطلبات الطباعة بفروع القارئ وحدها.
+
+```json
+{ "status": true, "data": {
+  "products":   [{ "id": 20, "name_ar": "…", "name_en": "…", "category": "…", "thumbnail": "/api/v1/files/…_thumb.webp" }],
+  "sales":      [{ "id": 9, "number": "BR1-2026-000009", "customer_name": "…", "total_syp": 58000, "status": "paid", "branch_name": "…", "at": "2026-09-12T08:13:18.553Z" }],
+  "print_jobs": [{ "id": 49, "number": "BR1-P-2026-000018", "pickup_code": null, "name": "…", "label": "…", "status": "cancelled", "branch_name": "…" }],
+  "customers":  [{ "id": 3, "name": "…", "phone": "09…", "email": "…", "status": "active" }],
+  "users":      [{ "id": 1, "name": "…", "email": "…", "phone": "09…", "status": "active" }]
+} }
+```
+
+- **حتى ٥ لكل نوع**، الأحدث أولاً. **`null` = لا مفتاح للنوع** (لا يُبحث فيه)؛ `[]` = بُحث ولم يُطابق شيء.
+- الفواتير `paid`/`void` وحدهما · طلبات الطباعة بلا `draft` · الزبائن والموظفون بلا المؤرشف.
+- العيّنة الحيّة: `qirtas_app/test/fixtures/wire/search.json`.
+
+## 35. درج الفرع — `/sales/shifts` (و-١ 2026-10-18 · د-١ 2026-10-19) · المرجع: `docs/reference/cash_shifts.md`
+
+مركَّبٌ **قبل** `/sales` (وإلا قرأ `/:id` كلمة «shifts» معرّفاً). **درجٌ واحد وورديةٌ مفتوحة واحدة لكل فرع** (فهرسٌ فريد جزئي على `branch_id`)، وكل من يقبض بالفرع يقبض عليها، وكل قيدٍ باسم صاحبه وجهازه. **والوردية إلزامية دائماً** (حُذف `shift_mode`). كل مسارٍ يفحص الفرع أيضاً: من لا يحمل المفتاح **بفرع الوردية** يُردّ `403 shift_not_at_branch`.
+
+| المسار | المفتاح | ما يفعله |
+|---|---|---|
+| `GET /sales/shifts/current?branch_id` | `sales.sell` | `{mode: 'required', alert_hours, stale_action: warn\|block, cash_out_approval_syp, denominations[], suggested_opening_syp, open_carts (المعلّقة `held` وحدها), can_close, shift}` — وردية الفرع المفتوحة أو `null` ومعها الافتتاح المقترح (ما تركه آخر إقفالٍ بالفرع) |
+| `POST /sales/shifts` | `sales.sell` | `{branch_id, opening_counted_syp}` ← الوردية. **ودرجٌ مفتوح يُرجع ورديته نفسها** (لا خطأ، والعدّ الثاني لا يُسجَّل) — وكذلك فتحان متزامنان. فرق الافتتاح قيدٌ `cash_over/cash_short` بسبب `opening` |
+| `POST /sales/shifts/:id/movements` | `sales.sell` | `{direction, amount_syp, reason_code: safe_drop\|float_top_up\|expense\|other, note?, approver_email?, approver_password?}` ← التقرير. **الإخراج لا يتجاوز ما بالدرج** (`409 cash_out_exceeds_drawer` — بلا المبلغ، ويُفحص قبل الموافقة). **ومن يملك `sales.shift.manage` بالفرع لا يحتاج موافقة** (يُسجَّل `approved_by` باسمه، و`current.cash_out_approval_syp` يصله `null`). **وغيره فوق `cash_out_approval_syp`** يحتاج مديراً **آخر** يملك المفتاح بالفرع يكتب بريده وكلمة مروره على الجهاز (`403 shift_approver_is_self` لنفسه): `409 shift_cash_out_needs_approval {cap_syp}` · `403 shift_approval_refused` (واحدٌ لكل الأسباب) · `403 shift_approver_not_allowed` |
+| `POST /sales/shifts/:id/movements/:movementId/reverse` | `sales.sell` (صاحب الحركة) أو `sales.shift.close` | قيدٌ معاكس مربوط (`reverses_movement_id`) — **لا حذف ولا تعديل**. مرةً واحدة: `409 shift_movement_already_reversed` · والعكس لا يُعكس: `409 shift_movement_is_reversal` · عكس إدخالٍ لا يُفرغ الدرج تحت الصفر |
+| `POST /sales/shifts/:id/close` | **`sales.shift.close`** (جديد) | `{counted_syp, left_in_drawer_syp}` ← `{shift, needs_reason}`. **يُقفل دائماً**؛ والفرق قيدٌ `cash_over/cash_short` باسم **من أقفل**، وفوق `shift_review_above_syp` تصير `needs_review: true`. `422 shift_left_above_counted` · `409 shift_closed` |
+| `PUT /sales/shifts/:id/reason` | `sales.sell` (من أقفل) أو `sales.shift.manage` | `{reason_code: change_error\|unrecorded_expense\|count_error\|other, note?}` (`other` يحتاج ملاحظة) — مرةً واحدة: `409 shift_reason_set` |
+| `POST /sales/shifts/:id/review` | `sales.shift.manage` | فرقٌ فوق سقف المراجعة رآه مدير (`reviewed_by/at`) — مرة: `409 shift_not_reviewable` |
+| `GET /sales/shifts/:id` | `sales.sell` أو `sales.shift.manage` بالفرع | التقرير: `shift` · `sales_count` · `revenue{…}` · `refunds{…}` · `cash_in` · `cash_out` (**من الحركات القائمة** — الزوج المعكوس يُستثنى) · `debt_payments` · **`by_person[{user_id, name, station_name, sales_syp, cash_sales_syp, refunds_syp, cash_in_syp, cash_out_syp, debt_payments_syp}]`** (سطرٌ لكل شخص وجهاز، `station_name: null` = موبايل أو حاسوب غير مسجّل، والزوج المعكوس ليس لأحد) · `movements[{…, user_id, station_name, approved_by_name, reverses_movement_id, reversed}]` |
+| `GET /sales/shifts` | `sales.shift.manage` (حسّاس) | قائمةٌ مُصفّحة بفروع القارئ: `branch_id` · `cashier_user_id` (من فتح) · `status` · `from` · `to` · `with_difference` · `needs_review`؛ المفتوحة أولاً ثم ما ينتظر مراجعة ثم الأحدث |
+| `GET /sales/shifts/summary` | `sales.shift.manage` | بنفس المرشّحات بلا صفحة: `{with_difference, waiting_review, short_syp, over_syp}` |
+
+**`WireShift`**: `opened_by_user_id`/`opened_by_name` (كان `cashier_*` — الدرج للفرع لا لمن فتحه) · `reason_code` · `reason` (الملاحظة) · `needs_review` · `reviewed_by_name` · `reviewed_at` · وحُذف `closed_on_behalf` (لا «نيابةً»: من يملك المفتاح يُقفل درج فرعه).
+
+**العدّ أعمى بالخادم — للجميع**: `expected_syp` يصل `null` ما دامت الوردية مفتوحة **لأي قارئ**، المدير أيضاً (أيٌّ منهم قد يكون العادّ). وبعد الإقفال مجمَّدٌ بالصفّ. **والسبب بعد الإقفال لا قبله** (طلبُه قبله يُري المتوقَّع).
+
+**الختم والسباق**: `finance_entries.shift_id` على قيود السداد والمرتجع وحركات الدرج وسداد الدين، والمتوقَّع = الافتتاح المعدود + قيود الوردية النقدية (بلا فرق العدّ نفسه). والسداد يقرأ الوردية `for share` والإقفال `for update`: دفعٌ يسابق الإقفال ينتظره ثم يجدها مقفلة فيُرفض — **لا يُختم مالٌ على ورديةٍ عُدّت**. ولا وردية مفتوحة: `409 shift_required` على السداد والمرتجع النقدي والسداد النقدي للدين؛ **والوردية المنسيّة** بـ`shift_stale_action: block` فوق `shift_alert_hours`: `409 shift_stale {shift_id, alert_hours}` حتى تُقفل.
+
+**سداد الدين نقداً**: `POST /customers/:id/account/entries` بـ`cash_branch_id` ← قيدٌ `debt_payment` نقداً مختومٌ بوردية ذلك الفرع. والمبلغ السالب معه `422 ledger_cash_needs_payment`.
+
+**الإعدادات** بـ`GET/PUT /sales/settings`: `shift_reason_above_syp` (١٠٬٠٠٠، `null` = لا سبب) · `shift_alert_hours` (١٦) · `shift_stale_action: warn|block` (`warn`) · `shift_cash_out_approval_syp` (٥٠٬٠٠٠، `null` = بلا سقف) · `shift_review_above_syp` (٥٠٬٠٠٠، `null` = لا مراجعة) · `shift_denominations` (`[500,1000,2000,5000]`). **والترقيم** نوع `shift` (`BR17-SH-000001`). **والصلاحية الجديدة** `sales.shift.close` تُمنح لأمين الصندوق ومدير الفرع.
+
+**بالتقارير المالية** (§finance): `summary.cash_difference` للفرع والفترة باقٍ، **و`cashiers[].cash_difference` حُذف** — الدرج للفرع، وتحميل البائع فرقاً لم يعدّه كان يكذب.

@@ -131,8 +131,77 @@ export const ledgerBodySchema = z
     /** موجبٌ إيداع رصيد · سالبٌ تحميل ذمّة — والإشارة هي المعنى. */
     amount_syp: z.number(),
     note: z.string().trim().max(300).default(''),
+    /** Paid in cash at this branch's till — booked and stamped with the shift (`cash_shifts.md`). */
+    cash_branch_id: z.number().int().positive().optional(),
   })
   .strict();
+
+// ── الوردية (`cash_shifts.md`) ─────────────────────────────────────────────
+
+const cashAmount = z.number().min(0).max(1_000_000_000);
+
+export const shiftCurrentQuerySchema = z.object({ branch_id: z.coerce.number().int().positive() }).strict();
+
+export const openShiftBodySchema = z
+  .object({ branch_id: z.number().int().positive(), opening_counted_syp: cashAmount })
+  .strict();
+
+export const shiftMovementBodySchema = z
+  .object({
+    direction: z.enum(['in', 'out']),
+    amount_syp: cashAmount.refine((v) => v > 0, 'An amount above zero'),
+    /** Codes the screen translates. */
+    reason_code: z.enum(['safe_drop', 'float_top_up', 'expense', 'other']),
+    note: z.string().trim().max(300).optional(),
+    /** A cash-out above the cap: the manager approves on this device. */
+    approver_email: z.string().trim().email().max(200).optional(),
+    approver_password: z.string().min(1).max(200).optional(),
+  })
+  .strict()
+  // «Other» says nothing by itself — the note is what makes it a reason.
+  .refine((b) => b.reason_code !== 'other' || (b.note?.length ?? 0) >= 3, {
+    message: 'Say what the movement was',
+    path: ['note'],
+  });
+
+export const closeShiftBodySchema = z
+  .object({ counted_syp: cashAmount, left_in_drawer_syp: cashAmount })
+  .strict();
+
+export const shiftReasonBodySchema = z
+  .object({
+    reason_code: z.enum(['change_error', 'unrecorded_expense', 'count_error', 'other']),
+    note: z.string().trim().max(500).optional(),
+  })
+  .strict()
+  // «Other» says nothing by itself — the note is what makes it a reason.
+  .refine((b) => b.reason_code !== 'other' || (b.note?.length ?? 0) >= 3, {
+    message: 'Say what happened',
+    path: ['note'],
+  });
+
+export const shiftMovementParamsSchema = z
+  .object({ id: z.coerce.number().int().positive(), movementId: z.coerce.number().int().positive() })
+  .strict();
+
+export const shiftsQuerySchema = paginationQuerySchema
+  .extend({
+    branch_id: z.coerce.number().int().positive().optional(),
+    cashier_user_id: z.coerce.number().int().positive().optional(),
+    status: z.enum(['open', 'closed']).optional(),
+    needs_review: z
+      .enum(['true', 'false'])
+      .transform((v) => v === 'true')
+      .optional(),
+    from: z.coerce.date().optional(),
+    to: z.coerce.date().optional(),
+    with_difference: z
+      .enum(['true', 'false'])
+      .transform((v) => v === 'true')
+      .optional(),
+  })
+  .strict();
+export type ShiftsQuery = z.infer<typeof shiftsQuerySchema>;
 
 // ── المرتجع (§٢) ────────────────────────────────────────────────────────────
 
@@ -229,6 +298,14 @@ export const salesSettingsBodySchema = z
     return_reason_required: z.boolean().optional(),
     damaged_returns_allowed: z.boolean().optional(),
     print_refund_suggest_percent: z.number().int().min(0).max(100).optional(),
+    // ── الوردية (`cash_shifts.md`) ──
+    /** `null` = لا يُطلب سببٌ أبداً. */
+    shift_reason_above_syp: z.number().min(0).max(1_000_000_000).nullable().optional(),
+    shift_alert_hours: z.number().int().min(1).max(72).optional(),
+    shift_stale_action: z.enum(['warn', 'block']).optional(),
+    shift_cash_out_approval_syp: z.number().min(0).max(1_000_000_000).nullable().optional(),
+    shift_review_above_syp: z.number().min(0).max(1_000_000_000).nullable().optional(),
+    shift_denominations: z.array(z.number().int().positive().max(1_000_000)).max(12).optional(),
   })
   .strict()
   .refine((body) => Object.keys(body).length > 0, {

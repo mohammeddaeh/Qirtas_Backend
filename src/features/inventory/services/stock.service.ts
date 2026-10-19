@@ -59,10 +59,11 @@ export async function getSettings(actorUserId?: number): Promise<WireInventorySe
   ]);
   let branches = live;
   if (actorUserId !== undefined) {
-    const held = await Promise.all(
-      live.map((b) => userRoleAssignmentsRepository.findEffectivePermissionKeys(actorUserId, b.id)),
+    const held = await userRoleAssignmentsRepository.findEffectivePermissionKeysByBranch(
+      actorUserId,
+      live.map((b) => b.id),
     );
-    branches = live.filter((_, i) => BRANCH_PICKER_KEYS.some((k) => held[i]?.includes(k)));
+    branches = live.filter((b) => BRANCH_PICKER_KEYS.some((k) => held.get(b.id)?.has(k)));
   }
   return {
     approval_threshold_syp: row ? Number(row.approval_threshold_syp) : DEFAULT_APPROVAL_THRESHOLD,

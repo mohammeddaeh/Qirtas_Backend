@@ -5,6 +5,7 @@ import { db } from '../../../core/db/client.js';
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
 import type { RequestActorContext } from '../../../core/http/require-actor.js';
 import { holdsPermissionAt } from '../../../core/http/require-permission.js';
+import * as userRoleAssignmentsRepository from '../../identity/repositories/user-role-assignments.repository.js';
 import { DOCUMENT_TYPES, type DocumentType } from '../../../core/media/document-types.js';
 import {
   completeDocument,
@@ -25,6 +26,7 @@ import * as repo from '../repositories/print-jobs.repository.js';
 import type { JobFile } from '../repositories/print-jobs.repository.js';
 import type { PrintOptionKind } from '../schemas/printing.schema.js';
 import type {
+  PrintJobLinkRow,
   PrintJobRow,
   PrintJobSource,
   PrintJobStatus,
@@ -54,6 +56,7 @@ import {
   submitProblem,
   type StaffStage,
 } from './job-rules.js';
+import { lazySweep } from '../../../core/db/lazy-sweep.js';
 
 /**
  * طلب الطباعة — الشريحة 9-ج-2. **الملفات عامة بـ`core/media`** (حجز ← رفع
@@ -164,17 +167,48 @@ function wireFile(file: JobFile): WirePrintJobFile {
   };
 }
 
-async function wireJob(row: PrintJobRow): Promise<WirePrintJob> {
-  const [files, links, branchName, customer, options, printerName, starterName] = await Promise.all([
-    repo.findJobFiles(row.id),
-    repo.findJobLinks(row.id),
-    repo.findBranchName(row.branch_id),
-    row.customer_id === null ? Promise.resolve(undefined) : repo.findCustomer(row.customer_id),
+/** What wiring jobs needs beyond their rows — read once for a whole list. */
+interface JobHydration {
+  files: Map<number, JobFile[]>;
+  links: Map<number, PrintJobLinkRow[]>;
+  branchNames: Map<number, string>;
+  customers: Map<number, { name: string; phone: string | null }>;
+  options: Awaited<ReturnType<typeof printingRepo.findOptions>>;
+  printers: Map<number, string>;
+  users: Map<number, string>;
+}
+
+/**
+ * **Seven queries for a whole page, not seven per row** (2026-10-14): the
+ * queue, the record and the pickup lookup wired each job with its own reads —
+ * a hundred-odd queries for one board poll. The single-job paths go through
+ * here too, with one row.
+ */
+async function hydrateJobs(rows: PrintJobRow[]): Promise<JobHydration> {
+  const ids = (pick: (r: PrintJobRow) => number | null): number[] => [
+    ...new Set(rows.map(pick).filter((v): v is number => v !== null)),
+  ];
+  const [files, links, branchNames, customers, options, printers, users] = await Promise.all([
+    repo.findJobFilesFor(rows.map((r) => r.id)),
+    repo.findJobLinksFor(rows.map((r) => r.id)),
+    repo.findBranchNames(ids((r) => r.branch_id)),
+    repo.findCustomers(ids((r) => r.customer_id)),
     printingRepo.findOptions(),
-    row.printer_id === null ? Promise.resolve(undefined) : printersRepo.findNames([row.printer_id]).then((m) => m.get(row.printer_id!)),
-    row.started_by === null ? Promise.resolve(undefined) : repo.findUserName(row.started_by),
+    printersRepo.findNames(ids((r) => r.printer_id)),
+    repo.findUserNames(ids((r) => r.started_by)),
   ]);
-  const byId = new Map(options.map((o) => [o.id, o]));
+  return { files, links, branchNames, customers, options, printers, users };
+}
+
+async function wireJob(row: PrintJobRow, hydration?: JobHydration): Promise<WirePrintJob> {
+  const h = hydration ?? (await hydrateJobs([row]));
+  const files = h.files.get(row.id) ?? [];
+  const links = h.links.get(row.id) ?? [];
+  const branchName = h.branchNames.get(row.branch_id) ?? null;
+  const customer = row.customer_id === null ? undefined : h.customers.get(row.customer_id);
+  const printerName = row.printer_id === null ? undefined : h.printers.get(row.printer_id);
+  const starterName = row.started_by === null ? undefined : h.users.get(row.started_by);
+  const byId = new Map(h.options.map((o) => [o.id, o]));
   const option = (id: number): WireSpecOption | null => {
     const o = byId.get(id);
     return o === undefined
@@ -264,7 +298,7 @@ async function documentPolicy(): Promise<DocumentPolicy> {
  * التالي — نفس قاعدة «طلباتي».
  */
 async function requireOwnJob(customerId: number, jobId: number): Promise<PrintJobRow> {
-  await sweepOverdue();
+  await sweepOverdueLazily();
   const row = await repo.findJob(jobId);
   if (!row || row.customer_id !== customerId) throw new NotFoundError('Print job not found');
   return row;
@@ -313,7 +347,7 @@ async function requireStaffJob(
   key: string,
   jobId: number,
 ): Promise<PrintJobRow> {
-  await sweepOverdue();
+  await sweepOverdueLazily();
   const row = await repo.findJob(jobId);
   // المسودة ليست عملاً لأحد بعد — ولا يراها الموظف (الزبون لم يُرسلها).
   if (!row || row.status === 'draft') throw new NotFoundError('Print job not found');
@@ -564,9 +598,10 @@ export async function listMine(
   limit: number,
   offset: number,
 ): Promise<{ items: WirePrintJob[]; total: number }> {
-  await sweepOverdue();
+  await sweepOverdueLazily();
   const { rows, total } = await repo.findJobs({ customerId, statuses }, limit, offset);
-  return { items: await Promise.all(rows.map(wireJob)), total };
+  const hydration = await hydrateJobs(rows);
+  return { items: await Promise.all(rows.map((row) => wireJob(row, hydration))), total };
 }
 
 export async function getMine(customerId: number, jobId: number): Promise<WirePrintJob> {
@@ -627,9 +662,9 @@ async function fileLinkOf(jobId: number, fileId: number): Promise<string> {
  */
 export type WireStaffPrintJob = WirePrintJob & { materials: WireJobMaterials | null };
 
-async function staffWire(row: PrintJobRow, seeCost: boolean): Promise<WireStaffPrintJob> {
+async function staffWire(row: PrintJobRow, seeCost: boolean, hydration?: JobHydration): Promise<WireStaffPrintJob> {
   const [wire, materials] = await Promise.all([
-    wireJob(row),
+    wireJob(row, hydration),
     seeCost ? jobMaterials(row) : Promise.resolve(null),
   ]);
   return { ...wire, materials };
@@ -648,10 +683,11 @@ export async function queueBranches(
   actor: RequestActorContext,
 ): Promise<{ id: number; name: string }[]> {
   const branches = await printingRepo.findLiveBranches();
-  const allowed = await Promise.all(
-    branches.map((b) => holdsPermissionAt(actor.userId, QUEUE_VIEW_KEY, b.id)),
+  const held = await userRoleAssignmentsRepository.findEffectivePermissionKeysByBranch(
+    actor.userId,
+    branches.map((b) => b.id),
   );
-  return branches.filter((_, i) => allowed[i]);
+  return branches.filter((b) => held.get(b.id)?.has(QUEUE_VIEW_KEY));
 }
 
 /** What the production board's stage row and the home tile count. */
@@ -691,7 +727,7 @@ export async function queueCounts(
   } else {
     branchIds = (await queueBranches(actor)).map((b) => b.id);
   }
-  await sweepOverdue();
+  await sweepOverdueLazily();
   const m = await repo.countByStatus(branchIds, filters);
   const n = (s: PrintJobStatus): number => m.get(s) ?? 0;
   let lanes: WireQueueCounts['lanes'] = [];
@@ -729,14 +765,14 @@ export async function listQueue(
   filters: repo.QueueFilters = {},
 ): Promise<{ items: WireStaffPrintJob[]; total: number }> {
   await requireScope(actor, QUEUE_VIEW_KEY, branchId);
-  await sweepOverdue();
+  await sweepOverdueLazily();
   const { rows, total } = await repo.findJobs(
     { branchId, statuses, excludeDrafts: true, excludeCounter: true, ...filters },
     limit,
     offset,
   );
-  const seeCost = await canSeeCost(actor.userId, branchId);
-  return { items: await Promise.all(rows.map((row) => staffWire(row, seeCost))), total };
+  const [seeCost, hydration] = await Promise.all([canSeeCost(actor.userId, branchId), hydrateJobs(rows)]);
+  return { items: await Promise.all(rows.map((row) => staffWire(row, seeCost, hydration))), total };
 }
 
 export async function getForStaff(
@@ -1051,7 +1087,7 @@ export async function listRecord(
   limit: number,
   offset: number,
 ): Promise<{ items: WireRecordEntry[]; total: number }> {
-  await sweepOverdue();
+  await sweepOverdueLazily();
   const filters = await recordFilters(actor, q);
   const { rows, total } = await repo.findRecord(filters, limit, offset);
   const seeCost = new Map<number, boolean>();
@@ -1060,10 +1096,11 @@ export async function listRecord(
       seeCost.set(r.job.branch_id, await canSeeCost(actor.userId, r.job.branch_id));
     }
   }
+  const hydration = await hydrateJobs(rows.flatMap((r) => (r.kind === 'job' ? [r.job] : [])));
   const items = await Promise.all(
     rows.map(async (r): Promise<WireRecordEntry> =>
       r.kind === 'job'
-        ? { kind: 'job', job: await staffWire(r.job, seeCost.get(r.job.branch_id) ?? false) }
+        ? { kind: 'job', job: await staffWire(r.job, seeCost.get(r.job.branch_id) ?? false, hydration) }
         : { kind: 'shelf', shelf: shelfEntryWire(r.shelf) },
     ),
   );
@@ -1142,12 +1179,12 @@ export async function lookupForPickup(
     });
   }
   const rows = await repo.findForTill(branchId, q.trim());
-  const seeCost = await canSeeCost(actor.userId, branchId);
+  const [seeCost, hydration] = await Promise.all([canSeeCost(actor.userId, branchId), hydrateJobs(rows)]);
   return Promise.all(
     rows.map(async (row) => {
       const action = tillActionFor(row, saleId);
       return {
-        ...(await staffWire(row, seeCost)),
+        ...(await staffWire(row, seeCost, hydration)),
         till_action: action,
         other_sale_id: action === 'in_other_sale' ? row.sale_id : null,
       };
@@ -1403,3 +1440,6 @@ export async function sweepOverdue(now: Date = new Date()): Promise<number> {
   }
   return closed;
 }
+
+/** The read-path form — see `lazySweep`: once per 15s per process, never per poll. */
+const sweepOverdueLazily = lazySweep(() => sweepOverdue(), 15_000);

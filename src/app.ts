@@ -7,6 +7,7 @@ import express, {
 } from 'express';
 import cors, { type CorsOptions } from 'cors';
 import helmet from 'helmet';
+import compression from 'compression';
 import swaggerUi from 'swagger-ui-express';
 import { env } from './core/config/env.js';
 import { pinoHttp } from 'pino-http';
@@ -42,6 +43,7 @@ import { permissionsRouter } from './features/identity/routes/permissions.routes
 import { branchesRouter } from './features/identity/routes/branches.routes.js';
 import { stationsRouter } from './features/identity/routes/stations.routes.js';
 import { dashboardRouter } from './features/dashboard/routes/dashboard.routes.js';
+import { searchRouter } from './features/search/routes/search.routes.js';
 import { ownershipsRouter } from './features/identity/routes/ownerships.routes.js';
 import { roleAssignmentsRouter } from './features/identity/routes/user-role-assignments.routes.js';
 import { auditLogRouter } from './features/identity/routes/audit-log.routes.js';
@@ -62,6 +64,7 @@ import {
   returnsRouter,
 } from './features/sales/routes/sales.routes.js';
 import { cartRouter, myOrdersRouter, ordersRouter } from './features/sales/routes/orders.routes.js';
+import { shiftsRouter } from './features/sales/routes/shifts.routes.js';
 import { printingRouter } from './features/printing/routes/printing.routes.js';
 import {
   myPrintJobsRouter,
@@ -109,6 +112,8 @@ export const API_ROUTERS: ReadonlyArray<{ path: string; router: Router }> = [
   { path: '/api/v1/branches', router: branchesRouter },
   { path: '/api/v1/stations', router: stationsRouter },
   { path: '/api/v1/dashboard', router: dashboardRouter },
+  /** «انتقل إلى…» records — docs/reference/global_search.md. */
+  { path: '/api/v1/search', router: searchRouter },
   { path: '/api/v1/ownerships', router: ownershipsRouter },
   { path: '/api/v1/role-assignments', router: roleAssignmentsRouter },
   { path: '/api/v1/audit-log', router: auditLogRouter },
@@ -122,6 +127,8 @@ export const API_ROUTERS: ReadonlyArray<{ path: string; router: Router }> = [
   { path: '/api/v1/system-settings', router: systemSettingsRouter },
   /** Financial reports over the ledger — docs/reference/finance_ledger.md §٥. */
   { path: '/api/v1/reports', router: reportsRouter },
+  /** The cash shift — before `/sales`, whose `/:id` would read «shifts» as an id (cash_shifts.md). */
+  { path: '/api/v1/sales/shifts', router: shiftsRouter },
   { path: '/api/v1/sales', router: salesRouter },
   { path: '/api/v1/returns', router: returnsRouter },
   { path: '/api/v1/cart', router: cartRouter },
@@ -181,6 +188,9 @@ function corsOptions(): CorsOptions {
     credentials: true,
   };
 }
+
+/** GET paths polled every few seconds by open screens. */
+const QUIET_POLLS = /\/(health|printing\/jobs(\/counts)?)(\?|$)/;
 
 export function buildApp(): Express {
   const app = express();
@@ -270,7 +280,29 @@ export function buildApp(): Express {
 
   app.use(helmet());
   app.use(cors(corsOptions()));
-  app.use(pinoHttp({ logger }));
+  // Lists, catalogue pages and translations went uncompressed over mobile
+  // links — five to ten times the bytes. Images and other already-compressed
+  // types are skipped by the middleware's own filter (2026-10-14).
+  app.use(compression({ threshold: 1024 }));
+  app.use(
+    pinoHttp({
+      logger,
+      // Method, path and caller only: the default serializer wrote every
+      // header — the session token in `Authorization` and the station token
+      // with it — into the log of every request (2026-10-14).
+      serializers: {
+        req: (req: { id: unknown; method: string; url: string; remoteAddress?: string }) => ({
+          id: req.id,
+          method: req.method,
+          url: req.url,
+          remoteAddress: req.remoteAddress,
+        }),
+      },
+      // The boards' 30s polls and health checks are not news; a failing one
+      // still reaches the log through the error handler.
+      autoLogging: { ignore: (req) => req.method === 'GET' && QUIET_POLLS.test(req.url ?? '') },
+    }),
+  );
 
   // Before `express.json()`, not after.
   //

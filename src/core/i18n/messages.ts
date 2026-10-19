@@ -905,6 +905,72 @@ export const MESSAGES = {
     en: 'The payments do not cover the sale',
     ar: 'المدفوع لا يغطّي الفاتورة',
   },
+  // ── The branch drawer (cash_shifts.md) ──
+  /** The till opens the branch's drawer with its count, then pays again. */
+  shift_required: {
+    en: 'Open the branch drawer before taking money',
+    ar: 'افتح وردية الفرع قبل أن تقبض',
+  },
+  shift_stale: {
+    en: 'The drawer has been open too long — count and close it first',
+    ar: 'الوردية مفتوحة منذ وقتٍ طويل — عُدّ الدرج وأقفلها أولاً',
+  },
+  shift_not_at_branch: {
+    en: 'You do not work this branch\'s drawer',
+    ar: 'لا تعمل على درج هذا الفرع',
+  },
+  cash_out_exceeds_drawer: {
+    en: 'The drawer does not hold that much',
+    ar: 'لا يوجد في الدرج هذا المبلغ',
+  },
+  shift_cash_out_needs_approval: {
+    en: 'This cash-out needs a manager\'s approval',
+    ar: 'هذا الإخراج يحتاج موافقة مدير',
+  },
+  shift_approval_refused: {
+    en: 'Approval was refused',
+    ar: 'رُفضت الموافقة',
+  },
+  shift_approver_is_self: {
+    en: 'You cannot approve your own cash-out — another manager approves it',
+    ar: 'لا توافق على إخراجك بنفسك — يوافق مديرٌ آخر',
+  },
+  shift_approver_not_allowed: {
+    en: 'This manager cannot approve cash-outs at this branch',
+    ar: 'هذا المدير لا يوافق على الإخراج بهذا الفرع',
+  },
+  shift_movement_already_reversed: {
+    en: 'This movement was already reversed',
+    ar: 'عُكست هذه الحركة من قبل',
+  },
+  shift_movement_is_reversal: {
+    en: 'A reversal cannot be reversed — record the movement again',
+    ar: 'العكس لا يُعكس — سجّل الحركة من جديد',
+  },
+  shift_not_reviewable: {
+    en: 'This shift is not waiting for a review',
+    ar: 'هذه الوردية لا تنتظر مراجعة',
+  },
+  shift_closed: {
+    en: 'This shift is already closed',
+    ar: 'هذه الوردية مقفلة',
+  },
+  shift_open: {
+    en: 'The shift is still open',
+    ar: 'الوردية ما زالت مفتوحة',
+  },
+  shift_left_above_counted: {
+    en: 'You cannot leave more than you counted',
+    ar: 'لا يُترك بالدرج أكثر ممّا عُدّ',
+  },
+  shift_reason_set: {
+    en: 'This shift already has its reason',
+    ar: 'سُجّل سبب هذه الوردية من قبل',
+  },
+  ledger_cash_needs_payment: {
+    en: 'Only a payment comes in as cash',
+    ar: 'النقد يُقبض على سدادٍ فقط',
+  },
   sale_discount_reason_required: {
     en: 'A manual discount needs a reason',
     ar: 'الخصم اليدوي يحتاج سبباً',

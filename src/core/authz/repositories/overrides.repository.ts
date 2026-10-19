@@ -5,6 +5,7 @@ import {
   type UserPermissionOverrideRow,
 } from '../schemas/user-permission-overrides.schema.js';
 import type { OverrideInput } from '../inference.js';
+import { clearPermissionCache } from '../permission-cache.js';
 
 /** Row access for per-account exceptions. No rules here — every rule is in `inference.ts`. */
 
@@ -61,4 +62,5 @@ export async function replaceForUser(
       })),
     );
   });
+  clearPermissionCache();
 }

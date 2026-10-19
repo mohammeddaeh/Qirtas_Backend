@@ -31,6 +31,8 @@ import type { AuthRealm } from '../realm.js';
  */
 
 const MINUTE_MS = 60 * 1000;
+/** How stale `last_active_at` may get before a request refreshes it. */
+const TOUCH_EVERY_MS = MINUTE_MS;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -140,9 +142,14 @@ export async function resolveToken(realm: AuthRealm, token: string): Promise<Ses
     return { ok: false, reason: 'idle' };
   }
 
-  void sessionsRepository.touchLastActive(realm, session.id).catch(() => {
-    /* best-effort activity tracking — never blocks or fails a request */
-  });
+  // **At most once a minute** (2026-10-14): this was an UPDATE on every
+  // request — every 30s poll of every board wrote a row. The idle timeout is
+  // counted in minutes, so a stamp up to a minute old changes no answer.
+  if (idleMs > TOUCH_EVERY_MS) {
+    void sessionsRepository.touchLastActive(realm, session.id).catch(() => {
+      /* best-effort activity tracking — never blocks or fails a request */
+    });
+  }
 
   return { ok: true, session };
 }

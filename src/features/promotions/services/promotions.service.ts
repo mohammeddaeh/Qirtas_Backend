@@ -26,6 +26,7 @@ import {
   type PromotionContext,
   type PromotionItem,
 } from './promotion-rules.js';
+import { ttlCache, CATEGORY_PATHS_CACHE, PROMOTION_CANDIDATES_CACHE } from '../../../core/db/ttl-cache.js';
 
 const num = (v: string | null): number | null => (v === null ? null : Number(v));
 
@@ -125,15 +126,23 @@ async function categoryPaths(): Promise<Map<number, number[]>> {
   return paths;
 }
 
+/**
+ * Read on every price resolved — till lines, storefront pages, carts — and
+ * changed a few times a week; see `ttlCache` (2026-10-14). Cleared by every
+ * promotion write and every category write.
+ */
+const candidatesCache = ttlCache(PROMOTION_CANDIDATES_CACHE, 15_000, async () => hydrate(await repo.findCandidates()));
+const categoryPathsCache = ttlCache(CATEGORY_PATHS_CACHE, 60_000, categoryPaths);
+
 export async function resolveOn(
   ctx: PromotionPriceContext,
   items: PromotionPriceItem[],
 ): Promise<Map<number, PromotionOnPrice>> {
   const out = new Map<number, PromotionOnPrice>();
   if (items.length === 0) return out;
-  const candidates = await hydrate(await repo.findCandidates());
+  const candidates = await candidatesCache.get();
   if (candidates.length === 0) return out;
-  const paths = await categoryPaths();
+  const paths = await categoryPathsCache.get();
   const ruleCtx: PromotionContext = { ...ctx, now: new Date() };
 
   for (const item of items) {
@@ -655,8 +664,8 @@ export async function previewBasket(input: PreviewInput): Promise<{
   const [prices, costs, candidates, paths, targets] = await Promise.all([
     resolvePricesAt(input.branch_id, variantIds, BASE_PRICES),
     resolveAvgCostAt(input.branch_id, variantIds),
-    hydrate(await repo.findCandidates()),
-    categoryPaths(),
+    candidatesCache.get(),
+    categoryPathsCache.get(),
     repo.findVariantContext(variantIds),
   ]);
   const ctxOf = new Map(targets.map((t) => [t.variant_id, t]));

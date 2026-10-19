@@ -8,6 +8,8 @@ import {
   type CatalogCategoryRow,
   type NewCatalogCategoryRow,
 } from '../schemas/categories.schema.js';
+import { CATEGORY_PATHS_CACHE, clearCache } from '../../../core/db/ttl-cache.js';
+import { PRICING_CONTEXT_CACHE } from './pricing.repository.js';
 
 /**
  * The whole tree, archived rows included — structural rules (depth, cycles,
@@ -32,6 +34,8 @@ export async function insert(data: NewCatalogCategoryRow): Promise<CatalogCatego
   const rows = await db.insert(catalogCategoriesTable).values(data).returning();
   const row = rows[0];
   if (!row) throw new Error('Insert did not return a row');
+  clearCache(PRICING_CONTEXT_CACHE);
+  clearCache(CATEGORY_PATHS_CACHE);
   return row;
 }
 
@@ -44,6 +48,8 @@ export async function update(
     .set({ ...data, updated_at: new Date() })
     .where(eq(catalogCategoriesTable.id, id))
     .returning();
+  clearCache(PRICING_CONTEXT_CACHE);
+  clearCache(CATEGORY_PATHS_CACHE);
   return rows[0];
 }
 
@@ -56,7 +62,7 @@ export async function moveWithLevels(
   data: Partial<NewCatalogCategoryRow>,
   levels: ReadonlyMap<number, number>,
 ): Promise<CatalogCategoryRow | undefined> {
-  return db.transaction(async (tx) => {
+  const moved = await db.transaction(async (tx) => {
     for (const [nodeId, level] of levels) {
       if (nodeId === id) continue;
       await tx
@@ -71,6 +77,9 @@ export async function moveWithLevels(
       .returning();
     return rows[0];
   });
+  clearCache(PRICING_CONTEXT_CACHE);
+  clearCache(CATEGORY_PATHS_CACHE);
+  return moved;
 }
 
 /** Replaces a category's own allowed attributes. Inherited ones are not rows here. */
@@ -91,4 +100,6 @@ export async function replaceAttributeLinks(categoryId: number, typeIds: number[
 
 export async function hardDelete(id: number): Promise<void> {
   await db.delete(catalogCategoriesTable).where(eq(catalogCategoriesTable.id, id));
+  clearCache(PRICING_CONTEXT_CACHE);
+  clearCache(CATEGORY_PATHS_CACHE);
 }

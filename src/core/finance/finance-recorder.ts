@@ -29,6 +29,8 @@ export interface FinanceEntry {
   userId?: number | null;
   /** The registered computer — `RequestActorContext.stationId`. */
   stationId?: number | null;
+  /** The cash shift it falls in (`cash_shifts.md`). */
+  shiftId?: number | null;
   reason?: string | null;
   note?: string | null;
 }
@@ -49,6 +51,7 @@ export async function recordFinance(exec: FinanceExec, entries: FinanceEntry[]):
       sale_id: e.saleId ?? null,
       user_id: e.userId ?? null,
       station_id: e.stationId ?? null,
+      shift_id: e.shiftId ?? null,
       reason: e.reason ?? null,
       note: e.note ?? null,
     }));

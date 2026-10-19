@@ -1,4 +1,6 @@
 import { issueNumber } from '../../../core/numbering/numbering.js';
+import { shiftForMoney } from './shifts.service.js';
+import * as shiftsRepo from '../repositories/shifts.repository.js';
 import { recordAudit } from '../../../core/audit/audit-recorder.js';
 import { db } from '../../../core/db/client.js';
 import { BusinessError, NotFoundError } from '../../../core/http/api-error.js';
@@ -232,6 +234,8 @@ export interface WireReturn {
   number: string;
   branch_id: number;
   sale_id: number;
+  /** The invoice's own number — what the cashier and the customer read on paper. */
+  sale_number: string | null;
   customer_id: number | null;
   refund_method: SaleReturnRow['refund_method'];
   total_syp: number;
@@ -261,16 +265,34 @@ export interface WireReturn {
 export async function getReturn(id: number): Promise<WireReturn> {
   const row = await returnsRepo.findReturnById(id);
   if (!row) throw new NotFoundError('Return not found');
-  const [lines, stationName] = await Promise.all([
-    returnsRepo.findReturnLines(id),
-    repo.findStationName(row.station_id),
+  return (await wireReturns([row]))[0]!;
+}
+
+/** Many returns in two queries — the list re-read each row through [getReturn] (2026-10-14). */
+async function wireReturns(rows: SaleReturnRow[]): Promise<WireReturn[]> {
+  const [linesBy, stations, saleNumbers] = await Promise.all([
+    returnsRepo.findReturnLinesFor(rows.map((r) => r.id)),
+    repo.findStationNames([...new Set(rows.flatMap((r) => (r.station_id === null ? [] : [r.station_id])))]),
+    returnsRepo.findSaleNumbersFor([...new Set(rows.map((r) => r.sale_id))]),
   ]);
+  return rows.map((row) =>
+    wireReturn(row, linesBy.get(row.id) ?? [], row.station_id === null ? null : (stations.get(row.station_id) ?? null), saleNumbers.get(row.sale_id) ?? null),
+  );
+}
+
+function wireReturn(
+  row: SaleReturnRow,
+  lines: Awaited<ReturnType<typeof returnsRepo.findReturnLines>>,
+  stationName: string | null,
+  saleNumber: string | null,
+): WireReturn {
   return {
     station_name: stationName,
     id: row.id,
     number: row.number,
     branch_id: row.branch_id,
     sale_id: row.sale_id,
+    sale_number: saleNumber,
     customer_id: row.customer_id,
     refund_method: row.refund_method,
     total_syp: num(row.total_syp),
@@ -378,6 +400,13 @@ export async function createReturn(
   if (!branch) throw new NotFoundError('Branch not found');
 
   const created = await db.transaction(async (tx) => {
+    // A cash refund leaves the branch drawer, under whoever hands it over (`cash_shifts.md`):
+    // with the shift required, none open refuses it. A credit refund moves no
+    // cash — it joins the open shift's report when there is one, and needs none.
+    const shiftId =
+      input.refund_method === 'cash'
+        ? await shiftForMoney(tx, input.branch_id)
+        : ((await shiftsRepo.findOpenShift(tx, input.branch_id))?.id ?? null);
     // الأسطر مقفلة: بين حساب السقف وكتابة المرتجع لا يُرجع جهازٌ آخر القطعة نفسها.
     await returnsRepo.lockSaleLines(tx, input.sale_id);
     const allLines = await repo.findLines(input.sale_id, tx);
@@ -522,6 +551,7 @@ export async function createReturn(
         saleId: input.sale_id,
         userId: actor.userId,
         stationId: actor.stationId ?? null,
+        shiftId,
         reason: input.reason_code ?? null,
         // Free text (up to 300) is a note; `reason` holds codes only (M-2).
         note: input.reason?.trim() || null,
@@ -542,6 +572,7 @@ export async function createReturn(
         saleId: input.sale_id,
         userId: actor.userId,
         stationId: actor.stationId ?? null,
+        shiftId,
         note: frozen === null ? 'cost_estimated_now' : null,
       };
       entries.push({ ...common, type: 'cogs_reversal', amountSyp: value });
@@ -714,6 +745,5 @@ export async function listReturns(
   offset: number,
 ): Promise<{ items: WireReturn[]; total: number }> {
   const { rows, total } = await returnsRepo.findReturns(filters, limit, offset);
-  const items = await Promise.all(rows.map((row) => getReturn(row.id)));
-  return { items, total };
+  return { items: await wireReturns(rows), total };
 }

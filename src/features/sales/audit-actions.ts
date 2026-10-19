@@ -15,6 +15,12 @@ export const SALES_AUDIT = {
   settings: 'sales.settings.set',
   orderPickup: 'sales.order.pickup',
   orderCancel: 'sales.order.cancel',
+  shiftOpen: 'sales.shift.open',
+  shiftMovement: 'sales.shift.movement',
+  shiftClose: 'sales.shift.close',
+  shiftReason: 'sales.shift.reason',
+  shiftReverse: 'sales.shift.reverse',
+  shiftReview: 'sales.shift.review',
 } as const;
 
 export const saleTarget = {
@@ -24,4 +30,5 @@ export const saleTarget = {
   return_: (id: number) => `sale_return:${id}`,
   settings: () => 'sales_settings',
   order: (id: number) => `order:${id}`,
+  shift: (id: number) => `cash_shift:${id}`,
 };

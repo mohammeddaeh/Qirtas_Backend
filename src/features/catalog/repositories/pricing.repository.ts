@@ -15,12 +15,16 @@ import {
 } from '../schemas/pricing.schema.js';
 import { catalogProductsTable, catalogVariantsTable } from '../schemas/products.schema.js';
 import type { RoundingBand } from '../services/price-resolution.js';
+import { clearCache } from '../../../core/db/ttl-cache.js';
 
 /** A central price row as the service reads it. */
 export type VariantPriceLike = VariantPriceRow;
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Exec = typeof db | Tx;
+
+/** The `ttlCache` holding the category tree, rounding bands and rate (pricing.service). */
+export const PRICING_CONTEXT_CACHE = 'pricing-context';
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
@@ -37,6 +41,7 @@ export async function saveRoundingBands(bands: RoundingBand[], userId: number): 
       target: catalogPricingSettingsTable.id,
       set: { rounding_bands: bands, updated_by_user_id: userId, updated_at: new Date() },
     });
+  clearCache(PRICING_CONTEXT_CACHE);
 }
 
 export async function findCurrentRate(): Promise<{ usd_to_syp: string; effective_at: Date } | null> {
@@ -50,6 +55,7 @@ export async function findCurrentRate(): Promise<{ usd_to_syp: string; effective
 
 export async function insertRate(usdToSyp: number, userId: number): Promise<void> {
   await db.insert(catalogExchangeRatesTable).values({ usd_to_syp: String(usdToSyp), created_by_user_id: userId });
+  clearCache(PRICING_CONTEXT_CACHE);
 }
 
 // ── Prices ──────────────────────────────────────────────────────────────────

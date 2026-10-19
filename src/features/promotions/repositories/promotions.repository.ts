@@ -12,6 +12,7 @@ import {
   type NewPromotionRow,
   type PromotionRow,
 } from '../schemas/promotions.schema.js';
+import { clearCache, PROMOTION_CANDIDATES_CACHE } from '../../../core/db/ttl-cache.js';
 
 export type PromotionLifecycle = 'live' | 'scheduled' | 'ended' | 'inactive' | 'archived';
 
@@ -144,6 +145,7 @@ export async function findTiers(promotionIds: number[]) {
 
 export async function insertPromotion(values: NewPromotionRow): Promise<PromotionRow> {
   const [row] = await db.insert(promotionsTable).values(values).returning();
+  clearCache(PROMOTION_CANDIDATES_CACHE);
   return row!;
 }
 
@@ -156,11 +158,13 @@ export async function updatePromotion(
     .set({ ...values, updated_at: new Date() })
     .where(eq(promotionsTable.id, id))
     .returning();
+  clearCache(PROMOTION_CANDIDATES_CACHE);
   return row;
 }
 
 export async function deletePromotion(id: number): Promise<void> {
   await db.delete(promotionsTable).where(eq(promotionsTable.id, id));
+  clearCache(PROMOTION_CANDIDATES_CACHE);
 }
 
 export async function replaceBranchLinks(promotionId: number, branchIds: number[]): Promise<void> {
@@ -170,6 +174,7 @@ export async function replaceBranchLinks(promotionId: number, branchIds: number[
       .insert(promotionBranchesTable)
       .values(branchIds.map((branch_id) => ({ promotion_id: promotionId, branch_id })));
   }
+  clearCache(PROMOTION_CANDIDATES_CACHE);
 }
 
 export async function replaceTiers(
@@ -180,6 +185,7 @@ export async function replaceTiers(
   if (tiers.length > 0) {
     await db.insert(promotionTiersTable).values(tiers.map((t) => ({ ...t, promotion_id: promotionId })));
   }
+  clearCache(PROMOTION_CANDIDATES_CACHE);
 }
 
 // ── السقوف ──────────────────────────────────────────────────────────────────

@@ -31,6 +31,12 @@ export const FINANCE_ENTRY_TYPES = [
   'loss_ready_writeoff',
   // المخزون
   'loss_inventory',
+  // الوردية (`cash_shifts.md`): حركات الدرج اليدوية · فرق العدّ · سداد الدين نقداً
+  'cash_in',
+  'cash_out',
+  'cash_over',
+  'cash_short',
+  'debt_payment',
 ] as const;
 export type FinanceEntryType = (typeof FINANCE_ENTRY_TYPES)[number];
 export const financeEntryTypeEnum = pgEnum('finance_entry_type', FINANCE_ENTRY_TYPES);
@@ -47,6 +53,9 @@ export const FINANCE_DOC_TYPES = [
   'print_job',
   'print_counter',
   'ready_copy',
+  'cash_shift',
+  'cash_movement',
+  'customer_ledger',
 ] as const;
 export type FinanceDocType = (typeof FINANCE_DOC_TYPES)[number];
 export const financeDocTypeEnum = pgEnum('finance_doc_type', FINANCE_DOC_TYPES);
@@ -71,6 +80,11 @@ export const financeEntriesTable = pgTable(
      * counted against it. `null` from a phone or an unregistered computer.
      */
     station_id: integer('station_id'),
+    /**
+     * The cash shift it belongs to (`cash_shifts.md`) — the expected cash of a
+     * shift is a sum over this, not over a time window. `null` outside a shift.
+     */
+    shift_id: integer('shift_id'),
     /** «لماذا» — سبب المرتجع أو التلف، رمزٌ تُترجمه الواجهة. */
     reason: varchar('reason', { length: 40 }),
     note: text('note'),
@@ -78,6 +92,7 @@ export const financeEntriesTable = pgTable(
   },
   (table) => ({
     branchTimeIdx: index('finance_entries_branch_time_idx').on(table.branch_id, table.occurred_at),
+    shiftIdx: index('finance_entries_shift_idx').on(table.shift_id),
     typeTimeIdx: index('finance_entries_type_time_idx').on(table.type, table.occurred_at),
     docIdx: index('finance_entries_doc_idx').on(table.doc_type, table.doc_id),
     saleIdx: index('finance_entries_sale_idx').on(table.sale_id),

@@ -196,6 +196,20 @@ export const salesSettingsTable = pgTable('sales_settings', {
   damaged_returns_allowed: boolean('damaged_returns_allowed').notNull().default(true),
   /** The refund suggested for a returned print, as a share of what was paid. */
   print_refund_suggest_percent: integer('print_refund_suggest_percent').notNull().default(100),
+
+  // ── The cash shift (`cash_shifts.md`).
+  /** A close whose difference passes this asks for a reason. `null` = never asks. */
+  shift_reason_above_syp: numeric('shift_reason_above_syp', { precision: 14, scale: 2 }).default('10000'),
+  /** A shift open longer than this is flagged — never closed by the machine. */
+  shift_alert_hours: integer('shift_alert_hours').notNull().default(16),
+  /** Past the alert hours: `warn` (flag only) or `block` (no money until the shift is closed). */
+  shift_stale_action: varchar('shift_stale_action', { length: 5 }).notNull().default('warn'),
+  /** A cash-out above this needs a manager. `null` = no cap. */
+  shift_cash_out_approval_syp: numeric('shift_cash_out_approval_syp', { precision: 14, scale: 2 }).default('50000'),
+  /** A close whose difference passes this is flagged «needs review». `null` = never. */
+  shift_review_above_syp: numeric('shift_review_above_syp', { precision: 14, scale: 2 }).default('50000'),
+  /** The notes the optional denomination counter shows, smallest first. */
+  shift_denominations: jsonb('shift_denominations').$type<number[]>().notNull().default([500, 1000, 2000, 5000]),
   updated_by: integer('updated_by').references(() => usersTable.id, { onDelete: 'set null' }),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

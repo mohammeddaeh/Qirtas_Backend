@@ -444,6 +444,21 @@ const PERMISSIONS: SeedPermission[] = [
     display: { ar: 'إدارة سقوف الخصم والآجل', en: 'Manage Discount & Credit Limits' },
   },
   {
+    // `cash_shifts.md`: يقرأ ورديات فروعه ويوافق على الإخراج الكبير ويراجع الفروق.
+    key: 'sales.shift.manage',
+    module: 'sales',
+    is_sensitive: true,
+    display: { ar: 'إدارة ورديات الصندوق', en: 'Manage Cash Shifts' },
+  },
+  {
+    // درج الفرع (2026-10-19): الفتح لكل من يبيع، **والعدّ والإقفال مفتاحٌ مستقل** —
+    // موظف المطبوعات الذي يبيع لا يُقفل درجاً لم يعدّه.
+    key: 'sales.shift.close',
+    module: 'sales',
+    is_sensitive: false,
+    display: { ar: 'عدّ الدرج وإقفال الوردية', en: 'Count & Close the Drawer' },
+  },
+  {
     // مفتاحان لا واحد: الكاشير يُسأل «لماذا هذا السعر؟» فيحتاج أن يقرأ العرض،
     // ولا يجوز أن يملك تغييره. مفتاحٌ واحد كان سيمنح الشرحَ والقرارَ معاً.
     key: 'promotions.view',
@@ -677,6 +692,9 @@ const ROLES: SeedRole[] = [
       'sales.sell',
       'sales.view',
       'sales.refund',
+      // يرى ورديات فرعه ويوافق على الإخراج الكبير ويراجع الفروق، ويعدّ الدرج (`cash_shifts.md`).
+      'sales.shift.manage',
+      'sales.shift.close',
       'dashboard.view',
       // يعمل على حاسوب الفرع (الصندوق والطباعة والجداول).
       'stations.sign_in',
@@ -758,6 +776,8 @@ const ROLES: SeedRole[] = [
       // والمرتجع مفتاحٌ آخر (sales.refund) يبقى بيد مدير الفرع.
       'sales.sell',
       'sales.view',
+      // يعدّ درج الفرع ويُقفل الوردية (`cash_shifts.md`).
+      'sales.shift.close',
       'promotions.view',
       // الصندوق على حاسوب الفرع.
       'stations.sign_in',

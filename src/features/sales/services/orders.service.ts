@@ -23,6 +23,7 @@ import {
   type CheckoutProblem,
   type OrderStatus,
 } from './order-rules.js';
+import { lazySweep } from '../../../core/db/lazy-sweep.js';
 
 const num = (v: string | null): number => (v === null ? 0 : Number(v));
 
@@ -241,19 +242,36 @@ export interface WireOrder {
 }
 
 async function wireOrder(row: OrderRow): Promise<WireOrder> {
-  const [lines, branch, customer] = await Promise.all([
-    repo.findOrderLines(row.id),
-    salesRepo.findBranch(row.branch_id),
-    repo.findCustomer(row.customer_id),
+  return (await wireOrders([row]))[0]!;
+}
+
+/** Three queries for a whole queue page, not three per order (2026-10-14). */
+async function wireOrders(rows: OrderRow[]): Promise<WireOrder[]> {
+  const uniq = (xs: number[]): number[] => [...new Set(xs)];
+  const [linesBy, branches, customers] = await Promise.all([
+    repo.findOrderLinesFor(rows.map((r) => r.id)),
+    salesRepo.findBranchNames(uniq(rows.map((r) => r.branch_id))),
+    repo.findCustomerNamesFor(uniq(rows.map((r) => r.customer_id))),
   ]);
+  return rows.map((row) =>
+    wireOneOrder(row, linesBy.get(row.id) ?? [], branches.get(row.branch_id) ?? null, customers.get(row.customer_id) ?? null),
+  );
+}
+
+function wireOneOrder(
+  row: OrderRow,
+  lines: Awaited<ReturnType<typeof repo.findOrderLines>>,
+  branchName: string | null,
+  customerName: string | null,
+): WireOrder {
   const now = new Date();
   return {
     id: row.id,
     number: row.number,
     branch_id: row.branch_id,
-    branch_name: branch?.name ?? null,
+    branch_name: branchName,
     customer_id: row.customer_id,
-    customer_name: customer?.name ?? null,
+    customer_name: customerName,
     status: row.status,
     next_states: nextStates(row.status),
     subtotal_syp: num(row.subtotal_syp),
@@ -283,7 +301,7 @@ async function wireOrder(row: OrderRow): Promise<WireOrder> {
 }
 
 export async function getOrder(id: number): Promise<WireOrder> {
-  await sweepExpired();
+  await sweepExpiredLazily();
   const row = await repo.findOrderById(id);
   if (!row) throw new NotFoundError('Order not found');
   return wireOrder(row);
@@ -300,9 +318,9 @@ export async function listOrders(
   limit: number,
   offset: number,
 ): Promise<{ items: WireOrder[]; total: number }> {
-  await sweepExpired();
+  await sweepExpiredLazily();
   const { rows, total } = await repo.findOrders(filters, limit, offset);
-  return { items: await Promise.all(rows.map(wireOrder)), total };
+  return { items: await wireOrders(rows), total };
 }
 
 /**
@@ -511,6 +529,9 @@ export async function sweepExpired(): Promise<number> {
   }
   return closed;
 }
+
+/** The read-path form — see `lazySweep`: once per 15s per process, never per poll. */
+const sweepExpiredLazily = lazySweep(() => sweepExpired(), 15_000);
 
 /**
  * فتح سلّة الاستلام — **تُملأ من الطلب ولا تُسدَّد هنا**.

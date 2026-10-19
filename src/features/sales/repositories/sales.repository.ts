@@ -411,9 +411,9 @@ export async function upsertCreditLimit(
 export async function insertLedgerEntries(
   exec: Exec,
   rows: (typeof customerLedgerTable.$inferInsert)[],
-): Promise<void> {
-  if (rows.length === 0) return;
-  await exec.insert(customerLedgerTable).values(rows);
+): Promise<{ id: number }[]> {
+  if (rows.length === 0) return [];
+  return exec.insert(customerLedgerTable).values(rows).returning({ id: customerLedgerTable.id });
 }
 
 export async function findLedger(customerId: number, limit: number) {
@@ -528,4 +528,65 @@ export async function findVariantForSale(variantId: number) {
     .where(eq(catalogVariantsTable.id, variantId))
     .limit(1);
   return row;
+}
+
+// ── Batch reads for lists (2026-10-14) ─────────────────────────────────────
+// Sales history, the waiting baskets and the returns list wired each sale on
+// its own — about eight queries a row. These read the same for many sales.
+
+export async function findLinesFor(saleIds: number[]): Promise<Map<number, SaleLineRow[]>> {
+  const out = new Map<number, SaleLineRow[]>();
+  if (saleIds.length === 0) return out;
+  const rows = await db.select().from(saleLinesTable).where(inArray(saleLinesTable.sale_id, saleIds)).orderBy(saleLinesTable.id);
+  for (const r of rows) out.set(r.sale_id, [...(out.get(r.sale_id) ?? []), r]);
+  return out;
+}
+
+export async function findPaymentsFor(saleIds: number[]) {
+  const out = new Map<number, (typeof salePaymentsTable.$inferSelect)[]>();
+  if (saleIds.length === 0) return out;
+  const rows = await db.select().from(salePaymentsTable).where(inArray(salePaymentsTable.sale_id, saleIds));
+  for (const r of rows) out.set(r.sale_id, [...(out.get(r.sale_id) ?? []), r]);
+  return out;
+}
+
+export async function findCustomerNames(customerIds: number[]): Promise<Map<number, string>> {
+  if (customerIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: customersTable.id, first: customersTable.first_name, last: customersTable.last_name })
+    .from(customersTable)
+    .where(inArray(customersTable.id, customerIds));
+  const out = new Map<number, string>();
+  for (const r of rows) {
+    const name = `${r.first ?? ''} ${r.last ?? ''}`.trim();
+    if (name.length > 0) out.set(r.id, name);
+  }
+  return out;
+}
+
+export async function findUserNames(userIds: number[]): Promise<Map<number, string>> {
+  if (userIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: usersTable.id, first: usersTable.first_name, last: usersTable.last_name })
+    .from(usersTable)
+    .where(inArray(usersTable.id, userIds));
+  return new Map(rows.map((r) => [r.id, `${r.first} ${r.last}`.trim()]));
+}
+
+export async function findStationNames(stationIds: number[]): Promise<Map<number, string>> {
+  if (stationIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: stationsTable.id, name: stationsTable.name })
+    .from(stationsTable)
+    .where(inArray(stationsTable.id, stationIds));
+  return new Map(rows.map((r) => [r.id, r.name]));
+}
+
+export async function findBranchNames(branchIds: number[]): Promise<Map<number, string>> {
+  if (branchIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: branchesTable.id, name: branchesTable.name })
+    .from(branchesTable)
+    .where(inArray(branchesTable.id, branchIds));
+  return new Map(rows.map((r) => [r.id, r.name]));
 }

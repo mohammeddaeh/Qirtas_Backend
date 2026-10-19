@@ -66,7 +66,7 @@ export async function list(req: Request, res: Response): Promise<void> {
     params.limit,
     (params.page - 1) * params.limit,
   );
-  const items = await Promise.all(rows.map((row) => service.getSale(row.id)));
+  const items = await service.wireSales(rows);
   ok(res, paginated(items, total, params));
 }
 

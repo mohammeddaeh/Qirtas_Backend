@@ -13,6 +13,7 @@ import { permissionsTable } from '../schemas/permissions.schema.js';
 import { rolePermissionsTable } from '../schemas/role-permissions.schema.js';
 import { resolvePermissions } from '../../../core/authz/inference.js';
 import * as overridesRepository from '../../../core/authz/repositories/overrides.repository.js';
+import { cachedPermissionKeys, clearPermissionCache } from '../../../core/authz/permission-cache.js';
 
 const isActiveClause = sql`(${userRoleAssignmentsTable.valid_to} IS NULL OR ${userRoleAssignmentsTable.valid_to} > now())`;
 
@@ -108,6 +109,7 @@ export function findById(id: number): Promise<UserRoleAssignmentRow | undefined>
 
 export async function insert(data: NewUserRoleAssignmentRow): Promise<UserRoleAssignmentRow> {
   const rows = await db.insert(userRoleAssignmentsTable).values(data).returning();
+  clearPermissionCache();
   const row = rows[0];
   if (!row) throw new Error('Insert did not return a row');
   return row;
@@ -122,6 +124,7 @@ export async function closeAssignment(
     .set({ valid_to: validTo })
     .where(eq(userRoleAssignmentsTable.id, id))
     .returning();
+  clearPermissionCache();
   return rows[0];
 }
 
@@ -355,10 +358,11 @@ export async function countOtherActiveUsersWithPermission(params: {
  * system refuses. Account overrides carry no branch: an allow reads as
  * unrestricted, a deny applies everywhere.
  */
-export async function findEffectivePermissionKeys(
-  userId: number,
-  branchId: number | null,
-): Promise<string[]> {
+export function findEffectivePermissionKeys(userId: number, branchId: number | null): Promise<string[]> {
+  return cachedPermissionKeys(`at:${userId}:${branchId ?? 'none'}`, () => loadEffectivePermissionKeys(userId, branchId));
+}
+
+async function loadEffectivePermissionKeys(userId: number, branchId: number | null): Promise<string[]> {
   const branchClause =
     branchId === null
       ? sql`${userRoleAssignmentsTable.branch_id} IS NULL`
@@ -386,13 +390,47 @@ export async function findEffectivePermissionKeys(
 }
 
 /**
+ * [findEffectivePermissionKeys] for **many branches in two queries** —
+ * the user's active (branch, key) grants and the overrides, read once, then
+ * each branch's set worked out here by the same rules (an unrestricted grant
+ * counts at every branch). Branch pickers called the single form once per
+ * branch: 19 branches × 2 queries for one list (2026-10-14).
+ */
+export async function findEffectivePermissionKeysByBranch(
+  userId: number,
+  branchIds: readonly number[],
+): Promise<Map<number, Set<string>>> {
+  const [rows, overrides] = await Promise.all([
+    db
+      .selectDistinct({ branchId: userRoleAssignmentsTable.branch_id, key: rolePermissionsTable.permission_key })
+      .from(userRoleAssignmentsTable)
+      .innerJoin(rolesTable, eq(rolesTable.id, userRoleAssignmentsTable.role_id))
+      .innerJoin(rolePermissionsTable, eq(rolePermissionsTable.role_id, rolesTable.id))
+      .innerJoin(permissionsTable, eq(permissionsTable.key, rolePermissionsTable.permission_key))
+      .where(and(eq(userRoleAssignmentsTable.user_id, userId), isActiveClause, eq(rolesTable.is_active, true))),
+    overridesRepository.findEffectsForUser(userId),
+  ]);
+  const everywhere = rows.filter((r) => r.branchId === null).map((r) => r.key);
+  const result = new Map<number, Set<string>>();
+  for (const branchId of branchIds) {
+    const here = rows.filter((r) => r.branchId === branchId).map((r) => r.key);
+    result.set(branchId, resolvePermissions([...everywhere, ...here], overrides));
+  }
+  return result;
+}
+
+/**
  * Union of permission keys across ALL of a user's active assignments,
  * regardless of branch — used for branch-agnostic checks (identity/admin
  * endpoints like roles/branches/ownerships management, which aren't
  * themselves scoped to a single branch). For branch-scoped business actions,
  * use findEffectivePermissionKeys(userId, branchId) instead.
  */
-export async function findAllEffectivePermissionKeys(userId: number): Promise<string[]> {
+export function findAllEffectivePermissionKeys(userId: number): Promise<string[]> {
+  return cachedPermissionKeys(`all:${userId}`, () => loadAllEffectivePermissionKeys(userId));
+}
+
+async function loadAllEffectivePermissionKeys(userId: number): Promise<string[]> {
   const [rows, overrides] = await Promise.all([
     db
       .selectDistinct({ key: rolePermissionsTable.permission_key })

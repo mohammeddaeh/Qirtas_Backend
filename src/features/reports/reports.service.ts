@@ -169,9 +169,13 @@ export async function summary(q: ReportQuery) {
   const costs = COST_TYPES.reduce((s, k) => s + t(k), 0);
   const grossProfit = n(netSales + costs);
   const losses = LOSS_TYPES.reduce((s, k) => s + t(k), 0);
+  // The drawers' counted differences (cash_shifts.md) — signed: over adds, short takes.
+  const cashDifference = n(t('cash_over') + t('cash_short'));
   const methodTotal = (type: string, method: string) =>
     n(byMethod.filter((r) => r.type === type && r.method === method).reduce((s, r) => s + n(r.total), 0));
 
+  // No drawer difference per cashier: the drawer is the branch's (cash_shifts.md
+  // §المرحلة الثانية), and charging the seller a count they did not make would lie.
   const cashiers = new Map<string, { user_id: number | null; name: string; revenue: number; refunds: number; cash: number }>();
   for (const r of byCashier) {
     const key = String(r.user_id ?? 0);
@@ -214,10 +218,15 @@ export async function summary(q: ReportQuery) {
       cost_of_sales: n(-costs),
       gross_profit: grossProfit,
       losses: n(-losses),
-      net_profit: n(grossProfit + losses),
+      /** Counted drawers against expected — signed (cash_shifts.md). Part of net profit. */
+      cash_difference: cashDifference,
+      net_profit: n(grossProfit + losses + cashDifference),
       ready_shelf_value: n(shelfRow[0]?.total),
-      // Cash that should be in the drawers: cash taken minus cash paid back.
-      expected_cash: n(methodTotal('sale_revenue', 'cash') + methodTotal('refund', 'cash')),
+      // Cash that should be in the drawers: cash taken minus cash paid back, plus
+      // what moved by hand and debts paid in cash (cash_shifts.md) — floats aside.
+      expected_cash: n(
+        methodTotal('sale_revenue', 'cash') + methodTotal('refund', 'cash') + t('cash_in') + t('cash_out') + t('debt_payment'),
+      ),
     },
     revenue_by_method: ['cash', 'card', 'customer_credit', 'on_account'].map((m) => ({
       method: m,

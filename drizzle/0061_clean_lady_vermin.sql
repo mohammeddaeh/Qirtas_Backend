@@ -1,0 +1,1 @@
+ALTER TABLE "sales_settings" DROP COLUMN IF EXISTS "shift_mode";

@@ -679,3 +679,81 @@ export async function findUserName(userId: number): Promise<string | undefined> 
     .where(eq(usersTable.id, userId));
   return row === undefined ? undefined : `${row.first} ${row.last}`.trim();
 }
+
+// ── Batch reads for lists (2026-10-14) ─────────────────────────────────────
+// A queue page wired each job with its own queries — files, links, branch,
+// customer, starter — about seven per row, a hundred-odd per page, polled
+// every 30s by every board. These read the same for many jobs at once.
+
+export async function findJobFilesFor(jobIds: number[]): Promise<Map<number, JobFile[]>> {
+  const out = new Map<number, JobFile[]>();
+  if (jobIds.length === 0) return out;
+  const rows = await db
+    .select({ file: printJobFilesTable, asset: mediaAssetsTable })
+    .from(printJobFilesTable)
+    .innerJoin(mediaAssetsTable, eq(mediaAssetsTable.id, printJobFilesTable.media_asset_id))
+    .where(inArray(printJobFilesTable.job_id, jobIds))
+    .orderBy(asc(printJobFilesTable.sort_order), asc(printJobFilesTable.id));
+  for (const r of rows) {
+    const list = out.get(r.file.job_id) ?? [];
+    list.push({ id: r.file.id, sort_order: r.file.sort_order, asset: r.asset });
+    out.set(r.file.job_id, list);
+  }
+  return out;
+}
+
+export async function findJobLinksFor(jobIds: number[]): Promise<Map<number, PrintJobLinkRow[]>> {
+  const out = new Map<number, PrintJobLinkRow[]>();
+  if (jobIds.length === 0) return out;
+  const rows = await db
+    .select()
+    .from(printJobLinksTable)
+    .where(inArray(printJobLinksTable.job_id, jobIds))
+    .orderBy(asc(printJobLinksTable.id));
+  for (const r of rows) {
+    const list = out.get(r.job_id) ?? [];
+    list.push(r);
+    out.set(r.job_id, list);
+  }
+  return out;
+}
+
+export async function findBranchNames(branchIds: number[]): Promise<Map<number, string>> {
+  if (branchIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: branchesTable.id, name: branchesTable.name })
+    .from(branchesTable)
+    .where(inArray(branchesTable.id, branchIds));
+  return new Map(rows.map((r) => [r.id, r.name]));
+}
+
+export async function findCustomers(
+  customerIds: number[],
+): Promise<Map<number, { id: number; name: string; phone: string | null; status: string }>> {
+  if (customerIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      id: customersTable.id,
+      first_name: customersTable.first_name,
+      last_name: customersTable.last_name,
+      phone: customersTable.phone,
+      status: customersTable.status,
+    })
+    .from(customersTable)
+    .where(inArray(customersTable.id, customerIds));
+  return new Map(
+    rows.map((r) => [
+      r.id,
+      { id: r.id, name: [r.first_name, r.last_name].filter(Boolean).join(' ').trim(), phone: r.phone, status: r.status },
+    ]),
+  );
+}
+
+export async function findUserNames(userIds: number[]): Promise<Map<number, string>> {
+  if (userIds.length === 0) return new Map();
+  const rows = await db
+    .select({ id: usersTable.id, first: usersTable.first_name, last: usersTable.last_name })
+    .from(usersTable)
+    .where(inArray(usersTable.id, userIds));
+  return new Map(rows.map((r) => [r.id, `${r.first} ${r.last}`.trim()]));
+}
