@@ -1005,6 +1005,64 @@ export const MESSAGES = {
     en: 'Above this customer credit limit',
     ar: 'فوق سقف آجل هذا الزبون',
   },
+  sale_credit_overdue: {
+    en: 'This customer has an overdue debt — no new on-account sale until it is paid',
+    ar: 'على هذا الزبون دينٌ متأخّر — لا آجل جديد حتى يُسدَّد',
+  },
+  // ── المصاريف والرواتب (finance_operations.md §٢) ──
+  shift_use_expense_form: {
+    en: 'Record an expense from the expense form',
+    ar: 'سجّل المصروف من نموذج المصروف — يُسأل تصنيفه ويُنقص الربح',
+  },
+  expense_category_inactive: {
+    en: 'Pick an active category',
+    ar: 'اختر تصنيفاً فعّالاً',
+  },
+  expense_salary_needs_employee: {
+    en: 'A wage names the employee',
+    ar: 'الراتب يحتاج اسم الموظف',
+  },
+  expense_outside_not_allowed: {
+    en: 'Only an expenses manager records an expense paid outside the drawer',
+    ar: 'المصروف من خارج الدرج لمن يدير المصاريف',
+  },
+  expense_reverse_not_allowed: {
+    en: 'Only an expenses manager undoes an expense',
+    ar: 'عكس المصروف لمن يدير المصاريف',
+  },
+  expense_is_reversal: {
+    en: 'An undo cannot be undone',
+    ar: 'لا يُعكس العكس',
+  },
+  expense_already_reversed: {
+    en: 'Already undone',
+    ar: 'عُكس من قبل',
+  },
+  wage_none: {
+    en: 'No wage to end',
+    ar: 'لا أجر قائماً لإيقافه',
+  },
+  // ── الديون (finance_operations.md §١) ──
+  debt_not_at_branch: {
+    en: 'You cannot take money at this branch',
+    ar: 'لا تستطيع قبض المال بهذا الفرع',
+  },
+  debt_overpay_not_allowed: {
+    en: 'More than the customer owes — the shop does not keep the rest as credit',
+    ar: 'أكثر من دين الزبون — المحل لا يحفظ الزائد رصيداً',
+  },
+  ledger_not_reversible: {
+    en: 'Only a payment or a correction is undone here',
+    ar: 'يُعكس هنا السداد والتصحيح وحدهما',
+  },
+  ledger_entry_is_reversal: {
+    en: 'An undo cannot be undone',
+    ar: 'لا يُعكس العكس',
+  },
+  ledger_entry_already_reversed: {
+    en: 'Already undone',
+    ar: 'عُكس من قبل',
+  },
   // ── المرتجع (orders_delivery.md §٢) ──
   /** سلّةٌ لم تُسدَّد لا يُرَدّ عنها مال: لم يدخل الدرج شيء. */
   return_sale_not_paid: {

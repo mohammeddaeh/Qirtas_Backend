@@ -39,6 +39,9 @@ export interface SalesSettings {
   shift_cash_out_approval_syp: number | null;
   shift_review_above_syp: number | null;
   shift_denominations: number[];
+  credit_block_after_days: number | null;
+  overpay_to_credit_customers: boolean;
+  overpay_to_credit_suppliers: boolean;
 }
 
 type SettingsRow = typeof salesSettingsTable.$inferSelect;
@@ -69,6 +72,13 @@ function toSettings(row: SettingsRow): SalesSettings {
     shift_denominations: Array.isArray(row.shift_denominations)
       ? row.shift_denominations.filter((d): d is number => typeof d === 'number' && d > 0).sort((a, b) => a - b)
       : [],
+    // A non-positive limit reads as «no limit» — a zero must not stop every on-account sale.
+    credit_block_after_days:
+      row.credit_block_after_days === null || row.credit_block_after_days <= 0
+        ? null
+        : row.credit_block_after_days,
+    overpay_to_credit_customers: row.overpay_to_credit_customers,
+    overpay_to_credit_suppliers: row.overpay_to_credit_suppliers,
   };
 }
 

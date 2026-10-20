@@ -66,6 +66,8 @@ export const ledgerReasonEnum = pgEnum('customer_ledger_reason', [
   'credit_spent',
   'refund_to_credit',
   'manual_adjustment',
+  /** A customer paying off what they owe (`finance_operations.md` §١) — not a correction. */
+  'debt_payment',
 ]);
 
 export const salesTable = pgTable(
@@ -283,6 +285,10 @@ export const customerLedgerTable = pgTable(
     reason: ledgerReasonEnum('reason').notNull(),
     sale_id: integer('sale_id').references(() => salesTable.id, { onDelete: 'set null' }),
     note: text('note'),
+    /** Where it happened — the sale's branch, or the till that took the payment. `null` for older rows and corrections. */
+    branch_id: integer('branch_id').references(() => branchesTable.id, { onDelete: 'restrict' }),
+    /** Set on the row that undoes another — the ledger is never edited, a mistake is answered. */
+    reverses_entry_id: integer('reverses_entry_id'),
     created_by_user_id: integer('created_by_user_id').references(() => usersTable.id, {
       onDelete: 'set null',
     }),

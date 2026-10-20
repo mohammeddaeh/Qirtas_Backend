@@ -24,6 +24,11 @@ import {
   approveReturnBodySchema,
   createReturnBodySchema,
   returnsQuerySchema,
+  creditSettingsBodySchema,
+  debtPaymentBodySchema,
+  debtsQuerySchema,
+  ledgerEntryParamsSchema,
+  ledgerReverseBodySchema,
 } from '../dtos/sales.dto.js';
 import * as controller from '../controllers/sales.controller.js';
 
@@ -106,6 +111,33 @@ salesRouter.put(
   canManage(),
   validate(salesSettingsBodySchema, 'body'),
   asyncHandler(controller.setSalesSettings),
+);
+
+/**
+ * Debt rules (`finance_operations.md` §١) — the admin's, not a branch manager's:
+ * `settings.manage`, declared with its name on the system-settings routes.
+ */
+const canAdmin = () => requirePermission('settings.manage');
+
+salesRouter.get('/settings/credit', canAdmin(), asyncHandler(controller.getCreditSettings));
+
+salesRouter.put(
+  '/settings/credit',
+  canAdmin(),
+  validate(creditSettingsBodySchema, 'body'),
+  asyncHandler(controller.setCreditSettings),
+);
+
+/**
+ * Who owes the shop, oldest unpaid first (`finance_operations.md` §١). Under
+ * `sales.sell`: whoever sells collects debts, and finds them here. On the sales
+ * router — under `/customers` the customers module reads «debts» as an id.
+ */
+salesRouter.get(
+  '/debts',
+  canSell(),
+  validate(debtsQuerySchema, 'query'),
+  asyncHandler(controller.listDebts),
 );
 
 salesRouter.get('/caps', canView(), asyncHandler(controller.getCaps));
@@ -256,6 +288,24 @@ returnsRouter.get(
 // ── حساب الزبون ─────────────────────────────────────────────────────────────
 
 export const customerAccountsRouter: Router = Router();
+
+/** A customer pays off a debt at a till — cash into that branch's open shift. */
+customerAccountsRouter.post(
+  '/:id/account/payments',
+  canSell(),
+  validate(idParamsSchema, 'params'),
+  validate(debtPaymentBodySchema, 'body'),
+  asyncHandler(controller.payDebt),
+);
+
+/** Undo a payment or a correction — a manager answers with an opposite row. */
+customerAccountsRouter.post(
+  '/:id/account/entries/:entryId/reverse',
+  canManage(),
+  validate(ledgerEntryParamsSchema, 'params'),
+  validate(ledgerReverseBodySchema, 'body'),
+  asyncHandler(controller.reverseLedgerEntry),
+);
 
 customerAccountsRouter.get(
   '/:id/account',

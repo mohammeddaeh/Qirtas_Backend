@@ -344,8 +344,13 @@ export async function addMovement(
   const shift = await repo.findShiftById(db, shiftId);
   if (!shift) throw new NotFoundError('Shift not found');
   await requireAt(actor, SELL, shift.branch_id);
-  const settings = await returnsRepo.findSettings();
   const out = input.direction === 'out';
+  if (out && input.reason_code === 'expense') {
+    // An expense lowers profit and names its category — the expense form books it
+    // (`finance_operations.md` §٢); a bare cash-out would leave profit too high.
+    throw new BusinessError(409, 'Record an expense from the expense form', 'shift_use_expense_form');
+  }
+  const settings = await returnsRepo.findSettings();
   // The drawer first: asking a manager to approve what the drawer cannot give
   // spends their password on a refusal. Re-checked under the lock below.
   if (out && shift.status === 'open') {
@@ -393,6 +398,91 @@ export async function addMovement(
     approved_by: approverUserId,
   });
   return getReport(actor, shiftId);
+}
+
+/**
+ * An expense paid from the branch's drawer (`finance_operations.md` §٢) — the
+ * same rules as a cash-out: the open shift, the drawer holding it, the cap and
+ * a manager's approval (a manager at the branch approves their own). The
+ * movement and its `expense` entry are booked, then [write] records the
+ * expense row **in the same transaction**.
+ */
+export async function drawerExpenseOut(
+  actor: RequestActorContext,
+  branchId: number,
+  amountSyp: number,
+  note: string | null,
+  approverUserId: number | null,
+  write: (tx: Tx, ref: { movementId: number; shiftId: number }) => Promise<void>,
+): Promise<void> {
+  await requireAt(actor, SELL, branchId);
+  const shift = await repo.findOpenShift(db, branchId);
+  if (!shift) throw new BusinessError(409, 'Open the branch drawer first', 'shift_required');
+  const settings = await returnsRepo.findSettings();
+  if (!cashOutFits(amountSyp, expectedCash(Number(shift.opening_counted_syp), await repo.findCashEntries(db, shift.id)))) {
+    throw new BusinessError(409, 'The drawer does not hold that much', 'cash_out_exceeds_drawer');
+  }
+  if (await holdsPermissionAt(actor.userId, SHIFT_MANAGE, branchId)) approverUserId = actor.userId;
+  else if (cashOutNeedsApproval(amountSyp, settings.shift_cash_out_approval_syp)) {
+    if (approverUserId === actor.userId) {
+      throw new BusinessError(403, 'You cannot approve your own cash-out', 'shift_approver_is_self');
+    }
+    if (approverUserId === null) {
+      throw new BusinessError(409, 'This cash-out needs a manager', 'shift_cash_out_needs_approval', {
+        cap_syp: settings.shift_cash_out_approval_syp,
+      });
+    }
+    if (!(await holdsPermissionAt(approverUserId, SHIFT_MANAGE, branchId))) {
+      throw new BusinessError(403, 'This approver may not approve cash-outs here', 'shift_approver_not_allowed');
+    }
+  }
+  await db.transaction(async (tx) => {
+    const locked = await repo.lockShift(tx, shift.id);
+    if (!locked || locked.status !== 'open') throw new BusinessError(409, 'This shift is closed', 'shift_closed');
+    if (!cashOutFits(amountSyp, await drawerNow(tx, locked))) {
+      throw new BusinessError(409, 'The drawer does not hold that much', 'cash_out_exceeds_drawer');
+    }
+    const movement = await bookMovement(tx, actor, locked, {
+      direction: 'out',
+      amountSyp,
+      reasonCode: 'expense',
+      note,
+      reversesId: null,
+      approvedBy: approverUserId,
+      expense: true,
+    });
+    await write(tx, { movementId: movement.id, shiftId: locked.id });
+  });
+}
+
+/**
+ * An expense from the drawer undone — the cash goes back into the branch's
+ * open shift (today's, if the original one was counted) as an `expense` entry
+ * the other way, so profit and the drawer both come back.
+ */
+export async function drawerExpenseBack(
+  tx: Tx,
+  actor: RequestActorContext,
+  branchId: number,
+  amountSyp: number,
+  note: string,
+  originalMovementId: number | null,
+): Promise<{ movementId: number; shiftId: number }> {
+  const shiftId = await shiftForMoney(tx, branchId);
+  const locked = await repo.lockShift(tx, shiftId);
+  if (!locked) throw new BusinessError(409, 'Open the branch drawer first', 'shift_required');
+  // Only a movement of this shift is undone as such — one of a counted shift comes back as a new entry.
+  const sameShift = originalMovementId !== null && (await repo.findMovementById(tx, originalMovementId))?.shift_id === locked.id;
+  const movement = await bookMovement(tx, actor, locked, {
+    direction: 'in',
+    amountSyp,
+    reasonCode: 'expense',
+    note,
+    reversesId: sameShift ? originalMovementId : null,
+    approvedBy: null,
+    expense: true,
+  });
+  return { movementId: movement.id, shiftId: locked.id };
 }
 
 /**
@@ -454,6 +544,8 @@ async function bookMovement(
     note: string | null;
     reversesId: number | null;
     approvedBy: number | null;
+    /** An expense paid from the drawer books `expense` — it lowers profit, a cash-out does not. */
+    expense?: boolean;
   },
 ): Promise<CashMovementRow> {
   const movement = await repo.insertMovement(tx, {
@@ -470,7 +562,7 @@ async function bookMovement(
   await recordFinance(tx, [
     {
       branchId: shift.branch_id,
-      type: m.direction === 'in' ? 'cash_in' : 'cash_out',
+      type: m.expense ? 'expense' : m.direction === 'in' ? 'cash_in' : 'cash_out',
       method: 'cash',
       amountSyp: m.direction === 'in' ? m.amountSyp : -m.amountSyp,
       docType: 'cash_movement',

@@ -130,9 +130,41 @@ export const ledgerBodySchema = z
   .object({
     /** موجبٌ إيداع رصيد · سالبٌ تحميل ذمّة — والإشارة هي المعنى. */
     amount_syp: z.number(),
-    note: z.string().trim().max(300).default(''),
+    /** A correction says why — it is the row a manager answers for later. */
+    note: z.string().trim().min(3).max(300),
     /** Paid in cash at this branch's till — booked and stamped with the shift (`cash_shifts.md`). */
     cash_branch_id: z.number().int().positive().optional(),
+  })
+  .strict();
+
+// ── الديون (`finance_operations.md` §١) ─────────────────────────────────────
+
+export const debtsQuerySchema = paginationQuerySchema
+  .extend({ search: z.string().trim().max(100).optional() })
+  .strict();
+
+export const debtPaymentBodySchema = z
+  .object({
+    amount_syp: z.number().positive().max(1_000_000_000),
+    branch_id: z.number().int().positive(),
+    /** Cash only today — sent from day one so another way is a value, not a change of shape. */
+    method: z.enum(['cash']).default('cash'),
+    note: z.string().trim().max(300).optional(),
+  })
+  .strict();
+
+export const ledgerEntryParamsSchema = z
+  .object({ id: z.coerce.number().int().positive(), entryId: z.coerce.number().int().positive() })
+  .strict();
+
+export const ledgerReverseBodySchema = z.object({ reason: z.string().trim().min(3).max(300) }).strict();
+
+export const creditSettingsBodySchema = z
+  .object({
+    /** `null` = never stop new on-account sales. */
+    credit_block_after_days: z.number().int().min(1).max(3650).nullable().optional(),
+    overpay_to_credit_customers: z.boolean().optional(),
+    overpay_to_credit_suppliers: z.boolean().optional(),
   })
   .strict();
 

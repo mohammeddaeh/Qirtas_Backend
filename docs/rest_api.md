@@ -1479,9 +1479,14 @@ requested → approved → in_transit → received                   → closed
 
 **والإشارة تحمل المعنى**: موجبٌ = للزبون عندنا رصيد · سالبٌ = علينا نطالبه. دفتران منفصلان كانا سيسمحان بزبونٍ له رصيدٌ ودَينٌ معاً.
 
-- `GET /customers/:id/account` — الرصيد والسقف و`spendable_syp` (الموجب وحده — الدَّين لا يُنفَق) و`available_credit_syp` (`limit + balance`: زبونٌ سقفه ١٠٠٬٠٠٠ وعليه ٣٠٬٠٠٠ يملك ٧٠٬٠٠٠) وآخر ٥٠ قيداً.
+- `GET /customers/:id/account` — الرصيد والسقف و`spendable_syp` (الموجب وحده — الدَّين لا يُنفَق) و`available_credit_syp` (`limit + balance`: زبونٌ سقفه ١٠٠٬٠٠٠ وعليه ٣٠٬٠٠٠ يملك ٧٠٬٠٠٠) وآخر ١٠٠ قيد. **ومنذ الديون (2026-10-19، `docs/reference/finance_operations.md` §١)**: `oldest_unpaid_at`/`oldest_unpaid_days` (عمر **أقدم دينٍ لم يُسدَّد** — الوارد أولاً يُسدَّد أولاً، `null` بلا دين) · `credit_block_after_days` · `credit_blocked` (آجلٌ جديد مرفوض — يُقال قبل أن يَعِد الكاشير) · `overpay_to_credit`، وكل قيد يحمل `sale_number` · `branch_name` · `created_by_name` · `reverses_entry_id` · `reversed`.
 - `PUT /customers/:id/account/limit {limit_syp}` — **والزبون بلا صفّ = بلا آجل إطلاقاً**: سقفٌ افتراضي مفتوح يُقرض كل زبون بصمت.
-- `POST /customers/:id/account/entries {amount_syp, note}` — تسديد ذمّة أو إيداع رصيد؛ قيدٌ يُضاف بسببه ومن كتبه.
+- `POST /customers/:id/account/entries {amount_syp, note}` — **تصحيحٌ يدوي** (`sales.manage`) **بسببٍ إلزامي** (٣ أحرف) — السداد له مساره.
+- `POST /customers/:id/account/payments {amount_syp, branch_id, method?, note?}` — **سداد الدين** (`sales.sell` **بذلك الفرع**، وإلا `403 debt_not_at_branch`): قيدٌ `debt_payment` بالدفتر والسجلّ المالي مختومٌ بوردية الفرع (`409 shift_required` بلا وردية). `method` اليوم `cash` وحدها — حقلٌ من أول يوم فإضافة طريقة قيمةٌ لا تغيير شكل. **والزائد عن الدين** يصير رصيداً إن سمح الإعداد، وإلا `422 debt_overpay_not_allowed {debt_syp}`. يُرجع الحساب كاملاً.
+- `POST /customers/:id/account/entries/:entryId/reverse {reason}` — عكس سدادٍ أو تصحيح (`sales.manage`): قيدٌ مقابل والأصل يبقى مشطوباً، **والسداد النقدي المعكوس يخرج من وردية فرعه**. `409 ledger_not_reversible` (البيع بالآجل يُعكس بمرتجع) · `ledger_entry_is_reversal` · `ledger_entry_already_reversed`.
+- `GET /sales/debts?search&page&limit` — **مَن يدين لنا** (`sales.sell`)، **الأقدم ديناً أولاً**: `customer_id` · `name` · `phone` · `debt_syp` · `limit_syp` · `available_credit_syp` · `oldest_unpaid_at`/`days` · `last_payment_at`، ومع الصفحة `summary {total_syp, customers, over_30_days, blocked}`. **بمسار المبيعات** لأن موديول الزبائن يقرأ `/customers/debts` معرّفاً.
+- `GET|PUT /sales/settings/credit {credit_block_after_days?, overpay_to_credit_customers?, overpay_to_credit_suppliers?}` — **للأدمن** (`settings.manage`) لا لمدير الفرع: مهلة الدين قبل منع الآجل (`null` = بلا منع) والسماح بالسداد الزائد رصيداً. وتجاوز المهلة يرفض الدفع بالآجل `409 sale_credit_overdue {oldest_unpaid_days, block_after_days}`.
+- **طباعةٌ لم تُقبض**: `GET /printing/jobs?branch_id&payment=deferred` (موجود) — المؤجَّل لا يصير ديناً حتى يُسلَّم، ولا يُسلَّم إلا مدفوعاً.
 
 **والآجل والرصيد يحتاجان زبوناً مسمّى** (`422 sale_credit_needs_customer`): آجلٌ على «زبون عابر» دَينٌ على لا أحد.
 
@@ -1843,3 +1848,19 @@ draft ─submit→ awaiting_quote ─quote→ awaiting_payment ─(الدفع 9-
 **الإعدادات** بـ`GET/PUT /sales/settings`: `shift_reason_above_syp` (١٠٬٠٠٠، `null` = لا سبب) · `shift_alert_hours` (١٦) · `shift_stale_action: warn|block` (`warn`) · `shift_cash_out_approval_syp` (٥٠٬٠٠٠، `null` = بلا سقف) · `shift_review_above_syp` (٥٠٬٠٠٠، `null` = لا مراجعة) · `shift_denominations` (`[500,1000,2000,5000]`). **والترقيم** نوع `shift` (`BR17-SH-000001`). **والصلاحية الجديدة** `sales.shift.close` تُمنح لأمين الصندوق ومدير الفرع.
 
 **بالتقارير المالية** (§finance): `summary.cash_difference` للفرع والفترة باقٍ، **و`cashiers[].cash_difference` حُذف** — الدرج للفرع، وتحميل البائع فرقاً لم يعدّه كان يكذب.
+
+---
+
+## 36. المصاريف والرواتب — `/expenses` (ف-٢ 2026-10-19) · المرجع: `docs/reference/finance_operations.md` §٢
+
+**مفتاحان**: من يبيع (`sales.sell`) يسجّل مصروفاً **من الدرج** ويقرأ التصنيفات لذلك، و`expenses.manage` (جديد، حسّاس، للمدير العام) لكل ما سواه — والخدمة تفحص الفرع بالمفتاح نفسه. **ولا تعديل ولا حذف**: العكس صفٌّ سالب والأصل `reversed: true`.
+
+- `GET /expenses/categories?include_inactive` · `POST /expenses/categories {name_ar, name_en?, kind: operating|salary}` · `PATCH /expenses/categories/:id {name_ar?, name_en?, is_active?}` — تسعة جاهزة بالترحيل (إيجار · رواتب وأجور `salary` · كهرباء وماء · إنترنت · نقل · صيانة · ضيافة · قرطاسية المحل · أخرى).
+- `POST /expenses {branch_id, category_id, amount_syp, source: drawer|outside, spent_on?, note?, receipt_media_id?, employee_user_id?, salary_kind?: salary|advance, period?: YYYY-MM, recurring_id?, approver_email?, approver_password?}` — **من الدرج**: قواعد الإخراج نفسها (`shift_required` · `cash_out_exceeds_drawer` · `shift_cash_out_needs_approval {cap_syp}` · `shift_approver_*`؛ المدير بالفرع موافقة نفسه) وحركة درج `out` بسبب `expense` **وقيدٌ `expense` نقداً** بالوردية (يُنقص النقد المتوقَّع **والربح**). **من خارج الدرج**: `expenses.manage` بالفرع وإلا `403 expense_outside_not_allowed`، وقيدٌ `expense` بطريقة **`external`** (مالٌ حقيقي لا يُعدّ بدرج). تصنيف `salary` يحتاج `employee_user_id` (`422 expense_salary_needs_employee`) و`period` افتراضه شهر `spent_on`. `422 expense_category_inactive`.
+- **وحركة درج يدوية بسبب `expense`** صارت `409 shift_use_expense_form` — إخراجٌ عارٍ كان يُنقص النقد ويترك الربح أعلى من الواقع.
+- `GET /expenses?branch_id&category_id&employee_id&from&to&page&limit` — الأحدث أولاً، كل صفّ بفرعه وتصنيفه ونوعه وموظفه ومن سجّله و`reversed`، ومع الصفحة `summary {total_syp, by_category[]}` (العكس صفوفٌ سالبة فالمجموع صافٍ). `GET /expenses/:id`.
+- `POST /expenses/:id/reverse {reason}` — من الدرج **يعود النقد لوردية الفرع المفتوحة** (حركة `in` بسبب `expense` وقيدٌ موجب). `409 expense_is_reversal` · `expense_already_reversed`.
+- `GET /expenses/recurring?include_inactive` · `POST /expenses/recurring {branch_id, category_id, amount_syp, day_of_month: 1–28, note?}` · `PATCH /expenses/recurring/:id` — **تذكيرٌ لا تسجيل**: `due` حين يحلّ يومه ولم يُسجَّل مصروفٌ بـ`recurring_id` هذا الشهر، و`recorded_this_month`.
+- `GET /expenses/wages?branch_id` — لكل موظف له أجر: `amount_syp` اليوم (`null` إن انتهى) · `frequency` · `due_day` · `paid_this_period_syp` (رواتب وسلف الشهر) · `left_syp` (للشهري وحده، `null` لغيره) · `due` · `last_paid_on`، والمستحقّ أولاً.
+- `GET /expenses/wages/:userId` — تاريخ الأجر. `PUT /expenses/wages/:userId {branch_id, amount_syp, frequency, due_day, effective_from?, note?}` — **صفٌّ جديد من يومه** والقديم تاريخ. `POST /expenses/wages/:userId/end {ended_on?}` (`409 wage_none`).
+- **بالتقارير** (`/reports/summary`): `summary.expenses` موجبٌ و**`net_profit` يطرحه**، و`expected_cash` يضمّ المصاريف النقدية.

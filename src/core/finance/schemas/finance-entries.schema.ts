@@ -37,12 +37,15 @@ export const FINANCE_ENTRY_TYPES = [
   'cash_over',
   'cash_short',
   'debt_payment',
+  // المصاريف والرواتب (`finance_operations.md` §٢) — تُنقص صافي الربح، ومن الدرج تُنقص النقد أيضاً
+  'expense',
 ] as const;
 export type FinanceEntryType = (typeof FINANCE_ENTRY_TYPES)[number];
 export const financeEntryTypeEnum = pgEnum('finance_entry_type', FINANCE_ENTRY_TYPES);
 
 /** كيف تحرّك المال — و`value` لقيمةٍ لا نقد فيها (تكلفة · خسارة · رفّ). */
-export const FINANCE_METHODS = ['cash', 'card', 'customer_credit', 'on_account', 'value'] as const;
+/** `external` — paid outside any drawer (the owner, a bank): real money, never counted at a close. */
+export const FINANCE_METHODS = ['cash', 'card', 'customer_credit', 'on_account', 'value', 'external'] as const;
 export type FinanceMethod = (typeof FINANCE_METHODS)[number];
 export const financeMethodEnum = pgEnum('finance_method', FINANCE_METHODS);
 
@@ -56,6 +59,7 @@ export const FINANCE_DOC_TYPES = [
   'cash_shift',
   'cash_movement',
   'customer_ledger',
+  'expense',
 ] as const;
 export type FinanceDocType = (typeof FINANCE_DOC_TYPES)[number];
 export const financeDocTypeEnum = pgEnum('finance_doc_type', FINANCE_DOC_TYPES);

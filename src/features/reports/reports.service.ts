@@ -77,7 +77,7 @@ export async function summary(q: ReportQuery) {
         total: sql<string>`sum(${financeEntriesTable.amount_syp})`,
       })
       .from(financeEntriesTable)
-      .where(and(ledgerScope(q), inArray(financeEntriesTable.type, ['sale_revenue', 'refund'])))
+      .where(and(ledgerScope(q), inArray(financeEntriesTable.type, ['sale_revenue', 'refund', 'expense'])))
       .groupBy(financeEntriesTable.type, financeEntriesTable.method),
     db
       .select({
@@ -171,6 +171,8 @@ export async function summary(q: ReportQuery) {
   const losses = LOSS_TYPES.reduce((s, k) => s + t(k), 0);
   // The drawers' counted differences (cash_shifts.md) — signed: over adds, short takes.
   const cashDifference = n(t('cash_over') + t('cash_short'));
+  // Expenses and wages (finance_operations.md §٢) — negative entries, from the drawer or outside it.
+  const expenses = n(t('expense'));
   const methodTotal = (type: string, method: string) =>
     n(byMethod.filter((r) => r.type === type && r.method === method).reduce((s, r) => s + n(r.total), 0));
 
@@ -220,12 +222,14 @@ export async function summary(q: ReportQuery) {
       losses: n(-losses),
       /** Counted drawers against expected — signed (cash_shifts.md). Part of net profit. */
       cash_difference: cashDifference,
-      net_profit: n(grossProfit + losses + cashDifference),
+      /** Expenses and wages — positive here, out of net profit (finance_operations.md §٢). */
+      expenses: n(-expenses),
+      net_profit: n(grossProfit + losses + cashDifference + expenses),
       ready_shelf_value: n(shelfRow[0]?.total),
       // Cash that should be in the drawers: cash taken minus cash paid back, plus
       // what moved by hand and debts paid in cash (cash_shifts.md) — floats aside.
       expected_cash: n(
-        methodTotal('sale_revenue', 'cash') + methodTotal('refund', 'cash') + t('cash_in') + t('cash_out') + t('debt_payment'),
+        methodTotal('sale_revenue', 'cash') + methodTotal('refund', 'cash') + t('cash_in') + t('cash_out') + t('debt_payment') + methodTotal('expense', 'cash'),
       ),
     },
     revenue_by_method: ['cash', 'card', 'customer_credit', 'on_account'].map((m) => ({

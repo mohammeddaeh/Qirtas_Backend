@@ -418,11 +418,93 @@ export async function insertLedgerEntries(
 
 export async function findLedger(customerId: number, limit: number) {
   return db
-    .select()
+    .select({
+      id: customerLedgerTable.id,
+      amount_syp: customerLedgerTable.amount_syp,
+      reason: customerLedgerTable.reason,
+      sale_id: customerLedgerTable.sale_id,
+      sale_number: salesTable.number,
+      note: customerLedgerTable.note,
+      branch_id: customerLedgerTable.branch_id,
+      branch_name: branchesTable.name,
+      reverses_entry_id: customerLedgerTable.reverses_entry_id,
+      created_by_name: sql<string | null>`NULLIF(TRIM(CONCAT(${usersTable.first_name}, ' ', ${usersTable.last_name})), '')`,
+      created_at: customerLedgerTable.created_at,
+    })
     .from(customerLedgerTable)
+    .leftJoin(salesTable, eq(salesTable.id, customerLedgerTable.sale_id))
+    .leftJoin(branchesTable, eq(branchesTable.id, customerLedgerTable.branch_id))
+    .leftJoin(usersTable, eq(usersTable.id, customerLedgerTable.created_by_user_id))
     .where(eq(customerLedgerTable.customer_id, customerId))
     .orderBy(desc(customerLedgerTable.created_at), desc(customerLedgerTable.id))
     .limit(limit);
+}
+
+/** Every move of these customers, oldest first — what the age of a debt is read from. */
+export async function findLedgerMoves(customerIds: number[]) {
+  if (customerIds.length === 0) return [];
+  return db
+    .select({
+      customer_id: customerLedgerTable.customer_id,
+      amount_syp: customerLedgerTable.amount_syp,
+      reason: customerLedgerTable.reason,
+      created_at: customerLedgerTable.created_at,
+    })
+    .from(customerLedgerTable)
+    .where(inArray(customerLedgerTable.customer_id, customerIds))
+    .orderBy(asc(customerLedgerTable.created_at), asc(customerLedgerTable.id));
+}
+
+/**
+ * Every customer who owes — balance below zero — with what the list shows.
+ * Not paged here: the order is the age of the oldest unpaid debt, read from the
+ * moves, and a shop's debtors are a short list.
+ */
+export async function findDebtors(search: string | undefined) {
+  const balances = db
+    .select({
+      customer_id: customerLedgerTable.customer_id,
+      balance: sql<string>`SUM(${customerLedgerTable.amount_syp})`.as('balance'),
+    })
+    .from(customerLedgerTable)
+    .groupBy(customerLedgerTable.customer_id)
+    .as('balances');
+  const term = search?.trim();
+  const like = term ? `%${term}%` : null;
+  return db
+    .select({
+      customer_id: customersTable.id,
+      first_name: customersTable.first_name,
+      last_name: customersTable.last_name,
+      phone: customersTable.phone,
+      balance: balances.balance,
+      limit_syp: customerCreditLimitsTable.limit_syp,
+    })
+    .from(balances)
+    .innerJoin(customersTable, eq(customersTable.id, balances.customer_id))
+    .leftJoin(customerCreditLimitsTable, eq(customerCreditLimitsTable.customer_id, customersTable.id))
+    .where(
+      and(
+        sql`${balances.balance} < 0`,
+        like === null
+          ? undefined
+          : sql`(${customersTable.first_name} ILIKE ${like} OR ${customersTable.last_name} ILIKE ${like} OR CONCAT(${customersTable.first_name}, ' ', ${customersTable.last_name}) ILIKE ${like} OR ${customersTable.phone} ILIKE ${like})`,
+      ),
+    );
+}
+
+export async function findLedgerEntry(id: number, exec: Exec = db) {
+  const [row] = await exec.select().from(customerLedgerTable).where(eq(customerLedgerTable.id, id)).limit(1);
+  return row;
+}
+
+export async function findLedgerReversalOf(entryId: number, exec: Exec = db) {
+  const [row] = await exec
+    .select({ id: customerLedgerTable.id })
+    .from(customerLedgerTable)
+    .where(eq(customerLedgerTable.reverses_entry_id, entryId))
+    .limit(1);
+  return row;
 }
 
 // ── ما يحتاجه السطر ليُكتب لقطةً ────────────────────────────────────────────

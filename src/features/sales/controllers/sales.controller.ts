@@ -16,6 +16,7 @@ import type {
 } from '../dtos/sales.dto.js';
 import * as service from '../services/sales.service.js';
 import * as returns from '../services/returns.service.js';
+import * as debts from '../services/debts.service.js';
 import * as repo from '../repositories/sales.repository.js';
 
 const actorOf = (req: Request) => buildActorContext(req, requireActorId(req));
@@ -263,6 +264,38 @@ export async function setCap(req: Request, res: Response): Promise<void> {
 
 export async function getCustomerAccount(req: Request, res: Response): Promise<void> {
   ok(res, await service.getCustomerAccount(idOf(req)));
+}
+
+export async function listDebts(req: Request, res: Response): Promise<void> {
+  const q = req.query as unknown as { page: number; limit: number; search?: string };
+  const params = toPaginationParams(q);
+  const { items, total, summary } = await debts.listDebts(q.search, params.page, params.limit);
+  ok(res, { ...paginated(items, total, params), summary });
+}
+
+export async function payDebt(req: Request, res: Response): Promise<void> {
+  ok(
+    res,
+    await debts.payDebt(
+      actorOf(req),
+      idOf(req),
+      req.body as { amount_syp: number; branch_id: number; method: 'cash'; note?: string },
+    ),
+  );
+}
+
+export async function reverseLedgerEntry(req: Request, res: Response): Promise<void> {
+  const { entryId } = req.params as unknown as { entryId: number };
+  const { reason } = req.body as { reason: string };
+  ok(res, await debts.reverseLedgerEntry(actorOf(req), idOf(req), Number(entryId), reason));
+}
+
+export async function getCreditSettings(_req: Request, res: Response): Promise<void> {
+  ok(res, await debts.getCreditSettings());
+}
+
+export async function setCreditSettings(req: Request, res: Response): Promise<void> {
+  ok(res, await debts.setCreditSettings(actorOf(req), req.body as Record<string, never>));
 }
 
 export async function setCreditLimit(req: Request, res: Response): Promise<void> {

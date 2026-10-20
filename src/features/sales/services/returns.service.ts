@@ -527,6 +527,7 @@ export async function createReturn(
           amount_syp: String(totalSyp),
           reason: 'refund_to_credit',
           sale_id: input.sale_id,
+          branch_id: input.branch_id,
           created_by_user_id: actor.userId,
         },
       ]);

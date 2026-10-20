@@ -459,6 +459,14 @@ const PERMISSIONS: SeedPermission[] = [
     display: { ar: 'عدّ الدرج وإقفال الوردية', en: 'Count & Close the Drawer' },
   },
   {
+    // المصاريف والرواتب (`finance_operations.md` §٢): تصنيفات ومصروفٌ من خارج الدرج
+    // وأجور الموظفين والعكس. **والمصروف من الدرج لمن يبيع** بسقف الإخراج — لا بهذا المفتاح.
+    key: 'expenses.manage',
+    module: 'expenses',
+    is_sensitive: true,
+    display: { ar: 'إدارة المصاريف والرواتب', en: 'Manage Expenses & Wages' },
+  },
+  {
     // مفتاحان لا واحد: الكاشير يُسأل «لماذا هذا السعر؟» فيحتاج أن يقرأ العرض،
     // ولا يجوز أن يملك تغييره. مفتاحٌ واحد كان سيمنح الشرحَ والقرارَ معاً.
     key: 'promotions.view',
@@ -523,6 +531,7 @@ const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
   documents: { ar: 'الفواتير والملصقات', en: 'Receipts & Labels' },
   promotions: { ar: 'العروض', en: 'Promotions' },
   sales: { ar: 'المبيعات ونقطة البيع', en: 'Sales & Till' },
+  expenses: { ar: 'المصاريف والرواتب', en: 'Expenses & Wages' },
   stations: { ar: 'محطات الحاسوب', en: 'Computer Stations' },
   barcodes: { ar: 'الباركود', en: 'Barcodes' },
   suppliers: { ar: 'الموردون', en: 'Suppliers' },

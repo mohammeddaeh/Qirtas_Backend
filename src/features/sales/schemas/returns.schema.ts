@@ -210,6 +210,14 @@ export const salesSettingsTable = pgTable('sales_settings', {
   shift_review_above_syp: numeric('shift_review_above_syp', { precision: 14, scale: 2 }).default('50000'),
   /** The notes the optional denomination counter shows, smallest first. */
   shift_denominations: jsonb('shift_denominations').$type<number[]>().notNull().default([500, 1000, 2000, 5000]),
+
+  // ── Debts (`finance_operations.md` §١) — set by the admin (`settings.manage`), not a branch manager.
+  /** New on-account sales stop once a customer's oldest unpaid debt passes this. `null` = never stop. */
+  credit_block_after_days: integer('credit_block_after_days'),
+  /** A customer paying more than they owe: the rest becomes their credit, or the payment is refused. */
+  overpay_to_credit_customers: boolean('overpay_to_credit_customers').notNull().default(false),
+  /** The same for paying a supplier more than we owe (the supplier slice). */
+  overpay_to_credit_suppliers: boolean('overpay_to_credit_suppliers').notNull().default(false),
   updated_by: integer('updated_by').references(() => usersTable.id, { onDelete: 'set null' }),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

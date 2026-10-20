@@ -15,6 +15,9 @@ import { findVariantLabels } from '../repositories/orders.repository.js';
 import { thumbnailsFor } from './line-thumbnails.js';
 import { closePaidOrder, reopenVoidedOrder } from './orders.service.js';
 import { shiftForMoney } from './shifts.service.js';
+import { assertCreditNotOverdue, getCustomerAccount } from './debts.service.js';
+
+export { getCustomerAccount };
 import type { SaleLineRow, SaleRow } from '../schemas/sales.schema.js';
 import {
   branchPrefix,
@@ -771,6 +774,8 @@ export async function paySale(
         available_syp: roundSyp(spendableCredit(balance)),
       });
     }
+    // An overdue debt stops a new one first — the admin's limit (`finance_operations.md` §١).
+    if (onAccount > 0) await assertCreditNotOverdue(preview.customer_id);
     if (onAccount > creditAvailable(balance - spent, limit) + 1e-9) {
       throw new BusinessError(
         422,
@@ -893,6 +898,7 @@ export async function paySale(
             amount_syp: String(-roundSyp(p.amountSyp)),
             reason: 'credit_spent' as const,
             sale_id: saleId,
+            branch_id: preview.branch_id,
             created_by_user_id: actor.userId,
           });
         }
@@ -902,6 +908,7 @@ export async function paySale(
             amount_syp: String(-roundSyp(p.amountSyp)),
             reason: 'sale_on_account' as const,
             sale_id: saleId,
+            branch_id: preview.branch_id,
             created_by_user_id: actor.userId,
           });
         }
@@ -979,29 +986,6 @@ export async function setCap(
   return getCaps();
 }
 
-export async function getCustomerAccount(customerId: number) {
-  const [balance, limit, entries] = await Promise.all([
-    repo.findCustomerBalance(customerId),
-    repo.findCreditLimit(customerId),
-    repo.findLedger(customerId, 50),
-  ]);
-  return {
-    customer_id: customerId,
-    balance_syp: roundSyp(balance),
-    limit_syp: limit,
-    spendable_syp: roundSyp(spendableCredit(balance)),
-    available_credit_syp: roundSyp(creditAvailable(balance, limit)),
-    entries: entries.map((e) => ({
-      id: e.id,
-      amount_syp: Number(e.amount_syp),
-      reason: e.reason,
-      sale_id: e.sale_id,
-      note: e.note,
-      created_at: e.created_at.toISOString(),
-    })),
-  };
-}
-
 export async function setCreditLimit(
   actor: RequestActorContext,
   customerId: number,
@@ -1037,6 +1021,7 @@ export async function adjustCustomerLedger(
         customer_id: customerId,
         amount_syp: String(roundSyp(input.amount_syp)),
         reason: 'manual_adjustment',
+        branch_id: input.cash_branch_id ?? null,
         note: input.note.trim() || null,
         created_by_user_id: actor.userId,
       },
