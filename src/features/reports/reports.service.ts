@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNull, lt, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNull, lt, notInArray, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../core/db/client.js';
 import { financeEntriesTable } from '../../core/finance/schemas/finance-entries.schema.js';
 import { branchesTable } from '../identity/schemas/branches.schema.js';
@@ -39,6 +39,43 @@ const COST_TYPES = ['cogs', 'cogs_reversal', 'print_materials', 'ready_shelf_out
 
 const n = (v: unknown): number => Math.round(Number(v ?? 0) * 100) / 100;
 
+/**
+ * The profit lines from the ledger's sums by type — **written once**, read by the
+ * period report and by the daily summary (`finance_operations.md` §٥). Two copies
+ * of «what is net profit» disagree the first time one gains a line.
+ */
+export function figuresFrom(t: (type: string) => number) {
+  const revenue = t('sale_revenue');
+  const refunds = -t('refund');
+  const netSales = n(revenue - refunds);
+  const costs = COST_TYPES.reduce((s, k) => s + t(k), 0);
+  const grossProfit = n(netSales + costs);
+  const losses = LOSS_TYPES.reduce((s, k) => s + t(k), 0);
+  // The drawers' counted differences (cash_shifts.md) — signed: over adds, short takes.
+  const cashDifference = n(t('cash_over') + t('cash_short'));
+  // Expenses and wages (finance_operations.md §٢) — negative entries, from the drawer or outside it.
+  const expenses = n(t('expense'));
+  // The change in liras for dollars, rounded (finance_operations.md §٣-ب) — signed, small, named.
+  const cashRounding = n(t('cash_rounding'));
+  // Suppliers (finance_operations.md §٣): a payment is **not** an expense — the goods
+  // entered stock at their cost — but the exchange difference it realizes is profit or loss.
+  const fxGain = n(t('fx_gain'));
+  return {
+    revenue: n(revenue),
+    refunds: n(refunds),
+    net_sales: netSales,
+    cost_of_sales: n(-costs),
+    gross_profit: grossProfit,
+    losses: n(-losses),
+    cash_difference: cashDifference,
+    expenses: n(-expenses),
+    cash_rounding: cashRounding,
+    fx_gain: fxGain,
+    supplier_payments: n(-t('supplier_payment')),
+    net_profit: n(grossProfit + losses + cashDifference + expenses + cashRounding + fxGain),
+  };
+}
+
 /** `[from 00:00, to+1 00:00)` in server time — whole days, the last one included. */
 function window(q: ReportQuery): { start: Date; end: Date } {
   const start = new Date(`${q.from}T00:00:00`);
@@ -56,6 +93,32 @@ function ledgerScope(q: ReportQuery): SQL | undefined {
   );
 }
 
+/**
+ * The cash the drawers should hold, **per currency** (`finance_operations.md` §٣-ج):
+ * liras by their amount, dollars as notes. The counts' own over/short is the
+ * answer to this sum, so it is left out.
+ */
+async function expectedByCurrency(q: ReportQuery): Promise<{ syp: number; usd: number }> {
+  const rows = await db
+    .select({
+      currency: financeEntriesTable.currency,
+      syp: sql<string>`sum(${financeEntriesTable.amount_syp})`,
+      fx: sql<string>`sum(${financeEntriesTable.amount_fx})`,
+    })
+    .from(financeEntriesTable)
+    .where(
+      and(
+        ledgerScope(q),
+        eq(financeEntriesTable.method, 'cash'),
+        notInArray(financeEntriesTable.type, ['cash_over', 'cash_short']),
+      ),
+    )
+    .groupBy(financeEntriesTable.currency);
+  const syp = rows.filter((r) => r.currency !== 'USD').reduce((t, r) => t + n(r.syp), 0);
+  const usd = rows.filter((r) => r.currency === 'USD').reduce((t, r) => t + n(r.fx), 0);
+  return { syp: n(syp), usd: n(usd) };
+}
+
 async function sumsByType(q: ReportQuery): Promise<Map<string, number>> {
   const rows = await db
     .select({ type: financeEntriesTable.type, total: sql<string>`sum(${financeEntriesTable.amount_syp})` })
@@ -68,7 +131,7 @@ async function sumsByType(q: ReportQuery): Promise<Map<string, number>> {
 export async function summary(q: ReportQuery) {
   const { start, end } = window(q);
   const branchSql = q.branchId ? eq(financeEntriesTable.branch_id, q.branchId) : undefined;
-  const [byType, byMethod, byCashier, lossByReason, shelfRow, printLines, printRefunds, branches, byStation] = await Promise.all([
+  const [byType, byMethod, byCashier, lossByReason, shelfRow, printLines, printRefunds, branches, byStation, cashNow] = await Promise.all([
     sumsByType(q),
     db
       .select({
@@ -160,19 +223,11 @@ export async function summary(q: ReportQuery) {
       .leftJoin(stationsTable, eq(stationsTable.id, financeEntriesTable.station_id))
       .where(and(ledgerScope(q), inArray(financeEntriesTable.type, ['sale_revenue', 'refund'])))
       .groupBy(financeEntriesTable.station_id, stationsTable.name, financeEntriesTable.type, financeEntriesTable.method),
+    expectedByCurrency(q),
   ]);
 
   const t = (k: string) => byType.get(k) ?? 0;
-  const revenue = t('sale_revenue');
-  const refunds = -t('refund');
-  const netSales = n(revenue - refunds);
-  const costs = COST_TYPES.reduce((s, k) => s + t(k), 0);
-  const grossProfit = n(netSales + costs);
-  const losses = LOSS_TYPES.reduce((s, k) => s + t(k), 0);
-  // The drawers' counted differences (cash_shifts.md) — signed: over adds, short takes.
-  const cashDifference = n(t('cash_over') + t('cash_short'));
-  // Expenses and wages (finance_operations.md §٢) — negative entries, from the drawer or outside it.
-  const expenses = n(t('expense'));
+  const f = figuresFrom(t);
   const methodTotal = (type: string, method: string) =>
     n(byMethod.filter((r) => r.type === type && r.method === method).reduce((s, r) => s + n(r.total), 0));
 
@@ -213,24 +268,19 @@ export async function summary(q: ReportQuery) {
     period: { from: q.from, to: q.to },
     branch_id: q.branchId ?? null,
     branches,
+    // cash_difference — counted drawers against expected, signed, part of net profit ·
+    // expenses — positive here, out of net profit · cash_rounding — signed ·
+    // fx_gain — realized on supplier debts, signed, inside net profit ·
+    // supplier_payments — positive, **not** out of net profit.
     summary: {
-      revenue: n(revenue),
-      refunds: n(refunds),
-      net_sales: netSales,
-      cost_of_sales: n(-costs),
-      gross_profit: grossProfit,
-      losses: n(-losses),
-      /** Counted drawers against expected — signed (cash_shifts.md). Part of net profit. */
-      cash_difference: cashDifference,
-      /** Expenses and wages — positive here, out of net profit (finance_operations.md §٢). */
-      expenses: n(-expenses),
-      net_profit: n(grossProfit + losses + cashDifference + expenses),
+      ...f,
       ready_shelf_value: n(shelfRow[0]?.total),
       // Cash that should be in the drawers: cash taken minus cash paid back, plus
       // what moved by hand and debts paid in cash (cash_shifts.md) — floats aside.
-      expected_cash: n(
-        methodTotal('sale_revenue', 'cash') + methodTotal('refund', 'cash') + t('cash_in') + t('cash_out') + t('debt_payment') + methodTotal('expense', 'cash'),
-      ),
+      // **The liras alone** — dollars are counted as notes beside them (§٣-ج).
+      expected_cash: cashNow.syp,
+      /** The dollars the drawers should hold. */
+      expected_cash_usd: cashNow.usd,
     },
     revenue_by_method: ['cash', 'card', 'customer_credit', 'on_account'].map((m) => ({
       method: m,
@@ -260,10 +310,15 @@ export async function summary(q: ReportQuery) {
 }
 
 /** The entries behind one loss line — each names its document. */
-export async function lossEntries(q: ReportQuery & { type?: string }, limit: number, offset: number) {
+export async function lossEntries(q: ReportQuery & { type?: string; reason?: string }, limit: number, offset: number) {
   const where = and(
     ledgerScope(q),
     q.type ? eq(financeEntriesTable.type, q.type as (typeof LOSS_TYPES)[number]) : inArray(financeEntriesTable.type, [...LOSS_TYPES]),
+    q.reason === undefined
+      ? undefined
+      : q.reason === 'none'
+        ? isNull(financeEntriesTable.reason)
+        : eq(financeEntriesTable.reason, q.reason),
   );
   const [rows, [count]] = await Promise.all([
     db

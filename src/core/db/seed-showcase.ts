@@ -40,6 +40,9 @@ import { setEmailSender, type EmailSender } from '../auth/ports/email-sender.js'
 import { createSession } from '../auth/services/session.service.js';
 import { staffAuthRealm } from '../../features/identity/auth-realm.js';
 import { customerAuthRealm } from '../../features/customers/auth-realm.js';
+import * as shiftsRepo from '../../features/sales/repositories/shifts.repository.js';
+import { expectedUsd } from '../../features/sales/services/fx-rules.js';
+import { expectedCash } from '../../features/sales/services/shift-rules.js';
 
 const ADMIN_EMAIL = process.env['SEED_ADMIN_EMAIL'] ?? 'super_admin@admin.com';
 const ADMIN_PASSWORD = process.env['SEED_ADMIN_PASSWORD'] ?? 'P@ssw0rd@123';
@@ -1382,6 +1385,329 @@ async function sale(opts: {
   return paid;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Time travel — whole days that really happened, ledger and all
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Back-dating a sale by hand (`update sales set paid_at = …`) moved the invoice
+// and left its ledger entries, its drawer and its stock movements on today: the
+// sales history said «last month», the report and the daily summary said
+// «today», and neither was wrong about its own table. A day is now written as
+// it happens — drawer opened, sales, expenses, drawer counted — and then every
+// row written inside that window, in every table, moves back together.
+
+type Actor = (method: string, path: string, body?: unknown) => Promise<Any>;
+
+/** Rows about *who*, and tokens: never moved in time. */
+const TIME_TRAVEL_SKIP = new Set([
+  'sessions',
+  'customer_sessions',
+  'session_tombstones',
+  'rate_limits',
+  'auth_verification_tokens',
+  'customer_verification_tokens',
+  'device_push_tokens',
+  'users',
+  'customers',
+  'branches',
+  'stations',
+]);
+let tsColumns: { t: string; c: string }[] | null = null;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Local calendar day [n] days from today, at [h]:[m]. */
+function dayAt(n: number, h: number, m = 0): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  d.setHours(h, m, 0, 0);
+  return d;
+}
+const ymd = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const ym = (d: Date) => ymd(d).slice(0, 7);
+
+/**
+ * Runs [fn] now, then moves every timestamp written during it — in every
+ * table — so the window starts at [target]. Future values (deadlines, expiries)
+ * are outside the window and stay put.
+ */
+async function at<T>(target: Date, fn: () => Promise<T>): Promise<T | null> {
+  tsColumns ??= (
+    await db.execute<{ t: string; c: string }>(
+      sql`select table_name as t, column_name as c from information_schema.columns
+          where table_schema = 'public' and data_type = 'timestamp with time zone'`,
+    )
+  ).rows.filter((r) => !TIME_TRAVEL_SKIP.has(r.t));
+  await sleep(1100);
+  const start = new Date();
+  let out: T | null = null;
+  try {
+    out = await fn();
+  } finally {
+    await sleep(50);
+    const end = new Date();
+    const secs = Math.round((start.getTime() - target.getTime()) / 1000);
+    if (secs > 0) {
+      for (const { t, c } of tsColumns) {
+        await db.execute(
+          sql.raw(
+            `update "${t}" set "${c}" = "${c}" - interval '${secs} seconds'
+             where "${c}" between '${start.toISOString()}' and '${end.toISOString()}'`,
+          ),
+        );
+      }
+    }
+  }
+  return out;
+}
+
+// ── The drawer ──────────────────────────────────────────────────────────────
+
+/** Opens the branch's drawer with what the last close left — an even opening. */
+async function openDrawer(act: Actor, branch: number): Promise<number> {
+  const cur = await act('GET', `/sales/shifts/current?branch_id=${branch}`);
+  if (cur?.shift?.status === 'open') return cur.shift.id as number;
+  const syp = (cur?.suggested_opening_syp as number | null) ?? 100000;
+  const usd = (cur?.suggested_opening_usd as number | null) ?? 0;
+  const s = await act('POST', '/sales/shifts', { branch_id: branch, opening_counted_syp: syp, opening_counted_usd: usd });
+  return s.id as number;
+}
+
+/** What the drawer should hold now — the close's own arithmetic, read from the ledger. */
+async function drawerExpected(shiftId: number): Promise<{ syp: number; usd: number }> {
+  const s = (await shiftsRepo.findShiftById(db, shiftId))!;
+  const entries = await shiftsRepo.findCashEntries(db, shiftId);
+  return {
+    syp: expectedCash(Number(s.opening_counted_syp), entries),
+    usd: expectedUsd(Number(s.opening_counted_usd), entries),
+  };
+}
+
+/** Counts the drawer [diff] liras off what it should hold, leaves a 100,000 float and the dollars. */
+async function closeDrawer(act: Actor, shiftId: number, diff = 0, reason?: string): Promise<void> {
+  const ex = await drawerExpected(shiftId);
+  const counted = ex.syp + diff;
+  // A short bigger than the drawer would be quietly cut to «empty» — a different story.
+  if (counted < 0) throw new Error(`drawer ${shiftId} holds ${ex.syp}, cannot be ${-diff} short`);
+  const res = await act('POST', `/sales/shifts/${shiftId}/close`, {
+    counted_syp: counted,
+    left_in_drawer_syp: Math.min(100000, counted),
+    counted_usd: ex.usd,
+    left_in_drawer_usd: ex.usd,
+  });
+  if (res?.needs_reason) await act('PUT', `/sales/shifts/${shiftId}/reason`, { reason_code: reason ?? 'count_error' });
+}
+
+/** A paid till sale by [act] — cash, card, on account, or dollars at the buy rate. */
+async function tillSale(
+  act: Actor,
+  branch: number,
+  lines: [string, number, number][],
+  pay: 'cash' | 'card' | 'usd' | { onAccount: string },
+  name?: string,
+): Promise<Any> {
+  const s = await act('POST', '/sales', {
+    branch_id: branch,
+    customer_id: typeof pay === 'object' ? shoppers[pay.onAccount]!.id : null,
+    customer_name: name ?? null,
+  });
+  for (const [k, i, q] of lines) await act('POST', `/sales/${s.id}/lines`, { variant_id: V(k, i), qty: q });
+  const cur = await act('GET', `/sales/${s.id}`);
+  const total = cur.total_syp as number;
+  let payment: Any;
+  if (pay === 'cash') payment = { method: 'cash', amount_syp: total, tendered_syp: Math.ceil(total / 5000) * 5000 };
+  else if (pay === 'card') payment = { method: 'card', amount_syp: total, reference: `POS-${branch}-${s.id}` };
+  else if (pay === 'usd') {
+    const fx = await act('GET', '/sales/fx');
+    const buy = fx.current.buy_rate as number;
+    payment = { method: 'cash', amount_syp: total, tendered_usd: Math.ceil(total / buy), fx_rate: buy };
+  } else payment = { method: 'on_account', amount_syp: total };
+  const paid = await act('POST', `/sales/${s.id}/pay`, { payments: [payment] });
+  paidSales.push(paid.id);
+  return paid;
+}
+
+let CREWS: BranchCrew[] = [];
+const crewOf = (branch: number) => CREWS.find((c) => c.id === branch);
+const tillOf = (branch: number): Actor => actor(crewOf(branch)?.cashier ?? crewOf(branch)?.manager);
+const managerOf = (branch: number): Actor => actor(crewOf(branch)?.manager);
+
+async function categoryId(kind: 'salary' | string): Promise<number> {
+  const rows = (await S('GET', '/expenses/categories')) as Any[];
+  const list = Array.isArray(rows) ? rows : (rows as Any).items;
+  const hit = kind === 'salary' ? list.find((c: Any) => c.kind === 'salary') : list.find((c: Any) => c.name_ar === kind);
+  return hit.id as number;
+}
+
+/** Active staff working at [branch] now, oldest account first. */
+async function staffAt(branch: number): Promise<number[]> {
+  const rows = (
+    await db.execute<{ user_id: number }>(
+      sql`select distinct a.user_id from user_role_assignments a join users u on u.id = a.user_id
+          where a.branch_id = ${branch} and a.valid_to is null and u.status = 'active' and u.archived_at is null
+          order by a.user_id`,
+    )
+  ).rows;
+  return rows.map((r) => r.user_id);
+}
+
+/**
+ * The week behind today, at the three curated branches: every day a drawer is
+ * opened, sells, sometimes pays an expense, and is counted — even, short, over,
+ * one waiting for a review. Then the month's money outside a sale: the dollar
+ * rate, rent and wages, the recurring bills.
+ */
+async function pastDays(history: [string, number, number][][]): Promise<void> {
+  section('Past days — drawers, sales, expenses and wages, as they happened');
+  const transport = await categoryId('نقل ومواصلات');
+  const hospitality = await categoryId('ضيافة');
+  const maintenance = await categoryId('صيانة');
+  const rent = await categoryId('إيجار');
+  const internet = await categoryId('إنترنت واتصالات');
+  const power = await categoryId('كهرباء وماء');
+  const salary = await categoryId('salary');
+  // Wages where the staff actually work — the main branch has none in the demo
+  // data, so Mezzeh's people (any role: a wage is per person, not per post).
+  const WB = (await staffAt(B1)).length > 0 ? B1 : B2;
+  const [cashier = null, keeper = null] = await staffAt(WB);
+
+  // The month's standing bills and wages — written before the month began.
+  const recurring: Record<string, number> = {};
+  await at(dayAt(-30, 10), async () => {
+    await step('fx rate (start of month)', () => S('POST', '/sales/fx', { buy_rate: 13000, sell_rate: 13200, note: 'سعر بداية الشهر' }));
+    await step('recurring rent', async () => {
+      recurring['rent'] = (await S('POST', '/expenses/recurring', { branch_id: B1, category_id: rent, amount_syp: 1500000, day_of_month: 1, note: 'إيجار المحل الرئيسي' })).id;
+    });
+    await step('recurring internet', () => S('POST', '/expenses/recurring', { branch_id: B1, category_id: internet, amount_syp: 150000, day_of_month: 15, note: 'اشتراك الإنترنت' }));
+    await step('recurring power (Mezzeh)', () => S('POST', '/expenses/recurring', { branch_id: B2, category_id: power, amount_syp: 200000, day_of_month: 10, note: 'فاتورة الكهرباء' }));
+    if (cashier) await step('wage (cashier)', () => S('PUT', `/expenses/wages/${cashier}`, { branch_id: WB, amount_syp: 1200000, frequency: 'monthly', due_day: 1, effective_from: ymd(dayAt(-60, 0)) }));
+    if (keeper) await step('wage (stock keeper)', () => S('PUT', `/expenses/wages/${keeper}`, { branch_id: WB, amount_syp: 900000, frequency: 'monthly', due_day: 5, effective_from: ymd(dayAt(-60, 0)) }));
+  });
+
+  // An old sale — the one returned today beyond the return window.
+  await at(dayAt(-20, 9), async () => {
+    const id = await step('drawer (old day)', () => openDrawer(tillOf(B1), B1));
+    oldSaleId = (await step('old sale (beyond window)', () => tillSale(tillOf(B1), B1, [['wrapping', 0, 3], ['balloons', 0, 2]], 'cash', 'حفلة عيد ميلاد')))?.id ?? null;
+    if (id) await step('close (old day)', () => closeDrawer(tillOf(B1), id));
+  });
+
+  // The first of the month: rent and the cashier's wage, paid outside the drawer.
+  const first = new Date();
+  first.setDate(1);
+  const daysToFirst = Math.round((dayAt(0, 0).getTime() - new Date(first.getFullYear(), first.getMonth(), 1).getTime()) / 86_400_000);
+  await at(dayAt(-daysToFirst, 11), async () => {
+    if (recurring['rent']) {
+      await step('rent paid', () => S('POST', '/expenses', { branch_id: B1, category_id: rent, amount_syp: 1500000, source: 'outside', spent_on: ymd(dayAt(-daysToFirst, 0)), recurring_id: recurring['rent'], note: 'إيجار الشهر' }));
+    }
+    if (cashier) {
+      await step('salary paid (cashier)', () => S('POST', '/expenses', { branch_id: WB, category_id: salary, amount_syp: 1200000, source: 'outside', spent_on: ymd(dayAt(-daysToFirst, 0)), employee_user_id: cashier, salary_kind: 'salary', period: ym(dayAt(-daysToFirst, 0)) }));
+    }
+  });
+
+  // The week: [day, B1 baskets, B2 baskets, B3 baskets, closes (liras off) per branch].
+  type Day = { d: number; b1: number; b2: number; b3: number; diff: [number, number, number] };
+  const week: Day[] = [
+    { d: -7, b1: 3, b2: 2, b3: 2, diff: [0, 0, 0] },
+    { d: -6, b1: 2, b2: 1, b3: 1, diff: [0, 0, -60000] },
+    { d: -5, b1: 2, b2: 1, b3: 1, diff: [-3000, 0, 0] },
+    { d: -3, b1: 2, b2: 2, b3: 1, diff: [0, 2000, 0] },
+    { d: -2, b1: 2, b2: 1, b3: 1, diff: [0, -55000, 0] },
+    { d: -1, b1: 3, b2: 2, b3: 1, diff: [0, 0, 1000] },
+  ];
+  let h = 0;
+  const next = () => history[h++ % history.length]!;
+  // The main branch's regular bigger tickets — so «today against last week» compares like with like.
+  const big: [string, number, number][][] = [
+    [['copy_paper', 0, 2], ['stapler', 0, 1]],
+    [['canvas', 1, 1], ['acrylic', 0, 1]],
+    [['journal', 0, 1], ['colored_pencils', 0, 1]],
+    [['school_nb', 0, 10], ['bic', 0, 10]],
+  ];
+  let k = 0;
+  const branches = [B1, B2, B3] as const;
+  for (const day of week) {
+    const shifts: (number | null)[] = [];
+    if (day.d === -1) {
+      await at(dayAt(-1, 8, 15), () => step('fx rate (updated)', () => S('POST', '/sales/fx', { buy_rate: 13100, sell_rate: 13300, note: 'ارتفاع طفيف' })));
+    }
+    await at(dayAt(day.d, 8, 30), async () => {
+      for (const b of branches) shifts.push(await step(`open ${day.d} @${b}`, () => openDrawer(tillOf(b), b)));
+    });
+    await at(dayAt(day.d, 11, 20), async () => {
+      for (let i = 0; i < day.b1; i++) {
+        await step(`sale ${day.d} @B1`, () => tillSale(tillOf(B1), B1, next(), i % 3 === 1 ? 'card' : 'cash', i === 0 ? 'زبون عابر' : undefined));
+      }
+      for (let i = 0; i < 2; i++) {
+        await step(`big sale ${day.d} @B1`, () => tillSale(tillOf(B1), B1, big[k++ % big.length]!, i ? 'card' : 'cash'));
+      }
+      for (let i = 0; i < day.b2; i++) await step(`sale ${day.d} @B2`, () => tillSale(tillOf(B2), B2, next(), i % 2 ? 'card' : 'cash'));
+      for (let i = 0; i < day.b3; i++) await step(`sale ${day.d} @B3`, () => tillSale(tillOf(B3), B3, next(), 'cash'));
+    });
+    await at(dayAt(day.d, 15, 40), async () => {
+      if (day.d === -7) await step('on account (khaled)', () => tillSale(tillOf(B1), B1, [['calculator', 0, 1], ['folder', 0, 3]], { onAccount: 'khaled' }));
+      if (day.d === -6) await step('drawer expense (transport)', () => S('POST', '/expenses', { branch_id: B1, category_id: transport, amount_syp: 15000, source: 'drawer', spent_on: ymd(dayAt(-6, 0)), note: 'نقل كراتين من المستودع' }));
+      if (day.d === -5) await step('maintenance (outside)', () => S('POST', '/expenses', { branch_id: B2, category_id: maintenance, amount_syp: 120000, source: 'outside', spent_on: ymd(dayAt(-5, 0)), note: 'صيانة المكيّف' }));
+      if (day.d === -2) {
+        await step('drawer expense (hospitality)', () => S('POST', '/expenses', { branch_id: B2, category_id: hospitality, amount_syp: 5000, source: 'drawer', spent_on: ymd(dayAt(-2, 0)), note: 'ضيافة زبائن' }));
+        await step('debt paid (khaled)', () => S('POST', `/customers/${shoppers['khaled']!.id}/account/payments`, { branch_id: B1, amount_syp: 20000, note: 'دفعة من الحساب' }));
+        if (cashier) await step('salary advance (cashier)', () => S('POST', '/expenses', { branch_id: WB, category_id: salary, amount_syp: 25000, source: 'drawer', spent_on: ymd(dayAt(-2, 0)), employee_user_id: cashier, salary_kind: 'advance', period: ym(dayAt(-2, 0)), note: 'سلفة' }));
+      }
+      if (day.d === -1) await step('dollar sale', () => tillSale(tillOf(B1), B1, [['g2', 0, 2], ['sticky', 0, 2]], 'usd'));
+      if (day.d === -3) await step('safe drop', async () => {
+        const id = shifts[0];
+        if (id) await tillOf(B1)('POST', `/sales/shifts/${id}/movements`, { direction: 'out', reason_code: 'safe_drop', amount_syp: 20000, note: 'إلى الخزنة' });
+      });
+    });
+    await at(dayAt(day.d, 18, 30), async () => {
+      for (const [i, b] of branches.entries()) {
+        const id = shifts[i];
+        if (!id) continue;
+        const reason = day.diff[i]! < -10000 ? 'unrecorded_expense' : 'change_error';
+        await step(`close ${day.d} @${b}`, () => closeDrawer(managerOf(b), id, day.diff[i], reason));
+      }
+    });
+    // The big short at Aleppo was looked at the next morning; Mezzeh's still waits.
+    if (day.d === -6 && shifts[2]) {
+      const id = shifts[2];
+      await at(dayAt(-5, 9), () => step('review (Aleppo short)', () => S('POST', `/sales/shifts/${id}/review`)));
+    }
+  }
+}
+
+/** Today: the three curated drawers open at half past eight. */
+async function openToday(): Promise<void> {
+  await at(dayAt(0, 8, 30), async () => {
+    for (const b of [B1, B2, B3]) await step(`open today @${b}`, () => openDrawer(tillOf(b), b));
+  });
+}
+
+/** Today's money outside a sale: a dollar sale, an expense from the drawer, suppliers paid. */
+async function todayMoney(): Promise<void> {
+  section('Today — dollars, the drawer, suppliers');
+  const hospitality = await categoryId('ضيافة');
+  await step('dollar sale (today)', () => tillSale(tillOf(B1), B1, [['stabilo', 0, 2], ['bic', 0, 4]], 'usd'));
+  await step('drawer expense (today)', () => S('POST', '/expenses', { branch_id: B1, category_id: hospitality, amount_syp: 8000, source: 'drawer', note: 'قهوة للمحل' }));
+  const usdReceipts = receipts.filter((r) => r.key.endsWith(':global'));
+  if (usdReceipts[0]) {
+    const r = usdReceipts[0];
+    await step('supplier paid in dollars (outside)', () =>
+      S('POST', '/payables/payments', { supplier_id: supplier['global'], branch_id: r.branch, currency: 'USD', amount: 300, source: 'outside', invoice_ids: [r.id], note: 'حوالة' }),
+    );
+  }
+  if (usdReceipts[1]) {
+    await step('dollar debt fixed in liras', () => S('POST', `/payables/invoices/${usdReceipts[1]!.id}/convert`, { rate: 13200, note: 'اتفاق مع المورّد' }));
+  }
+  const amal = receipts.find((r) => r.key === `${B1}:amal`);
+  if (amal) {
+    await step('supplier paid from the drawer', () =>
+      S('POST', '/payables/payments', { supplier_id: supplier['amal'], branch_id: B1, currency: 'SYP', amount: 40000, source: 'drawer', invoice_ids: [amal.id], note: 'دفعة نقدية' }),
+    );
+  }
+}
+
+let oldSaleId: number | null = null;
+
 async function pos(): Promise<void> {
   section('Point of sale — paid, split, credit, discount, held, open, void, returns');
   const history: [string, number, number][][] = [
@@ -1398,9 +1724,11 @@ async function pos(): Promise<void> {
     [['watercolor', 0, 1], ['brushes', 0, 1]],
     [['school_nb', 3, 4], ['bic', 1, 5]],
   ];
-  for (const [i, lines] of history.entries()) {
-    await step(`history sale ${i + 1}`, () => sale({ lines, pay: i % 3 === 1 ? 'card' : 'cash', name: i % 4 === 0 ? 'زبون عابر' : undefined }));
-  }
+  // The week behind today, drawers and all — then today's drawers open.
+  CREWS = await crews();
+  await step('credit limit (khaled)', () => S('PUT', `/customers/${shoppers['khaled']!.id}/account/limit`, { limit_syp: 150000 }));
+  await pastDays(history);
+  await openToday();
   const s1 = await step('split cash + card', () => sale({ lines: [['fountain', 0, 1], ['journal', 0, 1]], name: 'م. رامي', pay: [{ method: 'card', amount_syp: 200000, reference: 'VISA-4411' }, { method: 'cash', amount_syp: 'rest', tendered_syp: null }] }));
   void s1;
   const onAccount = await step('on account (ahmad)', () => sale({ lines: [['copy_paper', 0, 1], ['stapler', 0, 1]], customer: 'ahmad', pay: [{ method: 'on_account', amount_syp: 'rest' }] }));
@@ -1408,7 +1736,8 @@ async function pos(): Promise<void> {
   await step('manual discount 5%', () => sale({ lines: [['canvas', 1, 2], ['acrylic', 0, 1]], name: 'أستاذة رنا', discount: [5, 'زبونة دائمة'], pay: 'cash' }));
   await step('promotions applied (bxgy + tiers)', () => sale({ lines: [['stabilo', 1, 4], ['noris', 1, 24]], pay: 'cash' }));
   const toReturn = await step('sale to be returned', () => sale({ lines: [['scissors', 0, 2], ['glue_stick', 0, 3], ['clay', 0, 1]], customer: 'sara', pay: 'cash' }));
-  const oldSale = await step('old sale (beyond window)', () => sale({ lines: [['wrapping', 0, 3], ['balloons', 0, 2]], name: 'حفلة عيد ميلاد', pay: 'cash' }));
+  // Sold twenty days ago, in its own day (`pastDays`) — its ledger moved with it.
+  const oldSale = oldSaleId === null ? null : await step('old sale', () => S('GET', `/sales/${oldSaleId}`));
 
   // Returns
   if (toReturn) {
@@ -1423,13 +1752,13 @@ async function pos(): Promise<void> {
   }
   if (oldSale) {
     await step('return beyond window (manager approval)', async () => {
-      await db.execute(sql`update sales set created_at = now() - interval '20 days', paid_at = now() - interval '20 days' where id = ${oldSale.id}`);
       const line = (oldSale.lines as Any[])[0];
       await S('POST', '/returns/approve', { branch_id: B1, sale_id: oldSale.id, lines: [{ sale_line_id: line.id, qty: 1, condition: 'sellable' }], refund_method: 'cash', reason: 'ورق ممزّق', email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
     });
   }
   await step('pay with store credit (sara)', () => sale({ lines: [['sticky', 1, 1]], customer: 'sara', pay: [{ method: 'customer_credit', amount_syp: 'rest' }] }));
-  await step('debt repayment (ahmad)', () => S('POST', `/customers/${shoppers['ahmad']!.id}/account/entries`, { amount_syp: 30000, note: 'تسديد جزء من الذمّة نقداً' }));
+  // Paid in cash into today's drawer — a manual entry would never reach the count.
+  await step('debt repayment (ahmad)', () => S('POST', `/customers/${shoppers['ahmad']!.id}/account/payments`, { branch_id: B1, amount_syp: 30000, note: 'تسديد جزء من الذمّة نقداً' }));
 
   // Held, open, void
   await step('held basket', async () => {
@@ -1442,6 +1771,7 @@ async function pos(): Promise<void> {
     await S('POST', `/sales/${s.id}/void`);
   });
   await step('sale in Mezzeh', () => sale({ branch: B2, lines: [['backpack', 1, 1], ['eraser', 0, 3]], pay: 'cash' }));
+  await todayMoney();
 }
 
 async function online(): Promise<void> {
@@ -1668,14 +1998,8 @@ async function documents(): Promise<void> {
 }
 
 async function backdate(): Promise<void> {
-  section('Back-dating — sales spread over a month, drafts aged, demand aged');
-  await step('sales history', () =>
-    db.execute(sql`
-      update sales s set created_at = t.at, paid_at = t.at
-      from (select id, now() - ((row_number() over (order by id)) * interval '2 days' + interval '3 hours') as at
-            from sales where status = 'paid' and paid_at > now() - interval '1 day' and id in (select id from sales order by id limit 12)) t
-      where s.id = t.id`),
-  );
+  // Sales are not back-dated here any more: `pastDays` writes whole days, ledger included.
+  section('Back-dating — drafts aged, demand aged');
   await step('drafts aged', () =>
     db.execute(sql`update catalog_products set created_at = now() - (id % 9 + 2) * interval '1 day' where is_branch_draft`),
   );
@@ -1848,6 +2172,9 @@ async function spreadBranch(c: BranchCrew, sups: string[]): Promise<void> {
     });
   }
 
+  // A temporarily closed branch keeps its stock and documents, and sells nothing.
+  if (!c.shoppable) return;
+
   // The till — sales by this branch's own cashier.
   const sell = async (lines: [string, number][], pay: 'cash' | 'card' | null, name?: string) => {
     const s = await till('POST', '/sales', { branch_id: c.id, customer_name: name ?? null });
@@ -1866,9 +2193,31 @@ async function spreadBranch(c: BranchCrew, sups: string[]): Promise<void> {
     [['copy_paper', 1], ['ruler', 1]],
   ];
   let first: Any = null;
-  for (const [i, lines] of baskets.entries()) {
-    const paid = await quiet('branch sale', () => sell(lines, i % 2 ? 'card' : 'cash', i === 0 ? 'زبون عابر' : undefined));
-    first ??= paid;
+  const sellAll = async () => {
+    for (const [i, lines] of baskets.entries()) {
+      const paid = await quiet('branch sale', () => sell(lines, i % 2 ? 'card' : 'cash', i === 0 ? 'زبون عابر' : undefined));
+      first ??= paid;
+    }
+  };
+  if (c.id === B1 || c.id === B2 || c.id === B3) {
+    // Their week is written by `pastDays`, and today's drawer is open.
+    await sellAll();
+  } else {
+    // One past day, opened, sold and counted — then today's drawer opens.
+    const d = -(1 + (c.id % 5));
+    let shiftId: number | null = null;
+    await at(dayAt(d, 9, 0), async () => {
+      shiftId = await quiet('branch drawer', () => openDrawer(till, c.id));
+    });
+    await at(dayAt(d, 12, 30), sellAll);
+    await at(dayAt(d, 19, 0), async () => {
+      if (shiftId) await quiet('branch close', () => closeDrawer(mgr, shiftId!));
+    });
+    await at(dayAt(0, 8, 30), () => quiet('branch drawer today', () => openDrawer(till, c.id)));
+    // And sells today too — a branch whose only line today is a refund reads «negative sales».
+    for (const [i, lines] of baskets.slice(1, 3).entries()) {
+      await quiet('branch sale today', () => sell(lines, i ? 'card' : 'cash'));
+    }
   }
   await quiet('branch held basket', async () => {
     const s = await sell([['stabilo', 2]], null, 'ينتظر زميله');
@@ -1961,7 +2310,7 @@ async function spreadCustomers(branchCrews: BranchCrew[], printOpts: Any): Promi
 }
 
 async function everyBranchEveryAccount(): Promise<void> {
-  const branchCrews = await crews();
+  const branchCrews = CREWS.length > 0 ? CREWS : await crews();
   section(`Every branch (${branchCrews.length}) and every account`);
   const printOpts = await S('GET', '/printing/config');
   const sups = ['amal', 'warraq', 'funoon', 'sham'];
@@ -1972,11 +2321,6 @@ async function everyBranchEveryAccount(): Promise<void> {
   console.log();
   const n = await spreadCustomers(branchCrews, printOpts);
   log(`${branchCrews.length} branches, ${n} existing customers`);
-  await quiet('spread back-dating', () =>
-    db.execute(sql`update sales set created_at = now() - ((id % 24) + 1) * interval '1 day' - (id % 9) * interval '1 hour',
-                                    paid_at   = now() - ((id % 24) + 1) * interval '1 day' - (id % 9) * interval '1 hour'
-                   where status = 'paid' and branch_id <> ${B1} and paid_at > now() - interval '1 hour'`),
-  );
   for (const [kind, { n: count, example }] of quietFailures) {
     console.log(`  ⚠ ${kind}: ${count}× — ${example.slice(0, 160)}`);
   }

@@ -8,6 +8,8 @@ import { issueNumber } from '../../../core/numbering/numbering.js';
 import { branchPrefix } from '../../../core/records/branch-prefix.js';
 import * as userRoleAssignmentsRepository from '../../identity/repositories/user-role-assignments.repository.js';
 import { SALES_AUDIT, saleTarget } from '../audit-actions.js';
+import { currentRate } from './fx.service.js';
+import { expectedUsd } from './fx-rules.js';
 import * as returnsRepo from '../repositories/returns.repository.js';
 import * as salesRepo from '../repositories/sales.repository.js';
 import * as repo from '../repositories/shifts.repository.js';
@@ -61,6 +63,16 @@ export interface WireShift {
   opening_suggested_syp: number | null;
   opening_counted_syp: number;
   opening_difference_syp: number | null;
+  // Dollars (`finance_operations.md` §٣-ج) — notes beside the liras, never summed into them.
+  opening_suggested_usd: number | null;
+  opening_counted_usd: number;
+  counted_usd: number | null;
+  left_in_drawer_usd: number | null;
+  /** `null` while open — the blind count, as for the liras. */
+  expected_usd: number | null;
+  difference_usd: number | null;
+  /** The buy rate the dollar difference was valued at. */
+  close_fx_rate: number | null;
   closed_at: string | null;
   closed_by_name: string | null;
   closed_station_name: string | null;
@@ -86,7 +98,12 @@ export interface WireShift {
 export interface WireShiftMovement {
   id: number;
   direction: 'in' | 'out';
+  /** Liras — or, for a dollar movement, the dollars' value at [fx_rate]. */
   amount_syp: number;
+  currency: 'SYP' | 'USD';
+  /** The dollars moved — `null` for liras. */
+  amount_usd: number | null;
+  fx_rate: number | null;
   reason_code: string;
   note: string | null;
   user_id: number | null;
@@ -121,6 +138,8 @@ export interface WireShiftReport {
   cash_in: number;
   cash_out: number;
   debt_payments: number;
+  /** Dollars taken for sales in cash — their value is inside `revenue.cash`. */
+  revenue_usd: number;
   by_person: WireShiftPerson[];
   movements: WireShiftMovement[];
 }
@@ -161,6 +180,13 @@ async function wireShifts(rows: CashShiftRow[]): Promise<WireShift[]> {
       opening_suggested_syp: num(r.opening_suggested_syp),
       opening_counted_syp: Number(r.opening_counted_syp),
       opening_difference_syp: openingDifference(num(r.opening_suggested_syp), Number(r.opening_counted_syp)),
+      opening_suggested_usd: num(r.opening_suggested_usd),
+      opening_counted_usd: Number(r.opening_counted_usd),
+      counted_usd: num(r.counted_usd),
+      left_in_drawer_usd: num(r.left_in_drawer_usd),
+      expected_usd: open ? null : num(r.expected_usd),
+      difference_usd: num(r.difference_usd),
+      close_fx_rate: num(r.close_fx_rate),
       closed_at: r.closed_at?.toISOString() ?? null,
       closed_by_name: r.closed_by_user_id === null ? null : (users.get(r.closed_by_user_id) ?? null),
       closed_station_name: r.closed_station_id === null ? null : (stations.get(r.closed_station_id) ?? null),
@@ -229,6 +255,10 @@ export interface WireCurrentShift {
   denominations: number[];
   /** What the last close left in the drawer — the opening to suggest. */
   suggested_opening_syp: number | null;
+  /** The dollars the last close left — `null` when none. */
+  suggested_opening_usd: number | null;
+  /** The dollar's rates now and the change rounding — `null` until the manager writes them. */
+  fx: { buy_rate: number; sell_rate: number; round_syp: number } | null;
   /** Carts still building or parked at the branch — warned about at close. */
   open_carts: number;
   /** Whether the reader may count and close the drawer here. */
@@ -238,12 +268,13 @@ export interface WireCurrentShift {
 
 export async function getCurrent(actor: RequestActorContext, branchId: number): Promise<WireCurrentShift> {
   await requireAt(actor, SELL, branchId);
-  const [settings, open, canClose, openCarts, manages] = await Promise.all([
+  const [settings, open, canClose, openCarts, manages, rate] = await Promise.all([
     returnsRepo.findSettings(),
     repo.findOpenShift(db, branchId),
     holdsPermissionAt(actor.userId, SHIFT_CLOSE, branchId),
     repo.countOpenCarts(branchId),
     holdsPermissionAt(actor.userId, SHIFT_MANAGE, branchId),
+    currentRate(),
   ]);
   return {
     mode: 'required',
@@ -253,6 +284,11 @@ export async function getCurrent(actor: RequestActorContext, branchId: number): 
     cash_out_approval_syp: manages ? null : settings.shift_cash_out_approval_syp,
     denominations: settings.shift_denominations,
     suggested_opening_syp: open ? null : await repo.findLastLeft(branchId),
+    suggested_opening_usd: open ? null : await repo.findLastLeftUsd(branchId),
+    fx:
+      rate === null
+        ? null
+        : { buy_rate: Number(rate.buy_rate), sell_rate: Number(rate.sell_rate), round_syp: settings.cash_round_syp },
     open_carts: openCarts,
     can_close: canClose,
     shift: open ? await wireOne(open) : null,
@@ -267,7 +303,7 @@ export async function getCurrent(actor: RequestActorContext, branchId: number): 
  */
 export async function openShift(
   actor: RequestActorContext,
-  input: { branch_id: number; opening_counted_syp: number },
+  input: { branch_id: number; opening_counted_syp: number; opening_counted_usd?: number },
 ): Promise<WireShift> {
   const branch = await salesRepo.findBranch(input.branch_id);
   if (!branch) throw new NotFoundError('Branch not found');
@@ -275,6 +311,9 @@ export async function openShift(
   const existing = await repo.findOpenShift(db, input.branch_id);
   if (existing) return wireOne(existing);
   const suggested = await repo.findLastLeft(input.branch_id);
+  const suggestedUsd = await repo.findLastLeftUsd(input.branch_id);
+  const countedUsd = input.opening_counted_usd ?? 0;
+  const rate = await currentRate();
   let row: CashShiftRow;
   try {
     row = await db.transaction(async (tx) => {
@@ -287,7 +326,31 @@ export async function openShift(
         opened_station_id: actor.stationId ?? null,
         opening_suggested_syp: suggested === null ? null : money(suggested),
         opening_counted_syp: money(input.opening_counted_syp),
+        opening_suggested_usd: suggestedUsd === null ? null : money(suggestedUsd),
+        opening_counted_usd: money(countedUsd),
       });
+      // The dollars too: left $50, found $40 — valued at today's buy rate.
+      const diffUsd = openingDifference(suggestedUsd, countedUsd);
+      if (diffUsd !== null && diffUsd !== 0) {
+        const buy = rate === null ? null : Number(rate.buy_rate);
+        await recordFinance(tx, [
+          {
+            branchId: input.branch_id,
+            type: diffUsd > 0 ? 'cash_over' : 'cash_short',
+            method: 'cash',
+            amountSyp: buy === null ? 0 : diffUsd * buy,
+            currency: 'USD',
+            amountFx: diffUsd,
+            fxRate: buy,
+            docType: 'cash_shift',
+            docId: created.id,
+            userId: actor.userId,
+            stationId: actor.stationId ?? null,
+            shiftId: created.id,
+            reason: 'opening',
+          },
+        ]);
+      }
       // «Left 50, found 45» — the drawer lost money between two shifts.
       const diff = openingDifference(suggested, input.opening_counted_syp);
       if (diff !== null && diff !== 0) {
@@ -329,6 +392,11 @@ async function drawerNow(tx: Tx, shift: CashShiftRow): Promise<number> {
   return expectedCash(Number(shift.opening_counted_syp), await repo.findCashEntries(tx, shift.id));
 }
 
+/** The dollars the drawer holds right now. */
+async function drawerUsdNow(exec: Tx | typeof db, shift: CashShiftRow): Promise<number> {
+  return expectedUsd(Number(shift.opening_counted_usd), await repo.findCashEntries(exec, shift.id));
+}
+
 /**
  * Cash put in or taken out by hand — by anyone who sells at the branch, under
  * their own name. **A cash-out never takes more than the drawer holds**
@@ -338,7 +406,14 @@ async function drawerNow(tx: Tx, shift: CashShiftRow): Promise<number> {
 export async function addMovement(
   actor: RequestActorContext,
   shiftId: number,
-  input: { direction: 'in' | 'out'; amount_syp: number; reason_code: string; note?: string },
+  input: {
+    direction: 'in' | 'out';
+    currency?: 'SYP' | 'USD';
+    amount_syp?: number;
+    amount_usd?: number;
+    reason_code: string;
+    note?: string;
+  },
   approverUserId: number | null = null,
 ): Promise<WireShiftReport> {
   const shift = await repo.findShiftById(db, shiftId);
@@ -351,19 +426,29 @@ export async function addMovement(
     throw new BusinessError(409, 'Record an expense from the expense form', 'shift_use_expense_form');
   }
   const settings = await returnsRepo.findSettings();
+  // Dollars move as notes (`finance_operations.md` §٣-ج): the drawer's dollars
+  // are checked, and the cap weighs their value at the buy rate.
+  const usd = input.currency === 'USD';
+  const rate = usd ? await currentRate() : null;
+  if (usd && rate === null) throw new BusinessError(422, 'No dollar rate is set', 'fx_rate_missing');
+  const buy = rate === null ? null : Number(rate.buy_rate);
+  const amount = usd ? (input.amount_usd ?? 0) : (input.amount_syp ?? 0);
+  const valueSyp = usd ? amount * buy! : amount;
+  const fits = async (exec: Tx | typeof db, sh: CashShiftRow) =>
+    cashOutFits(
+      amount,
+      usd ? await drawerUsdNow(exec, sh) : expectedCash(Number(sh.opening_counted_syp), await repo.findCashEntries(exec, sh.id)),
+    );
   // The drawer first: asking a manager to approve what the drawer cannot give
   // spends their password on a refusal. Re-checked under the lock below.
-  if (out && shift.status === 'open') {
-    const now = expectedCash(Number(shift.opening_counted_syp), await repo.findCashEntries(db, shift.id));
-    if (!cashOutFits(input.amount_syp, now)) {
-      throw new BusinessError(409, 'The drawer does not hold that much', 'cash_out_exceeds_drawer');
-    }
+  if (out && shift.status === 'open' && !(await fits(db, shift))) {
+    throw new BusinessError(409, 'The drawer does not hold that much', 'cash_out_exceeds_drawer');
   }
   // A manager at the branch is the approval the cap asks for — recorded under
   // their own name. Anyone else needs a manager **other than themselves**.
   const selfManages = out && (await holdsPermissionAt(actor.userId, SHIFT_MANAGE, shift.branch_id));
   if (selfManages) approverUserId = actor.userId;
-  else if (out && cashOutNeedsApproval(input.amount_syp, settings.shift_cash_out_approval_syp)) {
+  else if (out && cashOutNeedsApproval(valueSyp, settings.shift_cash_out_approval_syp)) {
     if (approverUserId === actor.userId) {
       throw new BusinessError(403, 'You cannot approve your own cash-out', 'shift_approver_is_self');
     }
@@ -381,12 +466,13 @@ export async function addMovement(
     if (!locked || locked.status !== 'open') {
       throw new BusinessError(409, 'This shift is closed', 'shift_closed');
     }
-    if (out && !cashOutFits(input.amount_syp, await drawerNow(tx, locked))) {
+    if (out && !(await fits(tx, locked))) {
       throw new BusinessError(409, 'The drawer does not hold that much', 'cash_out_exceeds_drawer');
     }
     await bookMovement(tx, actor, locked, {
       direction: input.direction,
-      amountSyp: input.amount_syp,
+      amountSyp: valueSyp,
+      usd: usd ? { amount, rate: buy! } : undefined,
       reasonCode: input.reason_code,
       note: input.note?.trim() || null,
       reversesId: null,
@@ -400,30 +486,48 @@ export async function addMovement(
   return getReport(actor, shiftId);
 }
 
+/** What leaves the drawer for a document of another kind — an expense, a supplier's payment. */
+export interface DrawerCashOut {
+  /** The value in liras — for dollars, their value at [usd.rate]. */
+  amountSyp: number;
+  /** Dollar notes leaving (`finance_operations.md` §٣-ج) — checked against the drawer's dollars. */
+  usd?: { amount: number; rate: number };
+  /** The movement's reason code — the shift report names it. */
+  reasonCode: 'expense' | 'supplier_payment';
+  /** The ledger entry it books — `expense` lowers profit, `supplier_payment` only the cash. */
+  entryType: 'expense' | 'supplier_payment';
+  note: string | null;
+  /** The key the actor must hold at the branch — the drawer rules are the same for every kind. */
+  requireKey: string;
+}
+
 /**
- * An expense paid from the branch's drawer (`finance_operations.md` §٢) — the
- * same rules as a cash-out: the open shift, the drawer holding it, the cap and
- * a manager's approval (a manager at the branch approves their own). The
- * movement and its `expense` entry are booked, then [write] records the
- * expense row **in the same transaction**.
+ * Cash paid out of the branch's drawer for another document — the same rules
+ * as a cash-out: the open shift, the drawer holding it (dollars as dollars),
+ * the cap by its value and a manager's approval (a manager at the branch
+ * approves their own). The movement and its entry are booked, then [write]
+ * records the document **in the same transaction**.
  */
-export async function drawerExpenseOut(
+export async function drawerCashOut(
   actor: RequestActorContext,
   branchId: number,
-  amountSyp: number,
-  note: string | null,
+  out: DrawerCashOut,
   approverUserId: number | null,
   write: (tx: Tx, ref: { movementId: number; shiftId: number }) => Promise<void>,
 ): Promise<void> {
-  await requireAt(actor, SELL, branchId);
+  await requireAt(actor, out.requireKey, branchId);
   const shift = await repo.findOpenShift(db, branchId);
   if (!shift) throw new BusinessError(409, 'Open the branch drawer first', 'shift_required');
   const settings = await returnsRepo.findSettings();
-  if (!cashOutFits(amountSyp, expectedCash(Number(shift.opening_counted_syp), await repo.findCashEntries(db, shift.id)))) {
+  const fits = async (exec: Tx | typeof db, sh: CashShiftRow) =>
+    out.usd
+      ? cashOutFits(out.usd.amount, await drawerUsdNow(exec, sh))
+      : cashOutFits(out.amountSyp, expectedCash(Number(sh.opening_counted_syp), await repo.findCashEntries(exec, sh.id)));
+  if (!(await fits(db, shift))) {
     throw new BusinessError(409, 'The drawer does not hold that much', 'cash_out_exceeds_drawer');
   }
   if (await holdsPermissionAt(actor.userId, SHIFT_MANAGE, branchId)) approverUserId = actor.userId;
-  else if (cashOutNeedsApproval(amountSyp, settings.shift_cash_out_approval_syp)) {
+  else if (cashOutNeedsApproval(out.amountSyp, settings.shift_cash_out_approval_syp)) {
     if (approverUserId === actor.userId) {
       throw new BusinessError(403, 'You cannot approve your own cash-out', 'shift_approver_is_self');
     }
@@ -439,33 +543,33 @@ export async function drawerExpenseOut(
   await db.transaction(async (tx) => {
     const locked = await repo.lockShift(tx, shift.id);
     if (!locked || locked.status !== 'open') throw new BusinessError(409, 'This shift is closed', 'shift_closed');
-    if (!cashOutFits(amountSyp, await drawerNow(tx, locked))) {
+    if (!(await fits(tx, locked))) {
       throw new BusinessError(409, 'The drawer does not hold that much', 'cash_out_exceeds_drawer');
     }
     const movement = await bookMovement(tx, actor, locked, {
       direction: 'out',
-      amountSyp,
-      reasonCode: 'expense',
-      note,
+      amountSyp: out.amountSyp,
+      usd: out.usd,
+      reasonCode: out.reasonCode,
+      note: out.note,
       reversesId: null,
       approvedBy: approverUserId,
-      expense: true,
+      entryType: out.entryType,
     });
     await write(tx, { movementId: movement.id, shiftId: locked.id });
   });
 }
 
 /**
- * An expense from the drawer undone — the cash goes back into the branch's
- * open shift (today's, if the original one was counted) as an `expense` entry
- * the other way, so profit and the drawer both come back.
+ * Cash paid out for a document, undone — it comes back into the branch's open
+ * shift (today's, if the original one was counted) as the same entry type the
+ * other way, so the drawer and the books both come back.
  */
-export async function drawerExpenseBack(
+export async function drawerCashBack(
   tx: Tx,
   actor: RequestActorContext,
   branchId: number,
-  amountSyp: number,
-  note: string,
+  back: Omit<DrawerCashOut, 'requireKey'> & { note: string },
   originalMovementId: number | null,
 ): Promise<{ movementId: number; shiftId: number }> {
   const shiftId = await shiftForMoney(tx, branchId);
@@ -475,14 +579,45 @@ export async function drawerExpenseBack(
   const sameShift = originalMovementId !== null && (await repo.findMovementById(tx, originalMovementId))?.shift_id === locked.id;
   const movement = await bookMovement(tx, actor, locked, {
     direction: 'in',
-    amountSyp,
-    reasonCode: 'expense',
-    note,
+    amountSyp: back.amountSyp,
+    usd: back.usd,
+    reasonCode: back.reasonCode,
+    note: back.note,
     reversesId: sameShift ? originalMovementId : null,
     approvedBy: null,
-    expense: true,
+    entryType: back.entryType,
   });
   return { movementId: movement.id, shiftId: locked.id };
+}
+
+/** An expense paid from the branch's drawer (`finance_operations.md` §٢) — by whoever sells there. */
+export function drawerExpenseOut(
+  actor: RequestActorContext,
+  branchId: number,
+  amountSyp: number,
+  note: string | null,
+  approverUserId: number | null,
+  write: (tx: Tx, ref: { movementId: number; shiftId: number }) => Promise<void>,
+): Promise<void> {
+  return drawerCashOut(
+    actor,
+    branchId,
+    { amountSyp, reasonCode: 'expense', entryType: 'expense', note, requireKey: SELL },
+    approverUserId,
+    write,
+  );
+}
+
+/** An expense from the drawer undone — profit and the drawer both come back. */
+export function drawerExpenseBack(
+  tx: Tx,
+  actor: RequestActorContext,
+  branchId: number,
+  amountSyp: number,
+  note: string,
+  originalMovementId: number | null,
+): Promise<{ movementId: number; shiftId: number }> {
+  return drawerCashBack(tx, actor, branchId, { amountSyp, reasonCode: 'expense', entryType: 'expense', note }, originalMovementId);
 }
 
 /**
@@ -503,6 +638,14 @@ export async function reverseMovement(
   if (movement.reverses_movement_id !== null) {
     throw new BusinessError(409, 'A reversal is not reversed — book the movement again', 'shift_movement_is_reversal');
   }
+  // An expense's cash is undone with the expense itself — undoing the movement
+  // alone would put the cash back and leave the expense lowering the profit.
+  if (movement.reason_code === 'expense') {
+    throw new BusinessError(409, 'Correct this expense from the expenses screen', 'shift_expense_correct_from_expenses');
+  }
+  if (movement.reason_code === 'supplier_payment') {
+    throw new BusinessError(409, 'Correct this payment from the supplier account', 'shift_supplier_correct_from_payables');
+  }
   const mine = movement.user_id === actor.userId;
   if (!mine) await requireAt(actor, SHIFT_CLOSE, shift.branch_id);
   else await requireAt(actor, SELL, shift.branch_id);
@@ -516,13 +659,21 @@ export async function reverseMovement(
     }
     const direction = movement.direction === 'in' ? 'out' : 'in';
     const amount = Number(movement.amount_syp);
+    const usd =
+      movement.currency === 'USD' && movement.amount_fx !== null
+        ? { amount: Number(movement.amount_fx), rate: Number(movement.fx_rate ?? 0) }
+        : undefined;
     // Taking back cash that was put in still cannot empty the drawer below zero.
-    if (direction === 'out' && !cashOutFits(amount, await drawerNow(tx, locked))) {
+    const fits = usd
+      ? cashOutFits(usd.amount, await drawerUsdNow(tx, locked))
+      : cashOutFits(amount, await drawerNow(tx, locked));
+    if (direction === 'out' && !fits) {
       throw new BusinessError(409, 'The drawer does not hold that much', 'cash_out_exceeds_drawer');
     }
     await bookMovement(tx, actor, locked, {
       direction,
       amountSyp: amount,
+      usd,
       reasonCode: movement.reason_code,
       note: null,
       reversesId: movementId,
@@ -544,14 +695,19 @@ async function bookMovement(
     note: string | null;
     reversesId: number | null;
     approvedBy: number | null;
-    /** An expense paid from the drawer books `expense` — it lowers profit, a cash-out does not. */
-    expense?: boolean;
+    /** A document's cash books its own entry — `expense` lowers profit, `supplier_payment` only the cash. */
+    entryType?: 'expense' | 'supplier_payment';
+    /** Dollars moved — [amountSyp] is then their value at [rate]. */
+    usd?: { amount: number; rate: number };
   },
 ): Promise<CashMovementRow> {
   const movement = await repo.insertMovement(tx, {
     shift_id: shift.id,
     direction: m.direction,
     amount_syp: money(m.amountSyp),
+    currency: m.usd ? 'USD' : 'SYP',
+    amount_fx: m.usd ? money(m.usd.amount) : null,
+    fx_rate: m.usd ? m.usd.rate.toFixed(4) : null,
     reason_code: m.reasonCode,
     note: m.note,
     user_id: actor.userId,
@@ -562,9 +718,16 @@ async function bookMovement(
   await recordFinance(tx, [
     {
       branchId: shift.branch_id,
-      type: m.expense ? 'expense' : m.direction === 'in' ? 'cash_in' : 'cash_out',
+      type: m.entryType ?? (m.direction === 'in' ? 'cash_in' : 'cash_out'),
       method: 'cash',
       amountSyp: m.direction === 'in' ? m.amountSyp : -m.amountSyp,
+      ...(m.usd
+        ? {
+            currency: 'USD' as const,
+            amountFx: m.direction === 'in' ? m.usd.amount : -m.usd.amount,
+            fxRate: m.usd.rate,
+          }
+        : {}),
       docType: 'cash_movement',
       docId: movement.id,
       userId: actor.userId,
@@ -593,11 +756,15 @@ export interface CloseResult {
 export async function closeShift(
   actor: RequestActorContext,
   shiftId: number,
-  input: { counted_syp: number; left_in_drawer_syp: number },
+  input: { counted_syp: number; left_in_drawer_syp: number; counted_usd?: number; left_in_drawer_usd?: number },
 ): Promise<CloseResult> {
-  if (input.left_in_drawer_syp > input.counted_syp) {
+  const countedUsd = input.counted_usd ?? 0;
+  const leftUsd = input.left_in_drawer_usd ?? 0;
+  if (input.left_in_drawer_syp > input.counted_syp || leftUsd > countedUsd) {
     throw new BusinessError(422, 'Cannot leave more than was counted', 'shift_left_above_counted');
   }
+  const rate = await currentRate();
+  const buy = rate === null ? null : Number(rate.buy_rate);
   const shift = await repo.findShiftById(db, shiftId);
   if (!shift) throw new NotFoundError('Shift not found');
   await requireAt(actor, SHIFT_CLOSE, shift.branch_id);
@@ -610,7 +777,12 @@ export async function closeShift(
     }
     const expected = await drawerNow(tx, locked);
     const difference = differenceOf(input.counted_syp, expected);
-    const asks = needsReason(difference, settings.shift_reason_above_syp);
+    // The dollars apart (`finance_operations.md` §٣-ج), their difference valued
+    // at the buy rate of the close — and both differences weigh on the reason.
+    const expectedDollars = await drawerUsdNow(tx, locked);
+    const differenceUsd = differenceOf(countedUsd, expectedDollars);
+    const weight = Math.abs(difference) + Math.abs(differenceUsd * (buy ?? 0));
+    const asks = needsReason(weight, settings.shift_reason_above_syp);
     await repo.updateShift(tx, shiftId, {
       status: 'closed',
       closed_at: new Date(),
@@ -620,9 +792,33 @@ export async function closeShift(
       left_in_drawer_syp: money(input.left_in_drawer_syp),
       expected_syp: money(expected),
       difference_syp: money(difference),
+      counted_usd: money(countedUsd),
+      left_in_drawer_usd: money(leftUsd),
+      expected_usd: money(expectedDollars),
+      difference_usd: money(differenceUsd),
+      close_fx_rate: buy === null ? null : buy.toFixed(4),
       reason_required: asks,
-      needs_review: needsReview(difference, settings.shift_review_above_syp),
+      needs_review: needsReview(weight, settings.shift_review_above_syp),
     });
+    if (differenceUsd !== 0) {
+      await recordFinance(tx, [
+        {
+          branchId: locked.branch_id,
+          type: differenceUsd > 0 ? 'cash_over' : 'cash_short',
+          method: 'cash',
+          amountSyp: buy === null ? 0 : differenceUsd * buy,
+          currency: 'USD',
+          amountFx: differenceUsd,
+          fxRate: buy,
+          docType: 'cash_shift',
+          docId: shiftId,
+          userId: actor.userId,
+          stationId: actor.stationId ?? null,
+          shiftId,
+          reason: 'count',
+        },
+      ]);
+    }
     if (difference !== 0) {
       await recordFinance(tx, [
         {
@@ -694,11 +890,12 @@ export async function getReport(actor: RequestActorContext, shiftId: number): Pr
     holdsPermissionAt(actor.userId, SHIFT_MANAGE, shift.branch_id),
   ]);
   if (!sells && !manages) throw new BusinessError(403, 'Not at this branch', 'shift_not_at_branch');
-  const [totals, salesCount, movements, personEntries] = await Promise.all([
+  const [totals, salesCount, movements, personEntries, cashEntries] = await Promise.all([
     repo.findTotalsByTypeMethod(shiftId),
     repo.countSales(shiftId),
     repo.findMovements(shiftId),
     repo.findPersonEntries(shiftId),
+    repo.findCashEntries(db, shiftId),
   ]);
   const sum = (type: string, method?: string) =>
     totals.filter((t) => t.type === type && (method === undefined || t.method === method)).reduce((s, t) => s + t.totalSyp, 0);
@@ -748,6 +945,9 @@ export async function getReport(actor: RequestActorContext, shiftId: number): Pr
     cash_in: live.filter((m) => m.direction === 'in').reduce((s, m) => s + Number(m.amount_syp), 0),
     cash_out: live.filter((m) => m.direction === 'out').reduce((s, m) => s + Number(m.amount_syp), 0),
     debt_payments: sum('debt_payment'),
+    revenue_usd: cashEntries
+      .filter((e) => e.type === 'sale_revenue' && e.currency === 'USD')
+      .reduce((t, e) => t + (e.amountFx ?? 0), 0),
     by_person: people.map((p) => ({
       user_id: p.userId,
       name: p.userId === null ? null : (users.get(p.userId) ?? null),
@@ -763,6 +963,9 @@ export async function getReport(actor: RequestActorContext, shiftId: number): Pr
       id: m.id,
       direction: m.direction,
       amount_syp: Number(m.amount_syp),
+      currency: m.currency === 'USD' ? ('USD' as const) : ('SYP' as const),
+      amount_usd: m.currency === 'USD' ? num(m.amount_fx) : null,
+      fx_rate: num(m.fx_rate),
       reason_code: m.reason_code,
       note: m.note,
       user_id: m.user_id,

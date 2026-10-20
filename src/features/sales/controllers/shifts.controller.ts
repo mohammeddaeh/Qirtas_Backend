@@ -18,12 +18,14 @@ export async function current(req: Request, res: Response): Promise<void> {
 }
 
 export async function open(req: Request, res: Response): Promise<void> {
-  created(res, await service.openShift(actorOf(req), req.body as { branch_id: number; opening_counted_syp: number }));
+  created(res, await service.openShift(actorOf(req), req.body as { branch_id: number; opening_counted_syp: number; opening_counted_usd?: number }));
 }
 
 interface MovementBody {
   direction: 'in' | 'out';
-  amount_syp: number;
+  currency?: 'SYP' | 'USD';
+  amount_syp?: number;
+  amount_usd?: number;
   reason_code: string;
   note?: string;
   approver_email?: string;
@@ -56,7 +58,7 @@ export async function reverseMovement(req: Request, res: Response): Promise<void
 }
 
 export async function close(req: Request, res: Response): Promise<void> {
-  ok(res, await service.closeShift(actorOf(req), idOf(req), req.body as { counted_syp: number; left_in_drawer_syp: number }));
+  ok(res, await service.closeShift(actorOf(req), idOf(req), req.body as { counted_syp: number; left_in_drawer_syp: number; counted_usd?: number; left_in_drawer_usd?: number }));
 }
 
 export async function setReason(req: Request, res: Response): Promise<void> {

@@ -368,10 +368,10 @@ export async function getProduct(
   };
 }
 
-export async function listCategories(): Promise<WireStorefrontCategory[]> {
+export async function listCategories(branchId?: number): Promise<WireStorefrontCategory[]> {
   const [categories, counts] = await Promise.all([
     repository.findActiveCategories(),
-    repository.countProductsPerCategory(),
+    repository.countProductsPerCategory(branchId),
   ]);
   // A parent's count includes everything beneath it: «أدوات الكتابة» holds no
   // products itself, and a zero there would read as an empty aisle.
@@ -393,10 +393,10 @@ export async function listCategories(): Promise<WireStorefrontCategory[]> {
   }));
 }
 
-export async function listCollections(): Promise<WireStorefrontCollection[]> {
+export async function listCollections(branchId?: number): Promise<WireStorefrontCollection[]> {
   const collections = await repository.findVisibleCollections(new Date());
   const [counts, images] = await Promise.all([
-    repository.countProductsPerCollection(collections.map((c) => c.id)),
+    repository.countProductsPerCollection(collections.map((c) => c.id), branchId),
     publicImagesByIds([
       ...new Set(collections.map((c) => c.image_id).filter((id): id is number => id !== null)),
     ]),

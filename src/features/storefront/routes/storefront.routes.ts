@@ -3,6 +3,7 @@ import { asyncHandler } from '../../../core/http/async-handler.js';
 import { requireCustomer } from '../../../core/http/require-customer.js';
 import { requirePermission } from '../../../core/http/require-permission.js';
 import { publicRoute } from '../../../core/http/route-marker.js';
+import { z } from 'zod';
 import { validate } from '../../../core/validation/validate.js';
 import { idParamsSchema } from '../../catalog/dtos/common.dto.js';
 import {
@@ -26,15 +27,24 @@ import * as storefrontController from '../controllers/storefront.controller.js';
  */
 export const storefrontRouter: Router = Router();
 
+/**
+ * With `branch_id`, a tile's «N products» counts what the customer's branch
+ * sells — the list it opens filters by that branch, so a shop-wide count read
+ * «12» over a list of seven.
+ */
+const taxonomyQuery = z.object({ branch_id: z.coerce.number().int().positive().optional() }).strict();
+
 storefrontRouter.get(
   '/categories',
   publicRoute,
+  validate(taxonomyQuery, 'query'),
   asyncHandler(storefrontController.listCategories),
 );
 
 storefrontRouter.get(
   '/collections',
   publicRoute,
+  validate(taxonomyQuery, 'query'),
   asyncHandler(storefrontController.listCollections),
 );
 

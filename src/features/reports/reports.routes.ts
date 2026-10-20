@@ -5,6 +5,7 @@ import { requirePermission } from '../../core/http/require-permission.js';
 import { ok } from '../../core/http/response.js';
 import { paginated, paginationQuerySchema, toPaginationParams } from '../../core/pagination/pagination.js';
 import { validate } from '../../core/validation/validate.js';
+import * as daily from './daily.service.js';
 import * as service from './reports.service.js';
 
 /**
@@ -35,6 +36,9 @@ const lossesQuery = paginationQuerySchema
     type: z
       .enum(['loss_damaged_return', 'loss_print_return', 'loss_ready_writeoff', 'loss_inventory', 'print_waste'])
       .optional(),
+    // The report groups losses by type **and reason** — a line opens its own
+    // entries, not every entry of its type. `none` = the entries with no reason.
+    reason: z.string().trim().min(1).max(100).optional(),
   })
   .strict();
 
@@ -48,6 +52,19 @@ reportsRouter.get(
   }),
 );
 
+/**
+ * The owner's day at a glance (`finance_operations.md` §٥) — its own key: the page
+ * gathers drawers, debts, suppliers and stock, not only the books.
+ */
+reportsRouter.get(
+  '/daily',
+  requirePermission('reports.daily.view'),
+  validate(z.object({ day: day.optional() }).strict(), 'query'),
+  asyncHandler(async (req: Request, res: Response) => {
+    ok(res, await daily.dailySummary((req.query as { day?: string }).day));
+  }),
+);
+
 /** The entries behind the losses — each names the document it came from. */
 reportsRouter.get(
   '/losses',
@@ -57,7 +74,7 @@ reportsRouter.get(
     const q = req.query as unknown as z.infer<typeof lossesQuery>;
     const params = toPaginationParams(q);
     const { items, total } = await service.lossEntries(
-      { branchId: q.branch_id, from: q.from, to: q.to, type: q.type },
+      { branchId: q.branch_id, from: q.from, to: q.to, type: q.type, reason: q.reason },
       params.limit,
       (params.page - 1) * params.limit,
     );

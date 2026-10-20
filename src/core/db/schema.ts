@@ -93,6 +93,8 @@ export * from '../../features/sales/schemas/returns.schema.js';
 export * from '../../features/sales/schemas/orders.schema.js';
 export * from '../../features/sales/schemas/shifts.schema.js';
 export * from '../../features/sales/schemas/expenses.schema.js';
+export * from '../../features/sales/schemas/fx.schema.js';
+export * from '../../features/sales/schemas/payables.schema.js';
 
 // الطباعة — إعدادها وتسعيرها (features/printing/) — docs/reference/printing_system.md.
 export * from '../../features/printing/schemas/printing.schema.js';

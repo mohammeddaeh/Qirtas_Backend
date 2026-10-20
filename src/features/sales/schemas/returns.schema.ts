@@ -218,6 +218,8 @@ export const salesSettingsTable = pgTable('sales_settings', {
   overpay_to_credit_customers: boolean('overpay_to_credit_customers').notNull().default(false),
   /** The same for paying a supplier more than we owe (the supplier slice). */
   overpay_to_credit_suppliers: boolean('overpay_to_credit_suppliers').notNull().default(false),
+  // ── Currency (`finance_operations.md` §٣-ب) — the change in liras for dollars is rounded to this. `0` = not rounded.
+  cash_round_syp: integer('cash_round_syp').notNull().default(100),
   updated_by: integer('updated_by').references(() => usersTable.id, { onDelete: 'set null' }),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

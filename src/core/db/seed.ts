@@ -36,6 +36,7 @@ import { seedDemoArabicData } from './seed-demo-arabic-data.js';
 import { seedCatalogReference } from './seed-catalog.js';
 import { seedPrintingReference } from './seed-printing.js';
 import { seedDocumentTemplates } from './seed-documents.js';
+import { seedFinanceReference } from './seed-finance.js';
 import { seedFrenchUiTranslations } from './seed-french-ui-translations.js';
 import { wipeBusinessData } from './seed-wipe.js';
 import { seedShowcase } from './seed-showcase.js';
@@ -197,6 +198,8 @@ async function main(): Promise<void> {
   await seedPrintingReference();
   // Ready-made receipt and label templates — kept current on every run.
   await seedDocumentTemplates();
+  // Expense categories — the wipe empties them, and an expense needs one.
+  await seedFinanceReference();
 
   if (parsed.admin) {
     await bootstrapSuperAdminIfMissing();

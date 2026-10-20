@@ -38,6 +38,10 @@ export const cashShiftsTable = pgTable(
     opening_suggested_syp: numeric('opening_suggested_syp', { precision: 14, scale: 2 }),
     /** What the opener counted — the base of the expected cash. */
     opening_counted_syp: numeric('opening_counted_syp', { precision: 14, scale: 2 }).notNull(),
+    // ── Dollars in the drawer (`finance_operations.md` §٣-ج): counted as notes, beside the liras, never summed into them.
+    /** What the last close left in dollars. */
+    opening_suggested_usd: numeric('opening_suggested_usd', { precision: 14, scale: 2 }),
+    opening_counted_usd: numeric('opening_counted_usd', { precision: 14, scale: 2 }).notNull().default('0'),
     closed_at: timestamp('closed_at', { withTimezone: true }),
     closed_by_user_id: integer('closed_by_user_id').references(() => usersTable.id, { onDelete: 'set null' }),
     closed_station_id: integer('closed_station_id'),
@@ -52,6 +56,16 @@ export const cashShiftsTable = pgTable(
     /** counted − expected: positive over, negative short. */
     difference_syp: numeric('difference_syp', { precision: 14, scale: 2 }),
     /** Whether the close crossed the threshold that asks for a reason. */
+    /** The blind count of the dollars. */
+    counted_usd: numeric('counted_usd', { precision: 14, scale: 2 }),
+    /** Dollars left for the next opening. */
+    left_in_drawer_usd: numeric('left_in_drawer_usd', { precision: 14, scale: 2 }),
+    /** Frozen at close, in dollars. */
+    expected_usd: numeric('expected_usd', { precision: 14, scale: 2 }),
+    /** counted − expected, in dollars. */
+    difference_usd: numeric('difference_usd', { precision: 14, scale: 2 }),
+    /** The buy rate the dollar difference was valued at. */
+    close_fx_rate: numeric('close_fx_rate', { precision: 14, scale: 4 }),
     reason_required: boolean('reason_required').notNull().default(false),
     /** The reason as a code the reports group by: `change_error` · `unrecorded_expense` · `count_error` · `other`. */
     reason_code: varchar('reason_code', { length: 30 }),
@@ -82,6 +96,10 @@ export const cashMovementsTable = pgTable(
       .references(() => cashShiftsTable.id, { onDelete: 'restrict' }),
     direction: cashMovementDirectionEnum('direction').notNull(),
     amount_syp: numeric('amount_syp', { precision: 14, scale: 2 }).notNull(),
+    /** `USD`: [amount_fx] dollars moved, and [amount_syp] is their value at [fx_rate]. */
+    currency: varchar('currency', { length: 3 }).notNull().default('SYP'),
+    amount_fx: numeric('amount_fx', { precision: 14, scale: 2 }),
+    fx_rate: numeric('fx_rate', { precision: 14, scale: 4 }),
     /** A code the screen translates: `safe_drop` · `float_top_up` · `expense` · `other`. */
     reason_code: varchar('reason_code', { length: 30 }).notNull(),
     note: text('note'),

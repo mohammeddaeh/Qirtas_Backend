@@ -16,7 +16,9 @@ export const stockFilterQuerySchema = z
     branch_id: branchIdSchema,
     search: z.string().trim().min(1).max(100).optional(),
     /** `low` also covers out-of-stock and negative — one filter for "needs attention". */
-    flag: z.enum(['low', 'negative', 'out_of_stock']).optional(),
+    // `attention` = anything but ok («يحتاج تدخّلاً»); the others are the flag itself —
+    // so «3 ran out» opens the three, not every row near a threshold.
+    flag: z.enum(['attention', 'low', 'negative', 'out_of_stock']).optional(),
   })
   .strict();
 export type StockFilterQuery = z.infer<typeof stockFilterQuerySchema>;
@@ -121,6 +123,8 @@ export interface WireStockRow {
   product_id: number;
   product_name_ar: string;
   product_name_en: string | null;
+  /** What tells this variant from its siblings («أحمر») — empty without axes. */
+  variant_label_ar: string;
   sku: string;
   on_hand: number;
   reserved: number;
@@ -163,6 +167,8 @@ export interface WireDocumentItem {
   variant_id: number;
   sku: string;
   product_name_ar: string;
+  /** What tells this variant from its siblings — empty without axes. */
+  variant_label_ar: string;
   base_unit_id: number;
   on_hand: number;
   units: { unit_id: number; unit_name_ar: string; factor: number; is_base: boolean }[];

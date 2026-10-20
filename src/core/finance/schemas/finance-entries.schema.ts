@@ -39,6 +39,12 @@ export const FINANCE_ENTRY_TYPES = [
   'debt_payment',
   // المصاريف والرواتب (`finance_operations.md` §٢) — تُنقص صافي الربح، ومن الدرج تُنقص النقد أيضاً
   'expense',
+  // العملة (`finance_operations.md` §٣-ب): فرق تقريب الباقي بالليرة حين يُدفع بالدولار — ربحٌ أو خسارة صغيرة مسمّاة
+  'cash_rounding',
+  // الموردون (`finance_operations.md` §٣): الدفعة **ليست مصروفاً** (البضاعة دخلت المخزون بقيمتها) — تُنقص النقد وحده،
+  // وفرق الصرف المحقَّق عند السداد أو قلب الدين يدخل صافي الربح بإشارته.
+  'supplier_payment',
+  'fx_gain',
 ] as const;
 export type FinanceEntryType = (typeof FINANCE_ENTRY_TYPES)[number];
 export const financeEntryTypeEnum = pgEnum('finance_entry_type', FINANCE_ENTRY_TYPES);
@@ -60,6 +66,8 @@ export const FINANCE_DOC_TYPES = [
   'cash_movement',
   'customer_ledger',
   'expense',
+  'supplier_payment',
+  'supplier_conversion',
 ] as const;
 export type FinanceDocType = (typeof FINANCE_DOC_TYPES)[number];
 export const financeDocTypeEnum = pgEnum('finance_doc_type', FINANCE_DOC_TYPES);
@@ -72,6 +80,14 @@ export const financeEntriesTable = pgTable(
     type: financeEntryTypeEnum('type').notNull(),
     method: financeMethodEnum('method').notNull(),
     amount_syp: numeric('amount_syp', { precision: 14, scale: 2 }).notNull(),
+    /**
+     * The currency the money moved in (`finance_operations.md` §٣-ب). `amount_syp`
+     * is always its value in liras at [fx_rate]; a dollar entry also keeps the
+     * dollars themselves in [amount_fx] — the drawer counts notes, not their value.
+     */
+    currency: varchar('currency', { length: 3 }).notNull().default('SYP'),
+    amount_fx: numeric('amount_fx', { precision: 14, scale: 2 }),
+    fx_rate: numeric('fx_rate', { precision: 14, scale: 4 }),
     doc_type: financeDocTypeEnum('doc_type').notNull(),
     doc_id: integer('doc_id').notNull(),
     /** الفاتورة التي يعود إليها القيد — للربط بالتقارير («من أين»). */

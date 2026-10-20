@@ -1001,7 +1001,7 @@ Accept-language: ar | en
 خلف `reports.financial.view`. الفترة أيامٌ كاملة `from`/`to` (`YYYY-MM-DD`، والأخير داخلها) و`branch_id` اختياري (غيابه = كل الفروع).
 
 - `GET /reports/summary` ⇒ `{period, branch_id, branches[{id,name,code}], summary{revenue, refunds, net_sales, cost_of_sales, gross_profit, losses, cash_difference, net_profit, ready_shelf_value, expected_cash}, revenue_by_method[{method, revenue, refunds}], cashiers[{user_id, name, revenue, refunds, cash}], printing{revenue_new, revenue_ready, materials, waste, refunds}, ready_shelf{taken_in, sold_cost, written_off, value_now, sales_revenue}, losses[{type, reason, amount, count}]}` — المبالغ موجبة (الخسائر والكلف «خارجة»)، وكلها مجاميع قيود `finance_entries` عدا إيراد الطباعة (أسطر الفواتير المدفوعة) ومردود المطبوعات (أسطر المرتجع). **`cash_difference` موقَّع** (زيادة موجبة · عجز سالب، من قيود `cash_over`/`cash_short` عند إقفال الوردية — §35) و`net_profit = gross_profit − losses + cash_difference`؛ و`expected_cash` = نقد البيع − نقد المردود + حركات الدرج (`cash_in`/`cash_out`) + سداد الديون نقداً (`debt_payment`).
-- `GET /reports/losses?type=&page=&limit=` ⇒ صفحة قيود خسارة `{type, amount, reason, note, doc_type, doc_id, sale_id, sale_number, ready_number, ready_label, user_name, occurred_at}` — الأحدث أولاً.
+- `GET /reports/losses?type=&reason=&page=&limit=` — **`reason` يطابق سطر الخسارة** (التقرير يجمّع بالنوع والسبب، و`none` = بلا سبب؛ كان السطر يفتح كل قيود نوعه) ⇒ صفحة قيود خسارة `{type, amount, reason, note, doc_type, doc_id, sale_id, sale_number, ready_number, ready_label, user_name, occurred_at}` — الأحدث أولاً.
 
 ### الاستيراد والتصدير — العناوين بلغة القارئ وخيارات الفلتر من البيانات (2026-10-11)
 
@@ -1241,7 +1241,7 @@ Accept-language: ar | en
 - `GET /inventory/receipts?page&limit&branch_id&supplier_id` · `GET /inventory/receipts/:id` (بالسطور) — `inventory.view`.
 
 ### المخزون
-- `GET /inventory/stock?branch_id&page&limit&search&flag` — `inventory.view`. الصف: `{variant_id, product_id, product_name_ar/_en, sku, on_hand, reserved, available, avg_cost_syp, avg_cost_usd, reorder_threshold, flag}`. و**`flag` يحسبه الخادم**: `negative` (تناقض يستدعي جرداً، لا «قليل جداً») · `out_of_stock` · `low` (تحت حدّ الفرع) · `ok`. الفلتر `flag=low` يشمل الثلاثة غير `ok`.
+- `GET /inventory/stock?branch_id&page&limit&search&flag` — `inventory.view`. الصف: `{variant_id, product_id, product_name_ar/_en, sku, on_hand, reserved, available, avg_cost_syp, avg_cost_usd, reorder_threshold, flag}`. و**`flag` يحسبه الخادم**: `negative` (تناقض يستدعي جرداً، لا «قليل جداً») · `out_of_stock` · `low` (تحت حدّ الفرع) · `ok`. الفلتر `flag` **يطابق العدّ الذي فُتح منه**: `out_of_stock` · `negative` · `low` كلٌّ وحده (كبطاقة `/inventory/signals`)، و`attention` = الثلاثة غير `ok` («يحتاج تدخّلاً») — كان `low` يعني الثلاثة فتفتح «3 نفدت» تسعة صفوف (2026-10-20).
 - `GET /inventory/movements?branch_id&variant_id&page&limit` — الدفتر، الأحدث أولاً، مع من سجّله والمستند المصدر.
 - `PUT /inventory/variants/:id/threshold` `{branch_id, threshold|null}` — `inventory.receive`. **الفرع يحدده** (§٨)؛ `null` = بلا حدّ، وهو غير الصفر.
 - `GET /inventory/variants/:id/threshold-suggestion?branch_id` — `{suggestion, days, sold_base}`؛ `suggestion: null` حتى يتراكم تاريخ كافٍ (٣٠ يوماً)، لأن رقماً من ثلاثة أيام يُوثَق به كما يُوثَق برقم سنة.
@@ -1327,8 +1327,8 @@ requested → approved → in_transit → received                   → closed
 
 **حالة المنتج أفضلُ حالات متغيّراته**: لونٌ نفد من خمسة ليس «نفد»، وقوله يُخفي أربعة على الرف.
 
-- `GET /storefront/categories` — الشجرة بأعداد المنتجات الحيّة، **والأب يحمل مجموع أبنائه** (تصنيفٌ لا منتج تحته مباشرةً ليس ممراً مسدوداً).
-- `GET /storefront/collections` — الرفوف الظاهرة **الآن** (مفعَّلة وداخل نافذتها) بأعدادها.
+- `GET /storefront/categories?branch_id` — الشجرة بأعداد المنتجات الحيّة (**ومع `branch_id` بما يبيعه الفرع** — قاعدة القائمة التي يفتحها البلاط نفسها، وإلا قال «7 منتجات» فوق ستة)، **والأب يحمل مجموع أبنائه** (تصنيفٌ لا منتج تحته مباشرةً ليس ممراً مسدوداً).
+- `GET /storefront/collections?branch_id` — الرفوف الظاهرة **الآن** (مفعَّلة وداخل نافذتها) بأعدادها (ومع `branch_id` بما يبيعه الفرع).
 - `GET /storefront/products?branch_id&category_id&collection_id&search&page&limit&lat&lng` — الصف: `{id, name_ar, name_en, brand_name, category_id, thumbnail, availability, price{amount_syp, wholesale?}, remaining, other_branch, variant_count}`. التصنيف يشمل **أبناءه**، والبحث بالعربية المطوية والمرادفات. **والصفّ غير القابل للبيع هنا يُستبعد بالاستعلام نفسه** لا بعد التصفيح: إسقاطه بعد الترقيم يُنتج صفحةً فارغة تحت `total: 9` — وصفحةٌ فارغة تُقرأ عطلاً لا «لم يُسعَّر شيء بعد».
 - `GET /storefront/products/:id?branch_id&lat&lng` — المنتج متغيّراً متغيّراً: صوره (والمتغيّر بلا صورة يأخذ صور منتجه)، وحالته وسعره ووحداته المتاحة أونلاين بسعر كلٍّ منها.
 
@@ -1472,6 +1472,29 @@ requested → approved → in_transit → received                   → closed
 | `422 sale_empty` | سلّة فارغة لا تُسدَّد |
 | `409 sale_already_paid` | الفاتورة المدفوعة **لا تُعدَّل ولا تُحذف** (§١): الإلغاء بمرتجع |
 | `409 sale_item_unpriced` | الصنف بلا سعر بهذا الفرع — والجواب تسعيرٌ لا إعادة مسح |
+
+### الدفع بالدولار (ف-ع 2026-10-20) · `finance_operations.md` §٣-ب/§٣-ج
+
+سطر النقد يقبل `tendered_usd` (الدولار المسلَّم) و`fx_rate` (السعر الذي عرضه الصندوق)، و`tendered_syp` معهما هو **الليرة المسلَّمة بجانب الدولار** (الغائب = لا شيء). الدولار يُحسب **بسعر الشراء** النافذ، **والباقي بالليرة دائماً** مقرَّباً لأقرب `cash_round_syp` (إعداد المحل، افتراضه ١٠٠، `0` = بلا تقريب) — والزبون الناقص ببضع ليرات تحت نصف الخطوة لا يُردّ: التقريب بالاتجاهين.
+
+**القيود**: `sale_revenue` نقداً **بالدولار** (`currency: USD` · `amount_fx` الدولارات · `fx_rate` · `amount_syp` قيمتها مطروحاً منها فرق التقريب) + `sale_revenue` نقداً بالليرة (المسلَّم ناقص الباقي، وقد يكون سالباً) + `cash_rounding` (`value`، بإشارته: موجبٌ أبقاه المحل) — فمجموع الإيراد هو الفاتورة نفسها، والدرج يعدّ الدولار أوراقاً. وسطر الدفع يحفظ `tendered_usd` · `fx_rate` · `change_syp` (الباقي المقرَّب مخزَّنٌ لا مشتقّ).
+
+| الرفض | المعنى |
+|---|---|
+| `422 fx_rate_missing` | لا سعر للدولار بعد — يكتبه المدير أولاً |
+| `409 fx_rate_changed` + `{buy_rate}` | السعر تغيّر منذ عرضه الصندوق — الباقي الموعود ليس باقي الدرج |
+| `422 sale_one_dollar_payment` | الدولار بسطر نقدٍ واحد |
+| `422 sale_underpaid` | المسلَّم (دولاراً وليرة) لا يغطّي حتى بعد التقريب |
+
+### سعرا الدولار — `/sales/fx`
+
+| المسار | الحارس | ما يفعله |
+|---|---|---|
+| `GET /sales/fx` | `sales.sell` **أو** `currency.rates` | `{current: {id, buy_rate, sell_rate, note, set_by_name, created_at} \| null, round_syp, history[30]}` — **سجلٌّ لا قيمة**: كل تغيير صفٌّ جديد، والنافذ أحدثها |
+| `POST /sales/fx` | `currency.rates` (حسّاس، للمدير — قرار §٨ #١١) | `{buy_rate, sell_rate, note?}` · `422 fx_buy_above_sell` |
+| `PUT /sales/fx/rounding` | `settings.manage` | `{round_syp}` (٠–١٠٠٬٠٠٠) |
+
+وسعر التسعير بالكتالوج (`catalog_exchange_rates`) يبقى مستقلاً: هو لتحويل أسعار الرفّ، وهذان لما يُقبض.
 
 ### حساب الزبون
 
@@ -1851,6 +1874,8 @@ draft ─submit→ awaiting_quote ─quote→ awaiting_payment ─(الدفع 9-
 
 ---
 
+**والدولار بالدرج (ف-ع 2026-10-20)**: أوراقٌ بجانب الليرة **لا تُجمع معها**. `GET /current` يُرجع `fx {buy_rate, sell_rate, round_syp} | null` و`suggested_opening_usd` · الفتح يقبل `opening_counted_usd` (وفرقه عمّا تُرك قيدٌ بالدولار بسعر اليوم) · الحركة `{currency: USD, amount_usd}` (الدرج يُفحص بالدولار، والسقف بقيمته بسعر الشراء) · الإقفال `counted_usd` و`left_in_drawer_usd` (العدّ أعمى بالعملتين، والفرق بالدولار يُقيَّم بسعر شراء يوم الإقفال `close_fx_rate`، وثقل السبب والمراجعة مجموع الفرقين قيمةً) · الوردية تُرجع `opening_counted_usd` · `expected_usd` (`null` وهي مفتوحة) · `counted_usd` · `left_in_drawer_usd` · `difference_usd` · `close_fx_rate`، والتقرير `revenue_usd` والحركة `currency` · `amount_usd` · `fx_rate`. **ومصروف الدرج لا يُعكس من التقرير** (`409 shift_expense_correct_from_expenses`). والتقارير: `expected_cash` بالليرة وحدها و`expected_cash_usd` بالدولار، و`cash_rounding` داخلٌ بصافي الربح.
+
 ## 36. المصاريف والرواتب — `/expenses` (ف-٢ 2026-10-19) · المرجع: `docs/reference/finance_operations.md` §٢
 
 **مفتاحان**: من يبيع (`sales.sell`) يسجّل مصروفاً **من الدرج** ويقرأ التصنيفات لذلك، و`expenses.manage` (جديد، حسّاس، للمدير العام) لكل ما سواه — والخدمة تفحص الفرع بالمفتاح نفسه. **ولا تعديل ولا حذف**: العكس صفٌّ سالب والأصل `reversed: true`.
@@ -1864,3 +1889,37 @@ draft ─submit→ awaiting_quote ─quote→ awaiting_payment ─(الدفع 9-
 - `GET /expenses/wages?branch_id` — لكل موظف له أجر: `amount_syp` اليوم (`null` إن انتهى) · `frequency` · `due_day` · `paid_this_period_syp` (رواتب وسلف الشهر) · `left_syp` (للشهري وحده، `null` لغيره) · `due` · `last_paid_on`، والمستحقّ أولاً.
 - `GET /expenses/wages/:userId` — تاريخ الأجر. `PUT /expenses/wages/:userId {branch_id, amount_syp, frequency, due_day, effective_from?, note?}` — **صفٌّ جديد من يومه** والقديم تاريخ. `POST /expenses/wages/:userId/end {ended_on?}` (`409 wage_none`).
 - **بالتقارير** (`/reports/summary`): `summary.expenses` موجبٌ و**`net_profit` يطرحه**، و`expected_cash` يضمّ المصاريف النقدية.
+
+## 37. ما علينا للموردين — `/payables` (ف-٣ 2026-10-20) · المرجع: `docs/reference/finance_operations.md` §٣/§٣-ب
+
+**الدين بعملة فاتورته**: فاتورة الدولار دينٌ بالدولار، والليرة التي تكلّفها لا تُعرف إلا يوم الدفع. لكل فاتورة دلوان: `due_usd` (الدولار غير المسدَّد ولا المثبَّت) و`due_syp` (فاتورة الليرة، أو الدولار المثبَّت بالليرة) — والمرتجع للمورّد يُنقصه بقيمته بسعر الفاتورة. **والدفعة ليست مصروفاً** (البضاعة دخلت المخزون بقيمتها): قيد `supplier_payment` يُنقص النقد وحده، و**فرق الصرف المحقَّق** `fx_gain` (بإشارته) يدخل صافي الربح. والدين المفتوح بسعر اليوم **يُعرض ولا يُقيَّد**. القواعد صافية: `payables-rules.ts` (١٤ اختباراً).
+
+| المسار | الحارس | ما يفعله |
+|---|---|---|
+| `GET /payables?search&branch_id` | `suppliers.view` | مَن ندين له — **الأقدم ديناً أولاً**: `{items:[{supplier_id, name, phone, due_usd, due_syp, credit_usd, credit_syp, open_invoices, oldest_unpaid_at, oldest_unpaid_days, last_payment_at}], summary:{suppliers, due_usd, due_syp, unrealized_syp}}`. مورّد النظام (الرصيد الافتتاحي) خارجها |
+| `GET /payables/suppliers/:id?branch_id` | `suppliers.view` | الحساب: المستحقّ والرصيد لنا عنده وتقدير اليوم · `fx` · `overpay_to_credit` · `invoices[]` (`currency` · `rate` · `returned_syp` · `paid_*` · `converted_*` · `due_*` · `state` unpaid/partial/paid · `fx_realized_syp` · `due_usd_today_syp`) · `payments[]` بتوزيعها (`allocations` بالفاتورة والدلو) و`reversed`/`reverses_payment_id` · `conversions[]` |
+| `GET /payables/invoices/:id` | `suppliers.view` | حالة دفع فاتورة واحدة — شاشة فاتورة الشراء |
+| `POST /payables/payments` | `suppliers.pay` (حسّاس) + الفرع | `{supplier_id, branch_id, currency SYP/USD, amount, fx_rate?, source drawer/outside, invoice_ids?, note?, approver_email/password?}` — تُوزَّع على فواتير الفرع المفتوحة **الأقدم أولاً** أو بالترتيب المختار، لكل فاتورة دولارُها ثم ليرتُها. الدولار بسعر الشراء النافذ، والليرة التي تُطفئ دولاراً بالسعر المتفق عليه (`fx_rate`، افتراضه سعر البيع). ربح الصرف لكل شريحة = (سعر الفاتورة − سعر الدفعة) × الدولار. **من الدرج** بقواعد الإخراج نفسها (`drawerCashOut`: الوردية · الرصيد بعملته · السقف بقيمته · موافقة المدير)، **ومن خارجه** قيدٌ `external`. الزائد: رصيدٌ لنا عند المورّد إن سمح `overpay_to_credit_suppliers` وإلا `422 payable_overpay_not_allowed`. والفاتورة تُقفل وتُعاد قراءتها (`409 payable_changed`) |
+| `POST /payables/payments/:id/reverse` | `suppliers.pay` | `{reason}` — دفعةٌ معاكسة بتوزيعٍ وربحٍ سالبين، ونقد الدرج يعود لوردية الفرع المفتوحة · `409 payable_is_reversal` · `409 payable_already_reversed`. وحركة الدرج نفسها **لا تُعكس من تقرير الوردية** (`409 shift_supplier_correct_from_payables`) |
+| `POST /payables/invoices/:id/convert` | `suppliers.pay` | `{rate, note?}` — يثبّت الدولار الباقي بالليرة بالسعر المتفق عليه، والفرق عن سعر الفاتورة محقَّقٌ الآن · `409 payable_no_dollars`. **اتفاقٌ لا يُعكس** |
+
+والتقرير: `summary.fx_gain` (داخلٌ بصافي الربح) و`summary.supplier_payments` (مدفوعٌ للموردين، **خارج** صافي الربح).
+
+## 38. الملخّص اليومي — `GET /reports/daily` (ف-٥ 2026-10-20) · المرجع: `docs/reference/finance_operations.md` §٥
+
+الحارس `reports.daily.view` (حسّاس، **مستقلٌّ** عن `reports.financial.view` — قرار §٨ #٩؛ للمدير العام والشريك المالي). `?day=YYYY-MM-DD` اختياري (الافتراضي اليوم بساعة الخادم). **الصافي بمعادلة التقرير نفسها** (`figuresFrom` بـ`reports.service.ts`): صافي اليوم هنا = `summary.net_profit` لـ`/reports/summary?from=day&to=day`.
+
+```
+{ day, net_sales, net_profit, revenue, refunds, expenses,
+  last_week: { day, net_sales, net_profit },            // نفس اليوم من الأسبوع الماضي
+  money: { expenses, supplier_payments, new_debts, debts_collected },   // new_debts = الآجل صافياً من مرتجعه
+  attention: { shifts_waiting_review, deferred_prints, deferred_prints_syp, out_of_stock, recurring_due, recurring_due_syp },
+  fx: { buy_rate, sell_rate, set_at, days_since } | null,
+  branches: [{ branch_id, name, code, ...الأرقام نفسها, money, attention,
+               drawer: { open: { shift_id, number, opened_at, opened_by, hours_open, since_before } | null,
+                         closed: [{ shift_id, number, closed_at, difference_syp, difference_usd, waiting_review }] },
+               active }] }
+```
+
+**«يحتاج انتباهك» ليس محصوراً باليوم**: الورديات المنتظرة مراجعةً من أي يوم، والطباعة المؤجَّلة غير المقبوضة كلها، والأصناف النافدة الآن (قاعدة `stockFlag`: لا متاح ولا سالب)، والمتكرّر المستحق هذا الشهر. والدرج المفتوح = **المفتوح عند نهاية ذلك اليوم** أياً كان يوم فتحه (فيومٌ سابق لا يعرض درج اليوم) و`since_before` يقول إنه فُتح قبل اليوم المعروض. `active` = تحرّك مالٌ أو عُمل درجٌ بالفرع **ذلك اليوم** — «يحتاج انتباهك» حالةٌ الآن فلا تجعل فرعاً نشطاً بيومٍ مضى — والهادئ يُطوى بالتطبيق. «العمليات الحسّاسة» تأتي مع ف-٦.
+

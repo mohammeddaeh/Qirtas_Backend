@@ -9,6 +9,9 @@ const round2 = (v: number): number => Math.round(v * 100) / 100;
 export interface ShiftCashEntry {
   type: string;
   amountSyp: number;
+  /** `USD` entries are dollars in the drawer — counted apart, never in the liras. */
+  currency?: string;
+  amountFx?: number | null;
 }
 
 /**
@@ -19,7 +22,7 @@ export interface ShiftCashEntry {
  */
 export function expectedCash(openingCountedSyp: number, entries: ShiftCashEntry[]): number {
   const moved = entries
-    .filter((e) => e.type !== 'cash_over' && e.type !== 'cash_short')
+    .filter((e) => e.type !== 'cash_over' && e.type !== 'cash_short' && (e.currency ?? 'SYP') !== 'USD')
     .reduce((sum, e) => sum + e.amountSyp, 0);
   return round2(openingCountedSyp + moved);
 }

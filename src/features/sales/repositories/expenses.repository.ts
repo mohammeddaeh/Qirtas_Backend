@@ -155,12 +155,22 @@ export async function findLastPayments(userIds: number[]) {
   return new Map(rows.map((r) => [r.user!, r.last]));
 }
 
-/** Which reminders were answered this month. */
+/**
+ * Which reminders were answered this month. An expense that was corrected
+ * (undone) no longer answers its reminder — the bill is unpaid again.
+ */
 export async function findRecordedRecurring(period: string) {
   const rows = await db
     .select({ id: expensesTable.recurring_id })
     .from(expensesTable)
-    .where(and(sql`${expensesTable.recurring_id} IS NOT NULL`, eq(sql`to_char(${expensesTable.spent_on}, 'YYYY-MM')`, period)));
+    .where(
+      and(
+        sql`${expensesTable.recurring_id} IS NOT NULL`,
+        isNull(expensesTable.reverses_expense_id),
+        sql`NOT EXISTS (SELECT 1 FROM expenses r WHERE r.reverses_expense_id = ${expensesTable.id})`,
+        eq(sql`to_char(${expensesTable.spent_on}, 'YYYY-MM')`, period),
+      ),
+    );
   return new Set(rows.map((r) => r.id!));
 }
 

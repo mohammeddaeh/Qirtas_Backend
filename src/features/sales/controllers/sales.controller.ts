@@ -17,6 +17,7 @@ import type {
 import * as service from '../services/sales.service.js';
 import * as returns from '../services/returns.service.js';
 import * as debts from '../services/debts.service.js';
+import * as fx from '../services/fx.service.js';
 import * as repo from '../repositories/sales.repository.js';
 
 const actorOf = (req: Request) => buildActorContext(req, requireActorId(req));
@@ -152,6 +153,8 @@ export async function pay(req: Request, res: Response): Promise<void> {
         method: p.method,
         amountSyp: p.amount_syp,
         tenderedSyp: p.tendered_syp ?? null,
+        tenderedUsd: p.method === 'cash' ? (p.tendered_usd ?? null) : null,
+        fxRate: p.fx_rate ?? null,
       })),
     }),
   );
@@ -288,6 +291,18 @@ export async function reverseLedgerEntry(req: Request, res: Response): Promise<v
   const { entryId } = req.params as unknown as { entryId: number };
   const { reason } = req.body as { reason: string };
   ok(res, await debts.reverseLedgerEntry(actorOf(req), idOf(req), Number(entryId), reason));
+}
+
+export async function getFx(_req: Request, res: Response): Promise<void> {
+  ok(res, await fx.getFx());
+}
+
+export async function setFxRates(req: Request, res: Response): Promise<void> {
+  ok(res, await fx.setRates(actorOf(req), req.body as { buy_rate: number; sell_rate: number; note?: string }));
+}
+
+export async function setFxRounding(req: Request, res: Response): Promise<void> {
+  ok(res, await fx.setRounding(actorOf(req), (req.body as { round_syp: number }).round_syp));
 }
 
 export async function getCreditSettings(_req: Request, res: Response): Promise<void> {

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncHandler } from '../../../core/http/async-handler.js';
-import { requirePermission } from '../../../core/http/require-permission.js';
+import { requireAnyPermission, requirePermission } from '../../../core/http/require-permission.js';
 import { validate } from '../../../core/validation/validate.js';
 import { idParamsSchema } from '../../catalog/dtos/common.dto.js';
 import {
@@ -29,6 +29,8 @@ import {
   debtsQuerySchema,
   ledgerEntryParamsSchema,
   ledgerReverseBodySchema,
+  fxRatesBodySchema,
+  fxRoundingBodySchema,
 } from '../dtos/sales.dto.js';
 import * as controller from '../controllers/sales.controller.js';
 
@@ -127,6 +129,23 @@ salesRouter.put(
   validate(creditSettingsBodySchema, 'body'),
   asyncHandler(controller.setCreditSettings),
 );
+
+/**
+ * The dollar's buy and sell rates (`finance_operations.md` §٣-ب) — read by every
+ * till that may take dollars, written by whoever holds `currency.rates`.
+ */
+const canRates = () =>
+  requirePermission('currency.rates', {
+    display: { ar: 'سعرا صرف الدولار', en: 'Dollar Exchange Rates' },
+    sensitive: true,
+  });
+
+salesRouter.get('/fx', requireAnyPermission(['sales.sell', 'currency.rates']), asyncHandler(controller.getFx));
+
+salesRouter.post('/fx', canRates(), validate(fxRatesBodySchema, 'body'), asyncHandler(controller.setFxRates));
+
+/** How the change in liras for dollars is rounded — a shop rule, the admin's. */
+salesRouter.put('/fx/rounding', canAdmin(), validate(fxRoundingBodySchema, 'body'), asyncHandler(controller.setFxRounding));
 
 /**
  * Who owes the shop, oldest unpaid first (`finance_operations.md` §١). Under

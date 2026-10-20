@@ -14,6 +14,11 @@ export const SALES_AUDIT = {
   ledgerReverse: 'sales.ledger.reverse',
   debtPay: 'sales.debt.pay',
   creditSettings: 'sales.credit_settings.set',
+  fxRates: 'sales.fx_rates.set',
+  fxRounding: 'sales.fx_rounding.set',
+  supplierPay: 'suppliers.pay',
+  supplierPayReverse: 'suppliers.pay.reverse',
+  supplierConvert: 'suppliers.debt.convert',
   expenseCreate: 'expenses.create',
   expenseReverse: 'expenses.reverse',
   expenseCategory: 'expenses.category.set',
@@ -43,4 +48,5 @@ export const saleTarget = {
   expenseCategory: (id: number) => `expense_category:${id}`,
   recurring: (id: number) => `recurring_expense:${id}`,
   wage: (userId: number) => `employee_wage:${userId}`,
+  supplier: (id: number) => `supplier_account:${id}`,
 };

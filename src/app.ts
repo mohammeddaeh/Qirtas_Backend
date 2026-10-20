@@ -66,6 +66,7 @@ import {
 import { cartRouter, myOrdersRouter, ordersRouter } from './features/sales/routes/orders.routes.js';
 import { shiftsRouter } from './features/sales/routes/shifts.routes.js';
 import { expensesRouter } from './features/sales/routes/expenses.routes.js';
+import { payablesRouter } from './features/sales/routes/payables.routes.js';
 import { printingRouter } from './features/printing/routes/printing.routes.js';
 import {
   myPrintJobsRouter,
@@ -131,6 +132,7 @@ export const API_ROUTERS: ReadonlyArray<{ path: string; router: Router }> = [
   /** The cash shift — before `/sales`, whose `/:id` would read «shifts» as an id (cash_shifts.md). */
   { path: '/api/v1/sales/shifts', router: shiftsRouter },
   { path: '/api/v1/expenses', router: expensesRouter },
+  { path: '/api/v1/payables', router: payablesRouter },
   { path: '/api/v1/sales', router: salesRouter },
   { path: '/api/v1/returns', router: returnsRouter },
   { path: '/api/v1/cart', router: cartRouter },

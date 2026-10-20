@@ -33,6 +33,14 @@ export interface FinanceEntry {
   shiftId?: number | null;
   reason?: string | null;
   note?: string | null;
+  /**
+   * Money that moved in dollars (`finance_operations.md` §٣-ب): [amountSyp] stays
+   * its value in liras at [fxRate], and [amountFx] keeps the dollars — the
+   * drawer counts those. Absent = liras.
+   */
+  currency?: 'SYP' | 'USD';
+  amountFx?: number | null;
+  fxRate?: number | null;
 }
 
 export const round2 = (v: number): number => Math.round(v * 100) / 100;
@@ -40,7 +48,7 @@ export const round2 = (v: number): number => Math.round(v * 100) / 100;
 export async function recordFinance(exec: FinanceExec, entries: FinanceEntry[]): Promise<void> {
   const rows = entries
     .map((e) => ({ ...e, amountSyp: round2(e.amountSyp) }))
-    .filter((e) => e.amountSyp !== 0)
+    .filter((e) => e.amountSyp !== 0 || (e.amountFx ?? 0) !== 0)
     .map((e) => ({
       branch_id: e.branchId,
       type: e.type,
@@ -54,6 +62,9 @@ export async function recordFinance(exec: FinanceExec, entries: FinanceEntry[]):
       shift_id: e.shiftId ?? null,
       reason: e.reason ?? null,
       note: e.note ?? null,
+      currency: e.currency ?? 'SYP',
+      amount_fx: e.amountFx === null || e.amountFx === undefined ? null : round2(e.amountFx).toFixed(2),
+      fx_rate: e.fxRate === null || e.fxRate === undefined ? null : e.fxRate.toFixed(4),
     }));
   if (rows.length === 0) return;
   await exec.insert(financeEntriesTable).values(rows);

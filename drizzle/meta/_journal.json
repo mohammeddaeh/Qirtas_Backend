@@ -449,6 +449,20 @@
       "when": 1792406866302,
       "tag": "0063_needy_spirit",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1792476666771,
+      "tag": "0064_silly_black_widow",
+      "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "7",
+      "when": 1792481080955,
+      "tag": "0065_bitter_brood",
+      "breakpoints": true
     }
   ]
 }

@@ -315,12 +315,15 @@ export function findActiveCategories() {
     .orderBy(asc(catalogCategoriesTable.sort_order), asc(catalogCategoriesTable.id));
 }
 
-/** Live products per category — the number that tells a dead end from a shelf. */
-export async function countProductsPerCategory(): Promise<Map<number, number>> {
+/**
+ * Live products per category — the number that tells a dead end from a shelf.
+ * With [branchId], what that branch sells: the same rule as the list it opens.
+ */
+export async function countProductsPerCategory(branchId?: number): Promise<Map<number, number>> {
   const rows = await db
     .select({ category_id: p.category_id, n: count() })
     .from(p)
-    .where(and(...publishedProduct()))
+    .where(and(...publishedProduct(), branchId === undefined ? undefined : sellableAt(branchId)))
     .groupBy(p.category_id);
   return new Map(rows.map((row) => [row.category_id, Number(row.n)]));
 }
@@ -351,14 +354,18 @@ export async function findVisibleCollections(now: Date) {
     .orderBy(asc(c.sort_order), asc(c.id));
 }
 
-export async function countProductsPerCollection(collectionIds: number[]): Promise<Map<number, number>> {
+export async function countProductsPerCollection(collectionIds: number[], branchId?: number): Promise<Map<number, number>> {
   if (collectionIds.length === 0) return new Map();
   const rows = await db
     .select({ collection_id: catalogCollectionProductsTable.collection_id, n: count() })
     .from(catalogCollectionProductsTable)
     .innerJoin(p, eq(p.id, catalogCollectionProductsTable.product_id))
     .where(
-      and(inArray(catalogCollectionProductsTable.collection_id, collectionIds), ...publishedProduct()),
+      and(
+        inArray(catalogCollectionProductsTable.collection_id, collectionIds),
+        ...publishedProduct(),
+        branchId === undefined ? undefined : sellableAt(branchId),
+      ),
     )
     .groupBy(catalogCollectionProductsTable.collection_id);
   return new Map(rows.map((row) => [row.collection_id, Number(row.n)]));

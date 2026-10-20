@@ -53,6 +53,23 @@ export async function findLastLeft(branchId: number): Promise<number | null> {
   return row?.left == null ? null : Number(row.left);
 }
 
+/** The dollars the last close left in this drawer — `null` when none were left on record. */
+export async function findLastLeftUsd(branchId: number): Promise<number | null> {
+  const [row] = await db
+    .select({ left: cashShiftsTable.left_in_drawer_usd })
+    .from(cashShiftsTable)
+    .where(
+      and(
+        eq(cashShiftsTable.branch_id, branchId),
+        eq(cashShiftsTable.status, 'closed'),
+        isNotNull(cashShiftsTable.left_in_drawer_usd),
+      ),
+    )
+    .orderBy(desc(cashShiftsTable.closed_at))
+    .limit(1);
+  return row?.left == null ? null : Number(row.left);
+}
+
 export async function insertShift(tx: Tx, values: typeof cashShiftsTable.$inferInsert): Promise<CashShiftRow> {
   const [row] = await tx.insert(cashShiftsTable).values(values).returning();
   return row!;
@@ -121,12 +138,25 @@ export async function findMovements(shiftId: number) {
 }
 
 /** Every cash-method entry of the shift — the expected cash is their sum. */
-export async function findCashEntries(exec: Exec, shiftId: number): Promise<{ type: string; amountSyp: number }[]> {
+export async function findCashEntries(
+  exec: Exec,
+  shiftId: number,
+): Promise<{ type: string; amountSyp: number; currency: string; amountFx: number | null }[]> {
   const rows = await exec
-    .select({ type: financeEntriesTable.type, amount: financeEntriesTable.amount_syp })
+    .select({
+      type: financeEntriesTable.type,
+      amount: financeEntriesTable.amount_syp,
+      currency: financeEntriesTable.currency,
+      fx: financeEntriesTable.amount_fx,
+    })
     .from(financeEntriesTable)
     .where(and(eq(financeEntriesTable.shift_id, shiftId), eq(financeEntriesTable.method, 'cash')));
-  return rows.map((r) => ({ type: r.type, amountSyp: Number(r.amount) }));
+  return rows.map((r) => ({
+    type: r.type,
+    amountSyp: Number(r.amount),
+    currency: r.currency,
+    amountFx: r.fx === null ? null : Number(r.fx),
+  }));
 }
 
 /** The shift's money by type and method — the report's totals. */

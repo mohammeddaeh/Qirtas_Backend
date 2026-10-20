@@ -1014,6 +1014,60 @@ export const MESSAGES = {
     en: 'Record an expense from the expense form',
     ar: 'سجّل المصروف من نموذج المصروف — يُسأل تصنيفه ويُنقص الربح',
   },
+  // ── العملة (finance_operations.md §٣-ب/§٣-ج) ──
+  fx_buy_above_sell: {
+    en: 'The buy rate cannot be above the sell rate',
+    ar: 'سعر الشراء لا يكون أعلى من سعر البيع',
+  },
+  fx_rate_missing: {
+    en: 'No dollar rate is set — the manager writes it first',
+    ar: 'لا سعر للدولار بعد — يكتبه المدير أولاً',
+  },
+  fx_rate_changed: {
+    en: 'The dollar rate changed — check the change again',
+    ar: 'تغيّر سعر الدولار — راجع الباقي من جديد',
+  },
+  sale_one_dollar_payment: {
+    en: 'One cash payment carries the dollars',
+    ar: 'الدولار يُدفع بسطر نقدٍ واحد',
+  },
+  // ── الموردون (finance_operations.md §٣) ──
+  shift_supplier_correct_from_payables: {
+    en: 'Correct this payment from the supplier account',
+    ar: 'صحّح هذه الدفعة من حساب المورّد — يعود النقد وتعود الفواتير معاً',
+  },
+  payable_not_at_branch: {
+    en: 'You cannot pay suppliers at this branch',
+    ar: 'لا تستطيع الدفع للموردين بهذا الفرع',
+  },
+  payable_invoice_not_open: {
+    en: 'An invoice chosen owes nothing here',
+    ar: 'فاتورةٌ مختارة لا يُستحقّ عليها شيء هنا',
+  },
+  payable_overpay_not_allowed: {
+    en: 'More than is owed — the shop does not keep it as credit',
+    ar: 'أكثر من المستحقّ — المحل لا يحفظ الزائد رصيداً عند المورّد',
+  },
+  payable_changed: {
+    en: 'This debt changed a moment ago — look again',
+    ar: 'تغيّر هذا الدين قبل لحظة — راجعه من جديد',
+  },
+  payable_is_reversal: {
+    en: 'A correction is not corrected — pay again',
+    ar: 'التصحيح لا يُصحَّح — ادفع من جديد',
+  },
+  payable_already_reversed: {
+    en: 'This payment was already corrected',
+    ar: 'صُحّحت هذه الدفعة من قبل',
+  },
+  payable_no_dollars: {
+    en: 'No dollars are owed on this invoice',
+    ar: 'لا دولار مستحقّاً على هذه الفاتورة',
+  },
+  shift_expense_correct_from_expenses: {
+    en: 'Correct this expense from the expenses screen',
+    ar: 'صحّح هذا المصروف من شاشة المصاريف — يعود النقد ويُلغى المصروف معاً',
+  },
   expense_category_inactive: {
     en: 'Pick an active category',
     ar: 'اختر تصنيفاً فعّالاً',

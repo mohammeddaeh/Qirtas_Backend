@@ -42,6 +42,8 @@ export interface SalesSettings {
   credit_block_after_days: number | null;
   overpay_to_credit_customers: boolean;
   overpay_to_credit_suppliers: boolean;
+  /** The change in liras for dollars is rounded to this. `0` = not rounded. */
+  cash_round_syp: number;
 }
 
 type SettingsRow = typeof salesSettingsTable.$inferSelect;
@@ -79,6 +81,8 @@ function toSettings(row: SettingsRow): SalesSettings {
         : row.credit_block_after_days,
     overpay_to_credit_customers: row.overpay_to_credit_customers,
     overpay_to_credit_suppliers: row.overpay_to_credit_suppliers,
+    // A negative step reads as «not rounded» — never a change that grows.
+    cash_round_syp: row.cash_round_syp > 0 ? row.cash_round_syp : 0,
   };
 }
 

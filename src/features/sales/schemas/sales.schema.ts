@@ -236,6 +236,11 @@ export const salePaymentsTable = pgTable(
     amount_syp: numeric('amount_syp', { precision: 14, scale: 2 }).notNull(),
     /** ما سلّمه الزبون نقداً — الباقي يُحسب منه، وكلاهما يُحفظ فالدرج يُطابَق. */
     tendered_syp: numeric('tendered_syp', { precision: 14, scale: 2 }),
+    /** Dollars handed over for the cash part (`finance_operations.md` §٣-ج) — counted at [fx_rate], the buy rate then. */
+    tendered_usd: numeric('tendered_usd', { precision: 14, scale: 2 }),
+    fx_rate: numeric('fx_rate', { precision: 14, scale: 4 }),
+    /** The change given back in liras when dollars were paid — rounded by the shop's rule, so it is stored, not derived. */
+    change_syp: numeric('change_syp', { precision: 14, scale: 2 }),
     reference: text('reference'),
     created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },

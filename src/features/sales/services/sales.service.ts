@@ -16,6 +16,9 @@ import { thumbnailsFor } from './line-thumbnails.js';
 import { closePaidOrder, reopenVoidedOrder } from './orders.service.js';
 import { shiftForMoney } from './shifts.service.js';
 import { assertCreditNotOverdue, getCustomerAccount } from './debts.service.js';
+import { currentRate } from './fx.service.js';
+import { cashWithDollars } from './fx-rules.js';
+import { findSettings as findSalesSettings } from '../repositories/returns.repository.js';
 
 export { getCustomerAccount };
 import type { SaleLineRow, SaleRow } from '../schemas/sales.schema.js';
@@ -232,6 +235,10 @@ function wireSale(
     method: p.method,
     amount_syp: num(p.amount_syp),
     tendered_syp: p.tendered_syp === null ? null : num(p.tendered_syp),
+    // Dollars (`finance_operations.md` §٣-ج): what was handed over, at which rate, and the liras given back.
+    tendered_usd: p.tendered_usd === null ? null : num(p.tendered_usd),
+    fx_rate: p.fx_rate === null ? null : num(p.fx_rate),
+    change_syp: p.change_syp === null ? null : num(p.change_syp),
   }));
   // حصّة الكاشير مجموعُ حصص السطور (مبالغ سطرٍ كاملة)، والعروض هي الباقي من
   // `discount_syp` — لا تُجمع من `promotion_discount_syp` لأنه **للوحدة**.
@@ -243,9 +250,11 @@ function wireSale(
   const changeSyp = roundSyp(
     wirePayments.reduce(
       (acc, p) =>
-        p.method === 'cash' && p.tendered_syp !== null
-          ? acc + Math.max(0, p.tendered_syp - p.amount_syp)
-          : acc,
+        p.change_syp !== null
+          ? acc + p.change_syp
+          : p.method === 'cash' && p.tendered_syp !== null
+            ? acc + Math.max(0, p.tendered_syp - p.amount_syp)
+            : acc,
       0,
     ),
   );
@@ -270,7 +279,14 @@ function wireSale(
     total_syp: roundSyp(totals.totalSyp),
     change_syp: changeSyp,
     received_syp: roundSyp(
-      wirePayments.reduce((acc, p) => acc + (p.tendered_syp ?? p.amount_syp), 0),
+      wirePayments.reduce(
+        (acc, p) =>
+          acc +
+          (p.tendered_usd !== null && p.fx_rate !== null
+            ? p.tendered_usd * p.fx_rate + (p.tendered_syp ?? 0)
+            : (p.tendered_syp ?? p.amount_syp)),
+        0,
+      ),
     ),
     lines: wireLines,
     payments: wirePayments,
@@ -750,6 +766,44 @@ export async function paySale(
     });
   }
 
+  // Dollars for the cash part (`finance_operations.md` §٣-ج): at the buy rate in
+  // force — and the rate the till showed must still be it, or the change it
+  // promised is not the change the drawer gives.
+  const dollarPayments = input.payments.filter((p) => p.method === 'cash' && (p.tenderedUsd ?? 0) > 0);
+  if (dollarPayments.length > 1) {
+    throw new BusinessError(422, 'One cash payment carries the dollars', 'sale_one_dollar_payment');
+  }
+  const fx = dollarPayments.length === 0 ? null : await currentRate();
+  if (dollarPayments.length > 0 && fx === null) {
+    throw new BusinessError(422, 'No dollar rate is set', 'fx_rate_missing');
+  }
+  const buyRate = fx === null ? null : Number(fx.buy_rate);
+  const shown = dollarPayments[0]?.fxRate ?? null;
+  if (buyRate !== null && shown !== null && Math.abs(shown - buyRate) > 0.0001) {
+    throw new BusinessError(409, 'The dollar rate changed', 'fx_rate_changed', { buy_rate: buyRate });
+  }
+  const roundStep = buyRate === null ? 0 : (await findSalesSettings()).cash_round_syp;
+  const dollarCash = (cashDueSyp: number) => {
+    const p = dollarPayments[0]!;
+    return cashWithDollars({
+      cashDueSyp,
+      tenderedUsd: p.tenderedUsd!,
+      tenderedSyp: p.tenderedSyp ?? 0,
+      rate: buyRate!,
+      roundStep,
+    });
+  };
+  if (dollarPayments.length > 0) {
+    const p = dollarPayments[0]!;
+    const outcome = dollarCash(p.amountSyp);
+    if (outcome.short) {
+      throw new BusinessError(422, 'The cash handed over does not cover the sale', 'sale_underpaid', {
+        remaining_syp: roundSyp(p.amountSyp - outcome.usdValueSyp - (p.tenderedSyp ?? 0)),
+        total_syp: roundSyp(totals.totalSyp),
+      });
+    }
+  }
+
   const usingCredit = input.payments.filter(
     (p) => p.method === 'customer_credit' || p.method === 'on_account',
   );
@@ -851,6 +905,13 @@ export async function paySale(
         amount_syp: String(roundSyp(p.amountSyp)),
         tendered_syp:
           p.tenderedSyp === null || p.tenderedSyp === undefined ? null : String(p.tenderedSyp),
+        ...(dollarPayments.includes(p)
+          ? {
+              tendered_usd: String(p.tenderedUsd),
+              fx_rate: buyRate!.toFixed(4),
+              change_syp: String(dollarCash(p.amountSyp).changeSyp),
+            }
+          : {}),
       })),
     );
 
@@ -862,18 +923,36 @@ export async function paySale(
       return c === null ? sum : sum + c * num(l.qty);
     }, 0);
     await recordFinance(tx, [
-      ...allocateRevenue(input.payments, roundSyp(totals.totalSyp)).map((r) => ({
-        branchId: preview.branch_id,
-        type: 'sale_revenue' as const,
-        method: r.method,
-        amountSyp: r.amountSyp,
-        docType: 'sale' as const,
-        docId: saleId,
-        saleId,
-        userId: actor.userId,
-        stationId: actor.stationId ?? null,
-        shiftId,
-      })),
+      ...allocateRevenue(input.payments, roundSyp(totals.totalSyp)).flatMap((r) => {
+        const base = {
+          branchId: preview.branch_id,
+          type: 'sale_revenue' as const,
+          method: r.method,
+          docType: 'sale' as const,
+          docId: saleId,
+          saleId,
+          userId: actor.userId,
+          stationId: actor.stationId ?? null,
+          shiftId,
+        };
+        if (r.method !== 'cash' || dollarPayments.length === 0) return [{ ...base, amountSyp: r.amountSyp }];
+        // Dollars in, liras back (`finance_operations.md` §٣-ج): the dollars as
+        // notes, the liras as tendered less the change — and what rounding left
+        // by its own name, so revenue stays the bill.
+        const p = dollarPayments[0]!;
+        const out = dollarCash(r.amountSyp);
+        return [
+          {
+            ...base,
+            amountSyp: out.usdValueSyp - out.roundingSyp,
+            currency: 'USD' as const,
+            amountFx: p.tenderedUsd!,
+            fxRate: buyRate!,
+          },
+          { ...base, amountSyp: (p.tenderedSyp ?? 0) - out.changeSyp },
+          { ...base, type: 'cash_rounding' as const, method: 'value' as const, amountSyp: out.roundingSyp },
+        ];
+      }),
       {
         branchId: preview.branch_id,
         type: 'cogs',

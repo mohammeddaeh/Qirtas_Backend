@@ -1,7 +1,13 @@
 import { and, asc, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../../core/db/client.js';
 import type { PaginationParams } from '../../../core/pagination/pagination.js';
-import { catalogProductsTable, catalogVariantUnitsTable, catalogVariantsTable } from '../../catalog/schemas/products.schema.js';
+import { catalogAttributeValuesTable } from '../../catalog/schemas/attributes.schema.js';
+import {
+  catalogProductsTable,
+  catalogVariantAttributeValuesTable,
+  catalogVariantUnitsTable,
+  catalogVariantsTable,
+} from '../../catalog/schemas/products.schema.js';
 import { catalogUnitsTable } from '../../catalog/schemas/units.schema.js';
 import { branchesTable } from '../../identity/schemas/branches.schema.js';
 import { usersTable } from '../../identity/schemas/users.schema.js';
@@ -238,6 +244,29 @@ export type BalanceRow = {
   avg_cost_usd: string;
   reorder_threshold: string | null;
 };
+
+/**
+ * What tells a variant from its siblings, in words («أحمر · A4») — empty for a
+ * product without axes. Three rows of «ماركر سبورة بيضاء» told the reader
+ * nothing about which colour ran out; the SKU beside them is an internal code.
+ */
+export async function findVariantLabels(variantIds: number[]): Promise<Map<number, string>> {
+  if (variantIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      variant_id: catalogVariantAttributeValuesTable.variant_id,
+      value_ar: catalogAttributeValuesTable.value_ar,
+    })
+    .from(catalogVariantAttributeValuesTable)
+    .innerJoin(
+      catalogAttributeValuesTable,
+      eq(catalogAttributeValuesTable.id, catalogVariantAttributeValuesTable.attribute_value_id),
+    )
+    .where(inArray(catalogVariantAttributeValuesTable.variant_id, variantIds));
+  const parts = new Map<number, string[]>();
+  for (const row of rows) parts.set(row.variant_id, [...(parts.get(row.variant_id) ?? []), row.value_ar]);
+  return new Map([...parts].map(([id, words]) => [id, words.join(' · ')]));
+}
 
 /** Every balance at a branch — for the signals, which count rather than page. */
 export async function findAllBalances(branchId: number): Promise<BalanceRow[]> {

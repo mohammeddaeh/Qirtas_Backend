@@ -155,6 +155,10 @@ export interface PaymentInput {
   method: 'cash' | 'card' | 'customer_credit' | 'on_account';
   amountSyp: number;
   tenderedSyp?: number | null;
+  /** Dollars handed over for the cash part (`finance_operations.md` §٣-ج). */
+  tenderedUsd?: number | null;
+  /** The buy rate the till showed. */
+  fxRate?: number | null;
 }
 
 export interface PaymentOutcome {

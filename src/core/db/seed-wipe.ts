@@ -31,6 +31,9 @@ const KEEP = new Set([
   'role_permissions',
   'user_role_assignments',
   'branches',
+  // A registered computer is a place, not business data — wiping it signs every station out.
+  'stations',
+  'station_policy',
   'ownerships',
   'audit_log_entries',
   'sessions',

@@ -82,6 +82,14 @@ export const paymentSchema = z
     amount_syp: money,
     /** ما سلّمه الزبون نقداً — الباقي يُحسب منه. */
     tendered_syp: money.nullable().optional(),
+    /**
+     * Dollars handed over for the cash part (`finance_operations.md` §٣-ج) —
+     * counted at the buy rate. With dollars, [tendered_syp] is the liras handed
+     * over beside them (absent = none) and the change is liras, rounded.
+     */
+    tendered_usd: z.number().positive().max(1_000_000).nullable().optional(),
+    /** The buy rate the till showed — refused when it changed since (`fx_rate_changed`). */
+    fx_rate: z.number().positive().nullable().optional(),
     reference: z.string().trim().max(120).nullable().optional(),
   })
   .strict();
@@ -168,6 +176,20 @@ export const creditSettingsBodySchema = z
   })
   .strict();
 
+// ── سعرا الدولار (`finance_operations.md` §٣-ب) ─────────────────────────────
+
+export const fxRatesBodySchema = z
+  .object({
+    buy_rate: z.number().positive().max(10_000_000),
+    sell_rate: z.number().positive().max(10_000_000),
+    note: z.string().trim().max(300).optional(),
+  })
+  .strict();
+
+export const fxRoundingBodySchema = z
+  .object({ round_syp: z.number().int().min(0).max(100_000) })
+  .strict();
+
 // ── الوردية (`cash_shifts.md`) ─────────────────────────────────────────────
 
 const cashAmount = z.number().min(0).max(1_000_000_000);
@@ -175,13 +197,21 @@ const cashAmount = z.number().min(0).max(1_000_000_000);
 export const shiftCurrentQuerySchema = z.object({ branch_id: z.coerce.number().int().positive() }).strict();
 
 export const openShiftBodySchema = z
-  .object({ branch_id: z.number().int().positive(), opening_counted_syp: cashAmount })
+  .object({
+    branch_id: z.number().int().positive(),
+    opening_counted_syp: cashAmount,
+    /** Dollars found in the drawer (`finance_operations.md` §٣-ج). */
+    opening_counted_usd: cashAmount.optional(),
+  })
   .strict();
 
 export const shiftMovementBodySchema = z
   .object({
     direction: z.enum(['in', 'out']),
-    amount_syp: cashAmount.refine((v) => v > 0, 'An amount above zero'),
+    /** Liras moved — or, with `currency: USD`, [amount_usd] dollars. */
+    currency: z.enum(['SYP', 'USD']).default('SYP'),
+    amount_syp: cashAmount.optional(),
+    amount_usd: cashAmount.optional(),
     /** Codes the screen translates. */
     reason_code: z.enum(['safe_drop', 'float_top_up', 'expense', 'other']),
     note: z.string().trim().max(300).optional(),
@@ -194,10 +224,20 @@ export const shiftMovementBodySchema = z
   .refine((b) => b.reason_code !== 'other' || (b.note?.length ?? 0) >= 3, {
     message: 'Say what the movement was',
     path: ['note'],
+  })
+  .refine((b) => ((b.currency === 'USD' ? b.amount_usd : b.amount_syp) ?? 0) > 0, {
+    message: 'An amount above zero',
+    path: ['amount_syp'],
   });
 
 export const closeShiftBodySchema = z
-  .object({ counted_syp: cashAmount, left_in_drawer_syp: cashAmount })
+  .object({
+    counted_syp: cashAmount,
+    left_in_drawer_syp: cashAmount,
+    /** The dollars counted and left (`finance_operations.md` §٣-ج) — absent = none. */
+    counted_usd: cashAmount.optional(),
+    left_in_drawer_usd: cashAmount.optional(),
+  })
   .strict();
 
 export const shiftReasonBodySchema = z
@@ -348,3 +388,37 @@ export type CreateReturnBody = z.infer<typeof createReturnBodySchema>;
 export type PayBody = z.infer<typeof payBodySchema>;
 export type DiscountBody = z.infer<typeof discountBodySchema>;
 export type SalesQuery = z.infer<typeof salesQuerySchema>;
+
+// ── الموردون (`finance_operations.md` §٣) ─────────────────────────────────
+
+export const payablesQuerySchema = z
+  .object({
+    search: z.string().trim().min(1).max(100).optional(),
+    branch_id: z.coerce.number().int().positive().optional(),
+  })
+  .strict();
+
+export const payableSupplierQuerySchema = z.object({ branch_id: z.coerce.number().int().positive().optional() }).strict();
+
+export const payPayableBodySchema = z
+  .object({
+    supplier_id: z.number().int().positive(),
+    branch_id: z.number().int().positive(),
+    currency: z.enum(['SYP', 'USD']),
+    amount: z.number().positive().max(10_000_000_000),
+    /** Liras paying a dollar debt — the rate agreed with the supplier. */
+    fx_rate: z.number().positive().max(10_000_000).optional(),
+    source: z.enum(['drawer', 'outside']),
+    invoice_ids: z.array(z.number().int().positive()).max(100).optional(),
+    note: z.string().trim().max(300).optional(),
+    /** From the drawer above the cap: the manager approves on this device. */
+    approver_email: z.string().trim().email().max(200).optional(),
+    approver_password: z.string().min(1).max(200).optional(),
+  })
+  .strict();
+
+export const reversePayableBodySchema = z.object({ reason: z.string().trim().min(3).max(300) }).strict();
+
+export const convertPayableBodySchema = z
+  .object({ rate: z.number().positive().max(10_000_000), note: z.string().trim().max(300).optional() })
+  .strict();

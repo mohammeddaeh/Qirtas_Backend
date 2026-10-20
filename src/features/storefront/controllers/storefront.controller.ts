@@ -44,12 +44,14 @@ export async function getProduct(req: Request, res: Response): Promise<void> {
   ok(res, await storefrontService.getProduct(await viewerOf(req), id));
 }
 
-export async function listCategories(_req: Request, res: Response): Promise<void> {
-  ok(res, await storefrontService.listCategories());
+const branchOf = (req: Request): number | undefined => (req.query as { branch_id?: number }).branch_id;
+
+export async function listCategories(req: Request, res: Response): Promise<void> {
+  ok(res, await storefrontService.listCategories(branchOf(req)));
 }
 
-export async function listCollections(_req: Request, res: Response): Promise<void> {
-  ok(res, await storefrontService.listCollections());
+export async function listCollections(req: Request, res: Response): Promise<void> {
+  ok(res, await storefrontService.listCollections(branchOf(req)));
 }
 
 // ── «أعلمني» و«اطلب توفيره بفرعي» (§٨) ──────────────────────────────────────

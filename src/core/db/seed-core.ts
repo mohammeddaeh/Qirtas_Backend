@@ -152,6 +152,14 @@ const PERMISSIONS: SeedPermission[] = [
     display: { ar: 'عرض التقارير المالية', en: 'View Financial Reports' },
   },
   {
+    // الملخّص اليومي للمالك (`finance_operations.md` §٥، قرار §٨ #٩): مفتاحٌ مستقل
+    // لا `reports.financial.view` — الصفحة تجمع الدرج والديون والموردين والمخزون معاً.
+    key: 'reports.daily.view',
+    module: 'reports',
+    is_sensitive: true,
+    display: { ar: 'الملخّص اليومي', en: 'Daily Summary' },
+  },
+  {
     key: 'reports.operational.view',
     module: 'reports',
     is_sensitive: false,
@@ -208,6 +216,14 @@ const PERMISSIONS: SeedPermission[] = [
     module: 'suppliers',
     is_sensitive: false,
     display: { ar: 'إدارة الموردين', en: 'Manage Suppliers' },
+  },
+  {
+    // الدفع للموردين (`finance_operations.md` §٣): دفعةٌ من الدرج أو خارجه، وقلب دين
+    // الدولار إلى ليرة، وتصحيح دفعة — حسّاس: مالٌ يخرج ويُثبَّت سعرُه.
+    key: 'suppliers.pay',
+    module: 'suppliers',
+    is_sensitive: true,
+    display: { ar: 'الدفع للموردين', en: 'Pay Suppliers' },
   },
   {
     key: 'printing.queue.view',
@@ -467,6 +483,14 @@ const PERMISSIONS: SeedPermission[] = [
     display: { ar: 'إدارة المصاريف والرواتب', en: 'Manage Expenses & Wages' },
   },
   {
+    // سعرا الدولار (`finance_operations.md` §٣-ب، قرار §٨ #١١): المدير يكتبهما يومياً
+    // حين يتغيّران، وكل دفعٍ بالدولار يُحسب بهما — حسّاس: يغيّر ما يُقبض فعلاً.
+    key: 'currency.rates',
+    module: 'currency',
+    is_sensitive: true,
+    display: { ar: 'سعرا صرف الدولار', en: 'Dollar Exchange Rates' },
+  },
+  {
     // مفتاحان لا واحد: الكاشير يُسأل «لماذا هذا السعر؟» فيحتاج أن يقرأ العرض،
     // ولا يجوز أن يملك تغييره. مفتاحٌ واحد كان سيمنح الشرحَ والقرارَ معاً.
     key: 'promotions.view',
@@ -532,6 +556,7 @@ const MODULE_DISPLAY: Record<string, { ar: string; en: string }> = {
   promotions: { ar: 'العروض', en: 'Promotions' },
   sales: { ar: 'المبيعات ونقطة البيع', en: 'Sales & Till' },
   expenses: { ar: 'المصاريف والرواتب', en: 'Expenses & Wages' },
+  currency: { ar: 'العملة', en: 'Currency' },
   stations: { ar: 'محطات الحاسوب', en: 'Computer Stations' },
   barcodes: { ar: 'الباركود', en: 'Barcodes' },
   suppliers: { ar: 'الموردون', en: 'Suppliers' },
@@ -671,6 +696,8 @@ const ROLES: SeedRole[] = [
       'inventory.approve',
       'suppliers.view',
       'suppliers.manage',
+      // يدفع لموردي فرعه من الدرج أو خارجه (`finance_operations.md` §٣).
+      'suppliers.pay',
       'printing.queue.view',
       'printing.status.update',
       // يقرّر ما تطبعه آلات فرعه وسعره ضمن نطاق الإدارة.
@@ -704,6 +731,8 @@ const ROLES: SeedRole[] = [
       // يرى ورديات فرعه ويوافق على الإخراج الكبير ويراجع الفروق، ويعدّ الدرج (`cash_shifts.md`).
       'sales.shift.manage',
       'sales.shift.close',
+      // سعرا الدولار يكتبهما المدير حين يتغيّران (قرار §٨ #١١).
+      'currency.rates',
       'dashboard.view',
       // يعمل على حاسوب الفرع (الصندوق والطباعة والجداول).
       'stations.sign_in',
@@ -718,6 +747,8 @@ const ROLES: SeedRole[] = [
     // حركة المال والبضاعة، ولا يغيّر شيئاً.
     permissionKeys: [
       'reports.financial.view',
+      // يرى يومه بنظرة (`finance_operations.md` §٥).
+      'reports.daily.view',
       'dashboard.view',
       'sales.view',
       'inventory.view',

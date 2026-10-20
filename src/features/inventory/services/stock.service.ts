@@ -159,6 +159,12 @@ export async function postMovements(
 
 // ── Reading ─────────────────────────────────────────────────────────────────
 
+/** The rows with their variant words — read once for the page, not per row. */
+async function withLabels(rows: WireStockRow[]): Promise<WireStockRow[]> {
+  const labels = await stockRepository.findVariantLabels(rows.map((r) => r.variant_id));
+  return rows.map((r) => ({ ...r, variant_label_ar: labels.get(r.variant_id) ?? '' }));
+}
+
 function toWireRow(row: stockRepository.BalanceRow): WireStockRow {
   const onHand = Number(row.on_hand);
   const reserved = Number(row.reserved);
@@ -168,6 +174,7 @@ function toWireRow(row: stockRepository.BalanceRow): WireStockRow {
     product_id: row.product_id,
     product_name_ar: row.product_name_ar,
     product_name_en: row.product_name_en,
+    variant_label_ar: '',
     sku: row.sku,
     on_hand: onHand,
     reserved,
@@ -190,11 +197,15 @@ export async function searchDocumentItems(query: DocumentItemsQuery): Promise<Wi
     query.branch_id,
     25,
   );
-  const units = await stockRepository.findVariantUnitOptions(rows.map((row) => row.variant_id));
+  const [units, labels] = await Promise.all([
+    stockRepository.findVariantUnitOptions(rows.map((row) => row.variant_id)),
+    stockRepository.findVariantLabels(rows.map((row) => row.variant_id)),
+  ]);
   return rows.map((row) => ({
     variant_id: row.variant_id,
     sku: row.sku,
     product_name_ar: row.product_name_ar,
+    variant_label_ar: labels.get(row.variant_id) ?? '',
     base_unit_id: row.base_unit_id,
     on_hand: Number(row.on_hand ?? 0),
     units: units
@@ -220,16 +231,16 @@ export async function listStock(
     const search = filter.search ? normalizeArabic(filter.search) : null;
     const matching = all.filter(
       (row) =>
-        (filter.flag === 'low' ? row.flag !== 'ok' : row.flag === filter.flag) &&
+        (filter.flag === 'attention' ? row.flag !== 'ok' : row.flag === filter.flag) &&
         (search === null || normalizeArabic(row.product_name_ar).includes(search)),
     );
     const page = matching.slice(params.offset, params.offset + params.limit);
-    return paginated(page, matching.length, params);
+    return paginated(await withLabels(page), matching.length, params);
   }
   const { rows, total } = await stockRepository.findBalances(filter.branch_id, params, {
     search: filter.search ? normalizeArabic(filter.search) : undefined,
   });
-  return paginated(rows.map(toWireRow), total, params);
+  return paginated(await withLabels(rows.map(toWireRow)), total, params);
 }
 
 export async function listMovements(
